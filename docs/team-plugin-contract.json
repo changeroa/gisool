@@ -24,7 +24,7 @@
     {
       "id": "onboarding",
       "text": "Connect from the plugin, isolate credentials per endpoint, distinguish unauthenticated, pending, denied, expired, unavailable and connected states.",
-      "status": "pending",
+      "status": "done",
       "source": "Approved first-use connection flow; ux-state-review explicitly accepted.",
       "evidence": [
         "docs/deployment-2026-09-23.md"
@@ -33,7 +33,7 @@
     {
       "id": "authorization",
       "text": "Enforce team membership server-side with individual revocable credentials. No shared credential in the package.",
-      "status": "pending",
+      "status": "done",
       "source": "Prior accepted team-authentication design; GitHub Ark-Point membership is an assumption pending user preference.",
       "evidence": [
         "docs/deployment-2026-09-23.md"
@@ -42,7 +42,7 @@
     {
       "id": "verification",
       "text": "Verify installation from a clean client and authenticated search/load/read, including failure and reconnect paths.",
-      "status": "pending",
+      "status": "done",
       "evidence": [
         "docs/deployment-2026-09-23.md"
       ]
@@ -66,12 +66,17 @@
     }
   ],
   "remaining": [
-    "GitHub reauthentication and OAuth client secret provisioning",
     "Cloudflare scoped API token for Worker GitHub Actions deployment",
-    "Actual member OAuth login and search/load/read",
-    "Mac mini client migration after login verification"
+    "Optional editor credentials and explicit writer IDs",
+    "Mac mini client migration; machine client access has not been available"
   ],
   "canonical_working_path": "/Users/victor/projects/gisul",
   "content_working_path": "/Users/victor/projects/arkpoint-gisul-skills",
-  "worktree_cleanup": "Temporary worktree /Users/victor/projects/gisul-team-plugin removed after committed changes were fast-forwarded to /Users/victor/projects/gisul and pushed to Ark-Point/gisul."
+  "worktree_cleanup": "Temporary worktree /Users/victor/projects/gisul-team-plugin removed after committed changes were fast-forwarded to /Users/victor/projects/gisul and pushed to Ark-Point/gisul.",
+  "deployment": {
+    "requested": true,
+    "status": "deployed",
+    "commit": "c6e5b717be5777617c9a72dc9a1a18326e4fcac4",
+    "evidence": "docs/deployment-2026-09-23.md"
+  }
 }
