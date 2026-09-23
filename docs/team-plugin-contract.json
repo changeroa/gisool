@@ -6,55 +6,73 @@
     {
       "id": "cloudflare-direct",
       "text": "Plugin connects directly to Cloudflare Worker/R2. No Mac mini runtime, SSH, tunnel, or deployment dependency. Mac mini clients may use the same remote plugin. Runtime deployment must work from GitHub Actions.",
-      "status": "pending",
+      "status": "in_progress",
       "source": "User explicitly clarified on 2026-09-23; supersedes any assumption that Mac mini is a deployment prerequisite.",
-      "evidence": []
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "distribution",
       "text": "Ship a self-contained installable team plugin; preserve the existing personal plugin.",
-      "status": "pending",
+      "status": "complete",
       "source": "User approved Git marketplace distribution in this session.",
-      "evidence": []
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "onboarding",
       "text": "Connect from the plugin, isolate credentials per endpoint, distinguish unauthenticated, pending, denied, expired, unavailable and connected states.",
-      "status": "pending",
+      "status": "in_progress",
       "source": "Approved first-use connection flow; ux-state-review explicitly accepted.",
-      "evidence": []
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "authorization",
       "text": "Enforce team membership server-side with individual revocable credentials. No shared credential in the package.",
-      "status": "pending",
+      "status": "in_progress",
       "source": "Prior accepted team-authentication design; GitHub Ark-Point membership is an assumption pending user preference.",
-      "evidence": []
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "verification",
       "text": "Verify installation from a clean client and authenticated search/load/read, including failure and reconnect paths.",
-      "status": "pending",
-      "evidence": []
+      "status": "in_progress",
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "deployment",
       "text": "Publish the reviewed package and record actual source commit, endpoint, and canonical paths; report unresolved external configuration honestly.",
-      "status": "pending",
-      "evidence": []
+      "status": "complete",
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     },
     {
       "id": "canonical-domain",
       "text": "Deploy the team registry at https://gisul.arkpoint.dev/mcp and align plugin, OAuth callback, publication and discovery URLs.",
-      "status": "pending",
+      "status": "complete",
       "source": "User explicitly requested gisul.arkpoint.dev on 2026-09-23",
-      "evidence": []
+      "evidence": [
+        "docs/deployment-2026-09-23.md"
+      ]
     }
   ],
   "remaining": [
-    "Implement team package and authentication",
-    "Verify and publish",
-    "Remove temporary worktree after changes are preserved"
+    "GitHub reauthentication and OAuth client secret provisioning",
+    "Cloudflare scoped API token for Worker GitHub Actions deployment",
+    "Actual member OAuth login and search/load/read",
+    "Mac mini client migration after login verification"
   ],
-  "worktree": "/Users/victor/projects/gisul-team-plugin"
+  "worktree": "/Users/victor/projects/gisul-team-plugin",
+  "canonical_working_path": "/Users/victor/projects/gisul",
+  "content_working_path": "/Users/victor/projects/arkpoint-gisul-skills",
+  "worktree_cleanup": "Temporary worktree changes are committed and pushed. Remove after fast-forwarding the canonical working path."
 }
