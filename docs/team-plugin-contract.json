@@ -71,8 +71,7 @@
     "Actual member OAuth login and search/load/read",
     "Mac mini client migration after login verification"
   ],
-  "worktree": "/Users/victor/projects/gisul-team-plugin",
   "canonical_working_path": "/Users/victor/projects/gisul",
   "content_working_path": "/Users/victor/projects/arkpoint-gisul-skills",
-  "worktree_cleanup": "Temporary worktree changes are committed and pushed. Remove after fast-forwarding the canonical working path."
+  "worktree_cleanup": "Temporary worktree /Users/victor/projects/gisul-team-plugin removed after committed changes were fast-forwarded to /Users/victor/projects/gisul and pushed to Ark-Point/gisul."
 }
