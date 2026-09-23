@@ -38,9 +38,9 @@ Skill-content main ── GitHub Actions ── verified immutable R2 publicatio
 
 `worker/src/team.ts` is the team entrypoint. `worker/src/index.ts` and the existing personal deployment retain their previous authentication behavior. The team entrypoint never depends on either the personal origin server or SSH.
 
-The first login registers a provider grant for the user's immutable GitHub ID. Active `Ark-Point` membership is checked on login, token refresh, and every authenticated MCP request. Removing GitHub organization access, revoking the GitHub grant, or adding the ID to `GISUL_BLOCKED_IDS` denies subsequent requests. Prior content already received by a client cannot be recalled.
+The first login registers a provider grant for the user's immutable GitHub ID. Active `Ark-Point` membership is checked on login, token refresh, and every authenticated MCP request. Removing GitHub organization access or revoking the GitHub grant denies subsequent requests. Prior content already received by a client cannot be recalled.
 
-Members can read. `GISUL_WRITER_IDS` is an explicit comma-separated list of immutable GitHub user IDs permitted to edit; a scoped content-repository credential must also be configured. A member requesting write scope does not receive write access. Refresh cannot elevate a previously read-only grant; sign in again after an administrator grants editing rights.
+Approve the GitHub connection once. The requested read/edit consent is stored in the encrypted OAuth grant and preserved on refresh; there is no separate Gisul editor list, personal writer token, or recurring repository-role synchronization. Writes use the connected member’s GitHub App user access token, so GitHub still enforces repository access and branch protection. A deliberately read-only client grant remains read-only. The GitHub App is installed only on the team content repository. Existing connections created with the previous read-only OAuth application need one reconnection for the new approval; ordinary renewals do not require repeated permission setup.
 
 The OAuth provider issues Gisul tokens, validates their audience and PKCE, and stores encrypted upstream-token properties. Codex manages its own OAuth credentials. OAuth access tokens expire after 15 minutes, refresh grants after 30 days. `GISUL_CI_TOKEN` is a separate read-only machine credential used only by content CI to verify staged releases. No credential is distributed in the plugin.
 
@@ -51,12 +51,11 @@ Canonical endpoint: `https://gisul.arkpoint.dev/mcp`.
 The runtime repository is `Ark-Point/gisul`; content is independently configured by `GISUL_SKILLS_REPOSITORY`, initially `Ark-Point/gisul-skills`. The personal catalog is not automatically exposed to the organization. The team bucket must receive a verified initial release before content reads work.
 
 1. In the intended Cloudflare account, create private R2 bucket `gisul-arkpoint-releases` and one Workers KV namespace for OAuth.
-2. Register an organization-owned GitHub OAuth application with callback `https://gisul.arkpoint.dev/callback`. Configure its organization access policy. The login requests `read:org`, not repository access.
+2. Register an organization-owned GitHub App with callback `https://gisul.arkpoint.dev/callback`, Contents write, Actions read, Metadata read and organization Members read. Disable webhooks, keep expiring user access tokens, and install only on `Ark-Point/gisul-skills`. Login uses the GitHub App user flow, not a broad OAuth `repo` scope or a shared writer credential.
 3. Configure the `arkpoint-production` GitHub environment:
    - Variables: `CLOUDFLARE_ACCOUNT_ID`, `GISUL_OAUTH_KV_ID`, `GITHUB_CLIENT_ID`.
-   - Optional variables: `GISUL_WRITER_IDS`, `GISUL_BLOCKED_IDS`.
    - Secret: `CLOUDFLARE_API_TOKEN`, scoped to the account and required Worker deployment resources.
-4. Provision Worker secrets outside the repository: `GITHUB_CLIENT_SECRET`, distinct `GISUL_PUBLISH_TOKEN` and `GISUL_CI_TOKEN`, and `GISUL_GITHUB_TOKEN` only when enabling edits. The content credential should be limited to the fixed content repository (Contents write, Actions read).
+4. Provision Worker secrets outside the repository: `GITHUB_CLIENT_SECRET`, distinct `GISUL_PUBLISH_TOKEN` and `GISUL_CI_TOKEN`. User write credentials come from the GitHub connection and are stored encrypted by the provider; no `GISUL_GITHUB_TOKEN` server secret is needed for the team entrypoint.
 5. Set repository variable `GISUL_DEPLOY_ENABLED=true` after its Cloudflare API token is configured, then run `Deploy ARKPOINT Worker`. It builds and tests, generates only nonsecret config, deploys through GitHub Actions, then verifies source identity and OAuth discovery. It never runs SSH.
 6. Connect the content repository's gated publication workflow to the new origin. Set its publication secret and use the CI reader token for staged/live read verification. Preserve main ancestry, latest-main, inventory integrity, immutable bytes, conditional promotion and sequence fencing. Keep model evaluations and human ratings optional.
 7. Complete an actual member login and search/load/read before announcing availability. A build or `/healthz` alone is not this acceptance check.
@@ -75,9 +74,11 @@ If the endpoint changes, update the plugin URL, Worker public URL, GitHub callba
 | GitHub outage/rate limitation | Report verification failure; do not mislabel it as an empty catalog or membership denial. |
 | Connected, no search matches | Return a normal empty search; change the query. |
 | Connected, no published release | Report publication unavailable; administrator publishes the initial catalog. |
-| Reader attempts a write | Server rejects it, independent of client UI. |
+| Explicit read-only grant attempts a write | Server rejects it, independent of client UI. |
+| Approved write after token renewal | Preserve the saved write grant and use the refreshed member token. |
+| GitHub rejects a write | Explain repository access or branch protection; never claim saved or published. |
 | New release after load | Supporting reads retain the original `load_id` release. |
-| Membership removed or account blocked | Deny subsequent server requests, including existing tokens. |
+| Membership removed or GitHub authorization revoked | Deny subsequent server requests, including existing tokens. |
 
 The native `load_id` is a stateless release/manifest identity, not an authorization credential or evidence of an earlier tool invocation. Authorization is enforced on every request. R2 reads verify bytes against the immutable inventory. There is no client-side Node verifier in the native plugin.
 

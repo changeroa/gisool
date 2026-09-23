@@ -26,22 +26,42 @@ async function release(bucket, letter) {
 }
 
 async function fixture(t, overrides = {}) {
-  const state = { member: true, unavailable: false, revoked: false, identity: 42, calls: [] };
-  const env = Object.fromEntries(Object.entries({ GISUL_PUBLIC_URL: origin, GISUL_GITHUB_ORG: "Ark-Point", GITHUB_CLIENT_ID: "github-client", GITHUB_CLIENT_SECRET: "github-secret", GISUL_WRITER_IDS: "42", GISUL_GITHUB_TOKEN: "content-writer", GISUL_BEARER_TOKEN: "legacy-reader", GISUL_PUBLISH_TOKEN: "publisher", GISUL_SERVER_VERSION: "team-fixture", ...overrides }).map(([name, value]) => [name, { type: "text", value }]));
+  const state = { member: true, unavailable: false, revoked: false, identity: 42, repositoryForbidden: false, githubToken: "github-user-token", tokenExpiry: 28800, refreshes: 0, writes: [], calls: [] };
+  const env = Object.fromEntries(Object.entries({ GISUL_PUBLIC_URL: origin, GISUL_GITHUB_ORG: "Ark-Point", GITHUB_CLIENT_ID: "github-client", GITHUB_CLIENT_SECRET: "github-secret", GISUL_SKILLS_REPOSITORY: "Ark-Point/gisul-skills", GISUL_PUBLISH_WORKFLOW: "publish.yml", GISUL_BEARER_TOKEN: "legacy-reader", GISUL_PUBLISH_TOKEN: "publisher", GISUL_SERVER_VERSION: "team-fixture", ...overrides }).map(([name, value]) => [name, { type: "text", value }]));
   const runtime = new Miniflare({ telemetry: { enabled: false }, logRequests: false, workers: [{ config: { type: "worker", name: "team", compatibilityDate: "2026-09-03", compatibilityFlags: ["global_fetch_strictly_public"], manifest: { mainModule: "index.js", modules: { "index.js": { type: "esm", contents: (await bundle).outputFiles[0].text } } }, env: { ...env, SKILLS_BUCKET: { type: "r2", name: "skills" }, OAUTH_KV: { type: "kv", id: "oauth" } }, exports: {} }, dev: { outboundService: { type: "fetcher", handler: async request => {
     const url = new URL(request.url); state.calls.push({ host: url.host, path: url.pathname });
     if (url.href === "https://github.com/login/oauth/access_token") {
       const body = new URLSearchParams(await request.text());
       assert.equal(body.get("client_secret"), "github-secret");
+      if (body.get("grant_type") === "refresh_token") {
+        assert.equal(body.get("refresh_token"), "github-refresh");
+        state.githubToken = "github-refreshed-token"; state.refreshes++;
+        return Response.json({ access_token: state.githubToken, refresh_token: "github-refresh", expires_in: 28800, token_type: "bearer", scope: "" });
+      }
       assert.ok(body.get("code_verifier"));
-      return Response.json({ access_token: "github-user-token", token_type: "bearer", scope: "read:org" });
+      return Response.json({ access_token: state.githubToken, refresh_token: "github-refresh", expires_in: state.tokenExpiry, token_type: "bearer", scope: "" });
     }
     if (url.href === "https://api.github.com/user/memberships/orgs/Ark-Point") {
-      assert.equal(request.headers.get("authorization"), "Bearer github-user-token");
+      assert.equal(request.headers.get("authorization"), `Bearer ${state.githubToken}`);
       if (state.unavailable) return Response.json({}, { status: 503 });
       if (state.revoked) return Response.json({}, { status: 401 });
       if (!state.member) return Response.json({}, { status: 404 });
       return Response.json({ state: "active", role: "member", organization: { login: "Ark-Point" }, user: { id: state.identity, login: "teammate" } });
+    }
+    if (url.origin === "https://api.github.com" && url.pathname.startsWith("/repos/Ark-Point/gisul-skills")) {
+      assert.equal(request.headers.get("authorization"), `Bearer ${state.githubToken}`, "Writes must use the current member token, never a shared server token");
+      const path = url.pathname.slice("/repos/Ark-Point/gisul-skills".length);
+      assert.notEqual(path, "", "Do not rederive saved consent from GitHub repository roles");
+      if (state.repositoryForbidden) return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+      if (request.method !== "GET") { state.writes.push({ path, body: await request.json() }); }
+      if (path === "/git/ref/heads/main") return Response.json({ object: { sha: "c".repeat(40) } });
+      if (path === `/git/commits/${"c".repeat(40)}`) return Response.json({ tree: { sha: "tree" } });
+      if (path === "/git/trees/tree") return Response.json({ tree: [], truncated: false });
+      if (path === "/git/trees") return Response.json({ sha: "new-tree" });
+      if (path === "/git/commits") return Response.json({ sha: "d".repeat(40) });
+      if (path === "/git/refs/heads/main") return Response.json({ object: { sha: "d".repeat(40) } });
+      if (path.startsWith("/compare/")) return Response.json({ status: "diverged" });
+      if (path === "/actions/workflows/publish.yml/runs") return Response.json({ workflow_runs: [{ status: "in_progress", html_url: "https://github.com/Ark-Point/gisul-skills/actions/runs/1" }] });
     }
     throw new Error(`Unexpected outbound request to ${url.host}${url.pathname}`);
   } } } }] });
@@ -185,4 +205,46 @@ test("refresh preserves readonly grant and rechecks active membership", async t 
   const denied = await refresh(next.refresh_token);
   assert.equal(denied.status, 400, await denied.clone().text());
   assert.equal((await denied.json()).error, "invalid_grant");
+});
+
+test("approved write consent persists through refresh without a server allowlist or repository-role sync", async t => {
+  const f = await fixture(t);
+  const original = await f.login();
+  const refreshed = await f.fetch("/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: original.flow.clientId, grant_type: "refresh_token", refresh_token: original.refresh_token, resource: origin + "/mcp" }) });
+  assert.equal(refreshed.status, 200);
+  const token = await refreshed.json();
+  assert.ok(token.scope.includes("skills:write"));
+  const names = (await (await f.rpc(token.access_token, "tools/list")).json()).result.tools.map(t => t.name);
+  assert.ok(names.includes("create_skill"));
+  const written = await f.tool(token.access_token, "create_skill", { name: "new-skill", markdown: "---\nname: new-skill\ndescription: A team workflow\n---\nHello\n" });
+  assert.equal(written.status, "accepted");
+  assert.equal(f.state.writes.length, 3);
+  assert.equal(f.state.writes.at(-1).body.force, false);
+  const pending = await f.tool(token.access_token, "get_skill_write_status", { commit: written.commit });
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.workflow_status, "in_progress");
+  assert.equal(f.state.calls.filter(call => call.path === "/repos/Ark-Point/gisul-skills").length, 0);
+  f.state.repositoryForbidden = true;
+  const denied = await f.rpc(token.access_token, "tools/call", { name: "create_skill", arguments: { name: "another", markdown: "---\nname: another\ndescription: Another skill\n---\nHello\n" } });
+  assert.equal(denied.status, 200);
+  const denial = (await denied.json()).result;
+  assert.equal(denial.isError, true);
+  assert.match(denial.content[0].text, /GitHub did not allow/);
+  assert.equal(f.state.writes.length, 3, "Saved consent cannot bypass GitHub token permissions");
+});
+
+test("expiring GitHub App user token is refreshed and the replacement is used for repository requests", async t => {
+  const f = await fixture(t); f.state.tokenExpiry = 1;
+  const token = await f.login();
+  assert.equal(f.state.refreshes, 1);
+  assert.equal((await f.rpc(token.access_token, "tools/list")).status, 200);
+});
+
+test("consent redirect requests GitHub App permissions without broad OAuth repo scope", async t => {
+  const f = await fixture(t); const flow = await f.begin();
+  const response = await f.authorize(flow);
+  const upstream = new URL(response.headers.get("location"));
+  assert.equal(upstream.origin, "https://github.com");
+  assert.equal(upstream.searchParams.has("scope"), false);
+  assert.equal(upstream.searchParams.get("code_challenge_method"), "S256");
 });

@@ -21,7 +21,8 @@
   "vars": {
     "GISUL_PUBLIC_URL": "https://gisul.arkpoint.dev",
     "GISUL_GITHUB_ORG": "Ark-Point",
-    "GISUL_SKILLS_REPOSITORY": "Ark-Point/gisul-skills"
+    "GISUL_SKILLS_REPOSITORY": "Ark-Point/gisul-skills",
+    "GISUL_PUBLISH_WORKFLOW": "publish.yml"
   },
   "routes": [
     {

@@ -63,12 +63,27 @@
       "evidence": [
         "docs/deployment-2026-09-23.md"
       ]
+    },
+    {
+      "id": "single-permission-source",
+      "text": "GitHub repository permissions are the only editor access management surface. Remove Worker writer allowlists and shared writer tokens. Use repository-limited GitHub App user credentials so writes remain bound to the member’s GitHub rights. Verify write, publication, permission removal and read-only consent.",
+      "status": "superseded",
+      "source": "User rejected duplicate GitHub and Worker editor management on 2026-09-23.",
+      "evidence": [],
+      "decision_basis": "User clarified that initial authorization should be granted once in a single place and persist; rejected the interpretation of recurring repository-role synchronization."
+    },
+    {
+      "id": "persistent-initial-authorization",
+      "text": "User grants read/edit once through the GitHub connection approval. Persist the consent through token renewals and later sign-ins; no separate Worker editor list, no user-supplied writer token, no recurring repository-role synchronization. GitHub still enforces the actual user token on writes; organization membership and revoked authentication continue to be checked.",
+      "status": "pending",
+      "source": "User explicitly confirmed GitHub connection approval as the single grant surface on 2026-09-23.",
+      "evidence": []
     }
   ],
   "remaining": [
     "Cloudflare scoped API token for Worker GitHub Actions deployment",
-    "Optional editor credentials and explicit writer IDs",
-    "Mac mini client migration; machine client access has not been available"
+    "Mac mini client migration; machine client access has not been available",
+    "Complete repository-limited GitHub App setup, deploy persisted consent and verify actual create/update/publication"
   ],
   "canonical_working_path": "/Users/victor/projects/gisul",
   "content_working_path": "/Users/victor/projects/arkpoint-gisul-skills",

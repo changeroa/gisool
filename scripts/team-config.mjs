@@ -9,8 +9,6 @@ config.account_id = account;
 config.kv_namespaces = [{ binding: "OAUTH_KV", id }];
 config.vars.GISUL_SERVER_VERSION = process.env.GITHUB_SHA ?? "development";
 config.vars.GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
-config.vars.GISUL_WRITER_IDS = process.env.GISUL_WRITER_IDS ?? "";
-config.vars.GISUL_BLOCKED_IDS = process.env.GISUL_BLOCKED_IDS ?? "";
 if (!config.vars.GITHUB_CLIENT_ID) throw new Error("GITHUB_CLIENT_ID must be configured before deployment");
 await writeFile(new URL("wrangler.team.generated.json", root), JSON.stringify(config, null, 2) + "\n");
 console.log("Generated Worker configuration (nonsecret values only)");

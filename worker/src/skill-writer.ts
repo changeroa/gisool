@@ -7,6 +7,7 @@ export interface WriteEnv {
   GISUL_GITHUB_TOKEN?: string;
   GISUL_WRITE_TOKEN?: string;
   GISUL_SKILLS_REPOSITORY?: string;
+  GISUL_PUBLISH_WORKFLOW?: string;
 }
 function repository(env: WriteEnv): string {
   const value = env.GISUL_SKILLS_REPOSITORY ?? "changeroa/gisul-skills";
@@ -35,6 +36,7 @@ function gitClient(env: WriteEnv): GitCall {
       console.error("GitHub transport failed", { method, path, reason: error instanceof Error ? error.message : "unknown" });
       throw new ReleaseError(`GitHub request outcome is unknown (${method} ${path}); inspect main before retrying a write`, 502);
     }
+    if (response.status === 403 || response.status === 404) throw new ReleaseError("GitHub did not allow this repository operation. Check the connected account's repository access, App installation, or branch protection; repeated retries will not grant permission.", 403);
     if (!response.ok) throw new ReleaseError([409, 422].includes(response.status) ? "Git changed concurrently or rejected the write; reload and reconcile before retrying" : `GitHub request failed (${response.status})`, [409, 422].includes(response.status) ? 409 : 502);
     return response.json();
   };
@@ -67,9 +69,11 @@ export async function skillWrite(env: WriteEnv, tool: string, args: unknown, git
       const comparison = await git(`/compare/${args.commit}...${identity.commit}`);
       if (comparison.status === "ahead") return { status: "included_in_published_release", commit: args.commit, current_commit: identity.commit, release: identity.release, note: "Reload the skill to verify its current content; later commits may have changed it." };
     }
-    const runs = await git(`/actions/workflows/publish-r2.yml/runs?head_sha=${args.commit}&per_page=10`);
+    const workflow = env.GISUL_PUBLISH_WORKFLOW ?? "publish-r2.yml";
+    if (!/^[A-Za-z0-9_-]+\.ya?ml$/.test(workflow)) throw new ReleaseError("Invalid publication workflow configuration", 503);
+    const runs = await git(`/actions/workflows/${workflow}/runs?head_sha=${args.commit}&per_page=10`);
     const run = runs.workflow_runs?.[0];
-    return { status: run?.status === "completed" ? (run.conclusion === "success" ? "not_current" : "publication_failed") : "pending", commit: args.commit, workflow_status: run?.status ?? "not_started", conclusion: run?.conclusion ?? null, url: run?.html_url ?? `${webRoot}/actions/workflows/publish-r2.yml` };
+    return { status: run?.status === "completed" ? (run.conclusion === "success" ? "not_current" : "publication_failed") : "pending", commit: args.commit, workflow_status: run?.status ?? "not_started", conclusion: run?.conclusion ?? null, url: run?.html_url ?? `${webRoot}/actions/workflows/${workflow}` };
   }
   if (!["create_skill", "update_skill"].includes(tool)) throw new ReleaseError("Unknown write tool", 400);
   let name: string;

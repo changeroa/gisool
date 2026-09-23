@@ -11,14 +11,11 @@ export interface TeamEnv extends DirectEnv {
   GISUL_GITHUB_ORG: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
-  GISUL_WRITER_IDS?: string;
-  GISUL_BLOCKED_IDS?: string;
   GISUL_CI_TOKEN?: string;
 }
-type Props = { userId: string; login: string; githubToken: string; githubRefresh?: string; githubExpires?: number; canWrite: boolean };
+type Props = { userId: string; login: string; githubClientId: string; githubToken: string; githubRefresh?: string; githubExpires?: number; canWrite: boolean };
 type LoginState = { request: AuthRequest; cookieHash: string; verifier: string; phase: "consent" | "github"; expires: number };
 class AuthFailure extends Error { constructor(public status: number, message: string) { super(message); } }
-const list = (text = "") => text.split(",").map(item => item.trim()).filter(Boolean);
 const random = () => [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, "0")).join("");
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const cookieName = (state: string) => `__Host-gisul-${state.slice(0, 12)}`;
@@ -49,14 +46,17 @@ async function oauthToken(env: TeamEnv, values: Record<string, string>): Promise
   return result;
 }
 
-export async function member(env: TeamEnv, token: string, expectedId?: string): Promise<{ userId: string; login: string; canWrite: boolean }> {
+export async function member(env: TeamEnv, token: string, expectedId?: string): Promise<{ userId: string; login: string }> {
   const membership = await github(`/user/memberships/orgs/${encodeURIComponent(env.GISUL_GITHUB_ORG)}`, token);
   if (membership.state !== "active" || String(membership.organization?.login).toLowerCase() !== env.GISUL_GITHUB_ORG.toLowerCase()) throw new AuthFailure(403, "ARKPOINT 조직 가입을 완료한 계정으로 연결해 주세요.");
   const userId = String(membership.user?.id ?? "");
   const login = membership.user?.login;
   if (!/^\d+$/.test(userId) || typeof login !== "string" || (expectedId && expectedId !== userId)) throw new AuthFailure(401, "연결된 계정을 확인할 수 없습니다. 다시 로그인해 주세요.");
-  if (list(env.GISUL_BLOCKED_IDS).includes(userId)) throw new AuthFailure(403, "이 계정의 Gisul 접근이 중지되었습니다. 조직 관리자에게 문의해 주세요.");
-  return { userId, login, canWrite: list(env.GISUL_WRITER_IDS).includes(userId) && !!env.GISUL_GITHUB_TOKEN };
+  return { userId, login };
+}
+
+function currentGrant(props: Props, env: TeamEnv): void {
+  if (props.githubClientId !== env.GITHUB_CLIENT_ID) throw new AuthFailure(401, "Gisul 연결 방식이 업데이트되었습니다. Codex에서 GitHub 계정을 한 번 다시 연결해 주세요.");
 }
 
 async function loginState(request: Request, env: TeamEnv, state: string): Promise<LoginState> {
@@ -104,7 +104,7 @@ export const authHandler: ExportedHandler<TeamEnv> = {
         const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(saved.verifier));
         const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
         const authorize = new URL("https://github.com/login/oauth/authorize");
-        authorize.search = new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, redirect_uri: `${env.GISUL_PUBLIC_URL}/callback`, scope: "read:org", state, code_challenge: challenge, code_challenge_method: "S256", allow_signup: "false" }).toString();
+        authorize.search = new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, redirect_uri: `${env.GISUL_PUBLIC_URL}/callback`, state, code_challenge: challenge, code_challenge_method: "S256", allow_signup: "false" }).toString();
         return new Response(null, { status: 302, headers: { location: authorize.href, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
       }
       if (url.pathname === "/callback" && request.method === "GET") {
@@ -117,9 +117,11 @@ export const authHandler: ExportedHandler<TeamEnv> = {
         const token = await oauthToken(env, { code, redirect_uri: `${env.GISUL_PUBLIC_URL}/callback`, code_verifier: saved.verifier });
         const user = await member(env, token.access_token);
         const requested = saved.request.scope.length ? saved.request.scope : ["skills:read"];
-        const scope = requested.filter(s => s === "skills:read" || (s === "skills:write" && user.canWrite));
+        // Persist the approved operations. GitHub enforces this user's repository
+        // access on actual writes; there is no separate Gisul editor registry.
+        const scope = requested.filter(s => s === "skills:read" || s === "skills:write");
         if (!scope.includes("skills:read")) scope.push("skills:read");
-        const props: Props = { ...user, githubToken: token.access_token, githubRefresh: token.refresh_token, githubExpires: token.expires_in ? Date.now() + token.expires_in * 1000 : undefined, canWrite: user.canWrite && scope.includes("skills:write") };
+        const props: Props = { ...user, githubClientId: env.GITHUB_CLIENT_ID, githubToken: token.access_token, githubRefresh: token.refresh_token, githubExpires: token.expires_in ? Date.now() + token.expires_in * 1000 : undefined, canWrite: scope.includes("skills:write") };
         const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: saved.request, userId: user.userId, metadata: { login: user.login, organization: env.GISUL_GITHUB_ORG }, scope, props });
         return new Response(null, { status: 302, headers: { location: redirectTo, "cache-control": "no-store", "set-cookie": cookie(state, "", 0), "referrer-policy": "no-referrer" } });
       }
@@ -146,8 +148,9 @@ export default {
         if (new URL(req.url).pathname !== "/mcp") return new Response("Not found", { status: 404 });
         const props = context.props as Props;
         try {
-          const user = await member(bindings, props.githubToken, props.userId);
-          return serveMcp(req, { ...bindings, GISUL_NATIVE_TOOLS: "true" }, { canWrite: user.canWrite && props.canWrite });
+          currentGrant(props, bindings);
+          await member(bindings, props.githubToken, props.userId);
+          return serveMcp(req, { ...bindings, GISUL_NATIVE_TOOLS: "true", GISUL_GITHUB_TOKEN: props.githubToken }, { canWrite: props.canWrite });
         } catch (error) {
           const status = error instanceof AuthFailure ? error.status : 503;
           return Response.json({ error: status === 401 ? "invalid_token" : status === 403 ? "access_denied" : "temporarily_unavailable", message: error instanceof AuthFailure ? error.message : "조직 접근을 확인할 수 없습니다." }, { status, headers: { "cache-control": "no-store", ...(status === 401 ? { "www-authenticate": `Bearer error="invalid_token", resource_metadata="${base.origin}/.well-known/oauth-protected-resource/mcp"` } : {}) } });
@@ -158,17 +161,18 @@ export default {
       scopesSupported: ["skills:read", "skills:write"], accessTokenTTL: 900, refreshTokenTTL: 30 * 86400,
       allowPlainPKCE: false, allowImplicitFlow: false,
       clientIdMetadataDocumentEnabled: true,
-      resourceMetadata: { resource: `${base.origin}/mcp`, authorization_servers: [base.origin], scopes_supported: ["skills:read"], resource_name: "ARKPOINT Gisul" },
+      resourceMetadata: { resource: `${base.origin}/mcp`, authorization_servers: [base.origin], scopes_supported: ["skills:read", "skills:write"], resource_name: "ARKPOINT Gisul" },
       async tokenExchangeCallback(options) {
         let props = options.props as Props;
         try {
+          currentGrant(props, env);
           if (props.githubExpires && props.githubExpires < Date.now() + 60_000) {
             if (!props.githubRefresh) throw new AuthFailure(401, "GitHub login expired");
             const token = await oauthToken(env, { grant_type: "refresh_token", refresh_token: props.githubRefresh });
             props = { ...props, githubToken: token.access_token, githubRefresh: token.refresh_token, githubExpires: token.expires_in ? Date.now() + token.expires_in * 1000 : undefined };
           }
           const user = await member(env, props.githubToken, props.userId);
-          return { newProps: { ...props, ...user, canWrite: props.canWrite && user.canWrite }, accessTokenProps: { ...props, ...user, canWrite: props.canWrite && user.canWrite && options.requestedScope.includes("skills:write") } };
+          return { newProps: { ...props, ...user }, accessTokenProps: { ...props, ...user, canWrite: props.canWrite && options.requestedScope.includes("skills:write") } };
         } catch (error) { throw new OAuthError(error instanceof AuthFailure && error.status === 503 ? "temporarily_unavailable" : "invalid_grant", { description: "GitHub organization access could not be verified. Retry or sign in again." }); }
       },
     });
