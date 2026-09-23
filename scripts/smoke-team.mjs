@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const origin = "https://gisul-arkpoint.dev-987.workers.dev";
+const origin = "https://gisul.arkpoint.dev";
 async function get(path) {
   const response = await fetch(origin + path, { redirect: "error", signal: AbortSignal.timeout(15000) });
   assert.equal(response.status, 200, `${path} failed (${response.status})`);

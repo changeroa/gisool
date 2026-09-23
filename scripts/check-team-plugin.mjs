@@ -9,7 +9,7 @@ assert.equal(entry.source.path, "./plugins/gisul");
 const manifest = await read("plugins/gisul/.codex-plugin/plugin.json");
 assert.equal(manifest.name, "gisul");
 const config = await read("plugins/gisul/.mcp.json");
-assert.deepEqual(config.mcpServers.gisul, { type: "http", url: "https://gisul-arkpoint.dev-987.workers.dev/mcp", scopes: ["skills:read", "skills:write"] });
+assert.deepEqual(config.mcpServers.gisul, { type: "http", url: "https://gisul.arkpoint.dev/mcp", scopes: ["skills:read", "skills:write"] });
 const loader = await readFile(new URL("plugins/gisul/skills/gisul/SKILL.md", root), "utf8");
 assert.ok(loader.includes("load_id") && loader.includes("expected_digest"));
 console.log("Team plugin: direct HTTPS, no local command, no embedded credential; loader and marketplace present");
