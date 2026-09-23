@@ -3,9 +3,9 @@ name: Runtime validation
 on:
   push:
     branches: [main, feat/dev-tools-mvp]
-    paths: ['server/**', 'worker/**', 'clients/codex/**', '.github/workflows/runtime.yml']
+    paths: ['server/**', 'worker/**', 'clients/codex/**', 'plugins/**', '.agents/plugins/**', 'scripts/team-config.mjs', '.github/workflows/**']
   pull_request:
-    paths: ['server/**', 'worker/**', 'clients/codex/**', '.github/workflows/runtime.yml']
+    paths: ['server/**', 'worker/**', 'clients/codex/**', 'plugins/**', '.agents/plugins/**', 'scripts/team-config.mjs', '.github/workflows/**']
   workflow_dispatch:
 
 permissions:
@@ -31,5 +31,8 @@ jobs:
       - run: npm --prefix server run build:codex-plugin
       - run: npm --prefix worker run typecheck
       - run: npm --prefix worker test
+      - run: node scripts/check-team-plugin.mjs
+      - run: npx wrangler deploy --config wrangler.team.jsonc --dry-run
+        working-directory: worker
       - run: npx wrangler versions upload --dry-run
         working-directory: worker

@@ -1,0 +1,20 @@
+{
+  "name": "arkpoint",
+  "interface": {
+    "displayName": "Arkpoint"
+  },
+  "plugins": [
+    {
+      "name": "gisul",
+      "source": {
+        "source": "local",
+        "path": "./plugins/gisul"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

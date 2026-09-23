@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const root = new URL("../", import.meta.url);
+const read = async path => JSON.parse(await readFile(new URL(path, root), "utf8"));
+const marketplace = await read(".agents/plugins/marketplace.json");
+assert.equal(marketplace.name, "arkpoint");
+const entry = marketplace.plugins.find(plugin => plugin.name === "gisul");
+assert.equal(entry.source.path, "./plugins/gisul");
+const manifest = await read("plugins/gisul/.codex-plugin/plugin.json");
+assert.equal(manifest.name, "gisul");
+const config = await read("plugins/gisul/.mcp.json");
+assert.deepEqual(config.mcpServers.gisul, { type: "http", url: "https://gisul-arkpoint.dev-987.workers.dev/mcp", scopes: ["skills:read", "skills:write"] });
+const loader = await readFile(new URL("plugins/gisul/skills/gisul/SKILL.md", root), "utf8");
+assert.ok(loader.includes("load_id") && loader.includes("expected_digest"));
+console.log("Team plugin: direct HTTPS, no local command, no embedded credential; loader and marketplace present");

@@ -1,5 +1,7 @@
 # Deployment
 
+For the ARKPOINT native plugin, use [GitHub Actions deployment](arkpoint-plugin.md#provision-and-deploy-no-mac-mini). `worker/src/team.ts` serves native MCP tools and OAuth directly from Cloudflare. Mac mini clients use the same HTTPS connection as any other machine. The Mac mini instructions below are retained only for the older personal deployment and rollback; they are not team deployment prerequisites.
+
 ## Worker and private R2
 
 The Worker in this checkout serves `/mcp` directly from `SKILLS_BUCKET`. It has no origin URL, tunnel, SSH connection, or filesystem dependency. `GISUL_BEARER_TOKEN` authenticates MCP readers; `GISUL_WRITE_TOKEN` authenticates read/write clients and `GISUL_GITHUB_TOKEN` lets the Worker commit only through its fixed skill-content API; `GISUL_PUBLISH_TOKEN` authenticates publication. These secrets are separate from the Cloudflare account credentials used by Wrangler. Keep the bucket's public access disabled.

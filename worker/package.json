@@ -16,6 +16,7 @@
     "wrangler": "4.128.0"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.10.3",
     "yaml": "2.9.0"
   }
 }

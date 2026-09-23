@@ -3,6 +3,7 @@ import { ReleaseError } from "./r2-objects.ts";
 import { canonicalUri, mimeType, readDirectory, readResource, readSnapshot, resolveAlias } from "./release-reader.ts";
 import { skillWrite, writeTools } from "./skill-writer.ts";
 import { publisherFetch } from "./release-publisher.ts";
+import { readTools, skillRead } from "./skill-tools.ts";
 
 export interface DirectEnv {
   SKILLS_BUCKET: R2Bucket;
@@ -12,6 +13,8 @@ export interface DirectEnv {
   GISUL_GITHUB_TOKEN?: string;
   GISUL_SERVER_VERSION?: string;
   GISUL_ALLOWED_ORIGINS?: string;
+  GISUL_NATIVE_TOOLS?: string;
+  GISUL_SKILLS_REPOSITORY?: string;
 }
 
 const MODERN_VERSION = "2026-07-28";
@@ -34,8 +37,8 @@ function rpcError(request: Request, id: Rpc["id"], code: number, message: string
   return jsonResponse(request, { jsonrpc: "2.0", id: id ?? null, error: { code, message, ...(data === undefined ? {} : { data }) } }, status);
 }
 
-export default {
-  async fetch(request: Request, env: DirectEnv): Promise<Response> {
+// trusted is only supplied by the OAuth entrypoint after authentication and membership checks.
+export async function serveMcp(request: Request, env: DirectEnv, trusted?: { canWrite: boolean }): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/admin/")) return publisherFetch(request, env);
     if (url.pathname === "/healthz") return jsonResponse(request, { ok: true, service: "gisul-worker", storage: "r2" });
@@ -44,9 +47,9 @@ export default {
     const allowedOrigins = [url.origin, ...(env.GISUL_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean)];
     if (origin && !allowedOrigins.includes(origin)) return jsonResponse(request, { error: "Invalid origin" }, 403);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
-    if (!env.GISUL_BEARER_TOKEN) return jsonResponse(request, { error: "MCP authentication is not configured" }, 503);
-    const canWrite = !!env.GISUL_GITHUB_TOKEN && await validBearer(request, env.GISUL_WRITE_TOKEN ?? "");
-    if (!canWrite && !await validBearer(request, env.GISUL_BEARER_TOKEN)) return jsonResponse(request, { error: "Unauthorized" }, 401, { "www-authenticate": "Bearer" });
+    if (!trusted && !env.GISUL_BEARER_TOKEN) return jsonResponse(request, { error: "MCP authentication is not configured" }, 503);
+    const canWrite = !!env.GISUL_GITHUB_TOKEN && (trusted ? trusted.canWrite : await validBearer(request, env.GISUL_WRITE_TOKEN ?? ""));
+    if (!trusted && !canWrite && !await validBearer(request, env.GISUL_BEARER_TOKEN)) return jsonResponse(request, { error: "Unauthorized" }, 401, { "www-authenticate": "Bearer" });
     if (request.method !== "POST") return jsonResponse(request, { error: "Method Not Allowed" }, 405, { allow: "POST" });
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) return jsonResponse(request, { error: "Expected application/json" }, 415);
     const protocol = request.headers.get("mcp-protocol-version");
@@ -69,7 +72,8 @@ export default {
     } else if (protocol && !versions.includes(protocol)) return rpcError(request, rpc.id, -32600, "Unsupported MCP protocol version", 400);
     if (rpc.id === undefined) return jsonResponse(request, undefined, 202);
     const serverInfo = { name: "gisul", version: env.GISUL_SERVER_VERSION ?? "0.2.0" };
-    const capabilities = { ...(canWrite ? { tools: { listChanged: false } } : {}), resources: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } } };
+    const native = env.GISUL_NATIVE_TOOLS === "true";
+    const capabilities = { ...(canWrite || native ? { tools: { listChanged: false } } : {}), resources: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } } };
     const respond = (result: Record<string, unknown>) => jsonResponse(request, { jsonrpc: "2.0", id: rpc.id, result: modern ? {
       ...result, resultType: "complete",
       ...(cacheMethods.has(rpc.method) ? { ttlMs: 30_000, cacheScope: "private" } : {}),
@@ -83,8 +87,12 @@ export default {
       instructions: "Remote workflow skills. Discover metadata with skills/list, load a selected manifest with skills/get, then read supporting resources only when needed. Keep the returned commit in params._meta['io.gisul/commit'] for subsequent resource reads.",
     });
     if (rpc.method === "ping") return respond({});
-    if (rpc.method === "tools/list") return respond({ tools: canWrite ? writeTools : [] });
+    if (rpc.method === "tools/list") return respond({ tools: [...(native ? readTools : []), ...(canWrite ? writeTools : [])] });
     if (rpc.method === "tools/call") {
+      if (native && readTools.some(tool => tool.name === params.name)) {
+        try { return respond({ content: [{ type: "text", text: JSON.stringify(await skillRead(env.SKILLS_BUCKET, String(params.name), params.arguments ?? {}, url.origin, serverInfo.version)) }], isError: false }); }
+        catch (error) { return respond({ content: [{ type: "text", text: error instanceof ReleaseError ? error.message : "Skill could not be read or verified" }], isError: true }); }
+      }
       if (!canWrite) return rpcError(request, rpc.id, -32001, "A configured write credential is required", 403);
       try {
         const result = await skillWrite(env, String(params.name), params.arguments);
@@ -116,5 +124,6 @@ export default {
       const invalid = error instanceof ReleaseError && [400, 404].includes(error.status);
       return rpcError(request, rpc.id, invalid ? -32602 : -32603, error instanceof ReleaseError ? error.message : "Release could not be read or verified", modern ? (invalid ? 400 : 500) : 200);
     }
-  },
-} satisfies ExportedHandler<DirectEnv>;
+}
+
+export default { fetch: (request: Request, env: DirectEnv) => serveMcp(request, env) } satisfies ExportedHandler<DirectEnv>;

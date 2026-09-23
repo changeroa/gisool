@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gisul-arkpoint",
+  "main": "src/team.ts",
+  "compatibility_date": "2026-09-03",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "r2_buckets": [{ "binding": "SKILLS_BUCKET", "bucket_name": "gisul-arkpoint-releases" }],
+  "vars": {
+    "GISUL_PUBLIC_URL": "https://gisul-arkpoint.dev-987.workers.dev",
+    "GISUL_GITHUB_ORG": "Ark-Point",
+    "GISUL_SKILLS_REPOSITORY": "Ark-Point/gisul-skills"
+  }
+}

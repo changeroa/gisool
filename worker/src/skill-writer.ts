@@ -6,10 +6,13 @@ export interface WriteEnv {
   SKILLS_BUCKET: R2Bucket;
   GISUL_GITHUB_TOKEN?: string;
   GISUL_WRITE_TOKEN?: string;
+  GISUL_SKILLS_REPOSITORY?: string;
 }
-const repository = "changeroa/gisul-skills";
-const apiRoot = `https://api.github.com/repos/${repository}`;
-const webRoot = `https://github.com/${repository}`;
+function repository(env: WriteEnv): string {
+  const value = env.GISUL_SKILLS_REPOSITORY ?? "changeroa/gisul-skills";
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) throw new ReleaseError("Invalid skill repository configuration", 503);
+  return value;
+}
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const namePattern = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
 const digestPattern = "^sha256:[a-f0-9]{64}$";
@@ -23,6 +26,7 @@ export const writeTools = [
 type TreeEntry = { path: string; type: string; mode: string; sha: string };
 type GitCall = (path: string, method?: string, body?: unknown) => Promise<any>;
 function gitClient(env: WriteEnv): GitCall {
+  const apiRoot = `https://api.github.com/repos/${repository(env)}`;
   return async (path, method = "GET", body) => {
     let response: Response;
     try {
@@ -51,6 +55,7 @@ function decodeBlob(blob: { encoding: string; content: string }): string {
 }
 
 export async function skillWrite(env: WriteEnv, tool: string, args: unknown, git: GitCall = gitClient(env)): Promise<Record<string, unknown>> {
+  const webRoot = `https://github.com/${repository(env)}`;
   if (!env.GISUL_GITHUB_TOKEN) throw new ReleaseError("Skill writing is not configured", 503);
   if (!object(args)) throw new ReleaseError("Tool arguments must be an object", 400);
   if (tool === "get_skill_write_status") {

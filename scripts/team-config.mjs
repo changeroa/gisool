@@ -1,0 +1,16 @@
+import { readFile, writeFile } from "node:fs/promises";
+const root = new URL("../worker/", import.meta.url);
+const config = JSON.parse(await readFile(new URL("wrangler.team.jsonc", root), "utf8"));
+const id = process.env.GISUL_OAUTH_KV_ID;
+if (!id || !/^[a-f0-9]{32}$/.test(id)) throw new Error("GISUL_OAUTH_KV_ID must identify the team OAuth KV namespace");
+const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+if (!account || !/^[a-f0-9]{32}$/.test(account)) throw new Error("CLOUDFLARE_ACCOUNT_ID is required");
+config.account_id = account;
+config.kv_namespaces = [{ binding: "OAUTH_KV", id }];
+config.vars.GISUL_SERVER_VERSION = process.env.GITHUB_SHA ?? "development";
+config.vars.GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
+config.vars.GISUL_WRITER_IDS = process.env.GISUL_WRITER_IDS ?? "";
+config.vars.GISUL_BLOCKED_IDS = process.env.GISUL_BLOCKED_IDS ?? "";
+if (!config.vars.GITHUB_CLIENT_ID) throw new Error("GITHUB_CLIENT_ID must be configured before deployment");
+await writeFile(new URL("wrangler.team.generated.json", root), JSON.stringify(config, null, 2) + "\n");
+console.log("Generated Worker configuration (nonsecret values only)");
