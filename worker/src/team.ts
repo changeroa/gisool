@@ -11,6 +11,7 @@ export interface TeamEnv extends DirectEnv {
   GISUL_GITHUB_ORG: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  GITHUB_AUTH_MODE?: "app" | "oauth";
   GISUL_CI_TOKEN?: string;
 }
 type Props = { userId: string; login: string; githubClientId: string; githubToken: string; githubRefresh?: string; githubExpires?: number; canWrite: boolean };
@@ -105,6 +106,7 @@ export const authHandler: ExportedHandler<TeamEnv> = {
         const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
         const authorize = new URL("https://github.com/login/oauth/authorize");
         authorize.search = new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, redirect_uri: `${env.GISUL_PUBLIC_URL}/callback`, state, code_challenge: challenge, code_challenge_method: "S256", allow_signup: "false" }).toString();
+        if (env.GITHUB_AUTH_MODE === "oauth") authorize.searchParams.set("scope", saved.request.scope.includes("skills:write") ? "read:org repo" : "read:org");
         return new Response(null, { status: 302, headers: { location: authorize.href, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
       }
       if (url.pathname === "/callback" && request.method === "GET") {

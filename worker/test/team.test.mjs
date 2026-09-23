@@ -248,3 +248,11 @@ test("consent redirect requests GitHub App permissions without broad OAuth repo 
   assert.equal(upstream.searchParams.has("scope"), false);
   assert.equal(upstream.searchParams.get("code_challenge_method"), "S256");
 });
+
+test("OAuth app requests repository consent only for an editing connection", async t => {
+  const f = await fixture(t, { GITHUB_AUTH_MODE: "oauth" });
+  for (const [scope, expected] of [["skills:read", "read:org"], ["skills:read skills:write", "read:org repo"]]) {
+    const response = await f.authorize(await f.begin(scope));
+    assert.equal(new URL(response.headers.get("location")).searchParams.get("scope"), expected);
+  }
+});
