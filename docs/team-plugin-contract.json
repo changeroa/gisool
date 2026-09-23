@@ -75,18 +75,18 @@
     {
       "id": "persistent-initial-authorization",
       "text": "User grants read/edit once through the GitHub connection approval. Persist the consent through token renewals and later sign-ins; no separate Worker editor list, no user-supplied writer token, no recurring repository-role synchronization. GitHub still enforces the actual user token on writes; organization membership and revoked authentication continue to be checked.",
-      "status": "pending",
+      "status": "done",
       "source": "User explicitly confirmed GitHub connection approval as the single grant surface on 2026-09-23.",
       "evidence": [
-        "Implementation: 98e43911b52f751dab1fefb132f6fe5cf4be6cec; 55 Worker tests and runtime CI passed.",
-        "docs/deployment-2026-09-23.md: GitHub App installation returns 404; no live write verification or deployment yet."
+        "Runtime deployed: 33c1c449359feb70f00c7d3e9ff1f2490ca94a8e; 56 Worker tests and CI passed.",
+        "Real GitHub login and refresh retained skills:read skills:write; member-token update db4826479707c8abd1a09b817bc79b12b9fee424 published as 20260923.4; exact live bytes verified.",
+        "docs/deployment-2026-09-23.md"
       ]
     }
   ],
   "remaining": [
     "Cloudflare scoped API token for Worker GitHub Actions deployment",
-    "Mac mini client migration; machine client access has not been available",
-    "Resolve GitHub App installation 404, deploy persisted consent, and verify actual member edit/refresh/publication; implementation is committed and tested."
+    "Mac mini client migration; machine client access has not been available"
   ],
   "canonical_working_path": "/Users/victor/projects/gisul",
   "content_working_path": "/Users/victor/projects/arkpoint-gisul-skills",
@@ -94,7 +94,7 @@
   "deployment": {
     "requested": true,
     "status": "deployed",
-    "commit": "c6e5b717be5777617c9a72dc9a1a18326e4fcac4",
+    "commit": "33c1c449359feb70f00c7d3e9ff1f2490ca94a8e",
     "evidence": "docs/deployment-2026-09-23.md"
   }
 }
