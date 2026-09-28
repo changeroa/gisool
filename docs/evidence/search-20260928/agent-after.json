@@ -1,0 +1,248 @@
+{
+  "completed": 5,
+  "searched": 5,
+  "selection_successes": 4,
+  "irrelevant_ux_loads": 0,
+  "results": [
+    {
+      "case": "state-flow",
+      "session_id": "01a0e5ae-4433-71f1-96cb-b6af083066e9",
+      "calls": [
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "회원가입 이메일인증 상태전이 복구 검증",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:43:49.570Z",
+          "duration_ms": 1031.12,
+          "total": 2,
+          "names": [
+            "ux-state-review",
+            "test-behavior-flows"
+          ],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "tool": "load_skill",
+          "arguments": {
+            "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+            "uri": "skill://gisul/gisul/ux-state-review/SKILL.md"
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:44:03.740Z",
+          "duration_ms": 1051.84
+        },
+        {
+          "tool": "read_skill_file",
+          "arguments": {
+            "skill_uri": "skill://gisul/gisul/ux-state-review/SKILL.md",
+            "load_id": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc.16ece1b19f4e177f33f52f1d902683a0d70bf9f95a6836b1b08dcbc717533ed5",
+            "uri": "skill://gisul/gisul/ux-state-review/references/review-cases.md"
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:44:14.211Z",
+          "duration_ms": 1040.29
+        }
+      ],
+      "completed": true,
+      "prompt": "회원가입 후 이메일 인증을 기다리는 동안 사용자가 새로고침하거나 인증 링크가 만료될 수 있어. 이 가입 흐름에서 빠뜨리기 쉬운 상태와 다음 행동을 검토하고, 검증할 시나리오를 간단히 작성해줘. 실제 앱 접속이나 파일 수정은 필요 없어.",
+      "started_at": "2026-09-28T01:43:34.782Z",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "duration_ms": 92231,
+      "answer": "**새로고침 후 상태 복원, 만료 후 복구, 다른 기기에서 인증한 뒤 이어가기**가 주요 점검 대상입니다. 아래는 실제 구현을 확인하지 않은 설계 검토안입니다.\n\n| 빠뜨리기 쉬운 상태 | 안내와 다음 행동 |\n|---|---|\n| 새로고침·직접 재진입 | 서버에서 인증 상태를 확인해 대기 또는 완료 화면을 복원. 확인 중에는 미인증으로 단정하지 않기 |\n| 상태 확인 실패 | “인증 상태를 확인하지 못했습니다”와 재시도 제공. 링크 만료와 구분 |\n| 메일 미도착·주소 오입력 | 발송 대상 주소, 스팸함 확인, 재전송 안내. 주소 수정 경로도 마련 |\n| 재전송 중·실패·대기시간 | 처리 중 중복 요청 방지, 실패 시 재시도, 재전송 가능 시점 표시. 성공 응답 전에 “발송 완료”를 표시하지 않기 |\n| 링크 만료·무효 | 원인을 안내하고 새 인증 메일 요청으로 연결. 가입 정보를 처음부터 다시 입력하게 하지 않기 |\n| 다른 탭·기기에서 인증 완료 / 사용한 링크 재클릭 | 현재 인증 상태를 재확인해 완료 안내와 다음 단계 제공. 완료된 사용자를 계속 대기시키지 않기 |\n| 세션 만료·다른 계정으로 로그인 중 | 인증 완료와 로그인 완료를 구분. 필요하면 로그인·계정 전환으로 연결하고 다른 계정의 완료로 표시하지 않기 |\n\n검증 시나리오는 다음처럼 잡으면 됩니다.\n\n1. **인증 대기 → 새로고침·브라우저 재실행:** 대기 상태가 복원되고, 계정 생성이나 메일 발송이 중복 실행되지 않는다.\n2. **다른 기기에서 인증 → 기존 탭 복귀:** 상태 재확인 후 다음 단계로 진행한다. 늦게 도착한 이전 응답 때문에 대기로 되돌아가지 않는다.\n3. **만료 직전·직후 링크 열기 → 재전송 → 새 링크 인증:** 서버 기준으로 만료를 판정하고 복구할 수 있다. 이전 링크의 동작도 정한 정책과 일치한다.\n4. **재전송 연속 클릭·새로고침·통신 실패:** 중복 발송과 대기시간 우회를 막고, 실패를 성공으로 표시하지 않는다.\n5. **동일 링크 두 번 열기·동시 인증:** 중복 처리 없이 현재 상태에 맞게 안내하고 이어갈 수 있다.\n6. **세션 만료·다른 계정 로그인·이메일 수정 후 링크 열기:** 인증 대상이 뒤섞이지 않고, 올바른 계정으로 이어갈 경로가 있다.\n\n재전송 시 이전 링크의 유효 여부, 이메일 수정 후 기존 링크 처리, 인증 후 자동 로그인 여부는 먼저 정책으로 정해두면 기대 결과가 명확해집니다.",
+      "loaded": [
+        "ux-state-review"
+      ],
+      "searched": true,
+      "selection_success": true
+    },
+    {
+      "case": "prose",
+      "session_id": "01a0e5b0-24fc-7390-8417-c80d15860758",
+      "calls": [
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "안내문 간결화 중복 제거",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:45:48.796Z",
+          "duration_ms": 943.17,
+          "total": 2,
+          "names": [
+            "debloat",
+            "re0"
+          ],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "tool": "load_skill",
+          "arguments": {
+            "uri": "skill://gisul/gisul/debloat/SKILL.md",
+            "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc"
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:45:55.647Z",
+          "duration_ms": 962.49
+        }
+      ],
+      "completed": true,
+      "prompt": "다음 안내문은 의미가 반복되고 너무 길어. 의미는 유지하면서 간결하게 다듬어줘. 파일 수정은 필요 없어.\n“본 서비스의 이용을 시작하시기 이전에, 서비스를 이용하는 데 필요한 준비 사항을 먼저 사전에 확인해 주시기 바랍니다. 준비 사항의 확인이 완료된 이후에는 서비스를 이용하기 위한 이용 시작 버튼을 클릭하시면 서비스 이용을 시작하실 수 있습니다.”",
+      "started_at": "2026-09-28T01:45:35.875Z",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "duration_ms": 32741,
+      "answer": "서비스 이용 전 준비 사항을 확인해 주세요. 확인 후 ‘이용 시작’ 버튼을 클릭하면 서비스를 시작할 수 있습니다.",
+      "loaded": [
+        "debloat"
+      ],
+      "searched": true,
+      "selection_success": true
+    },
+    {
+      "case": "simple-edit",
+      "session_id": "01a0e5b1-2ed1-7053-b184-9e3f3bf4700d",
+      "calls": [
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "버튼 문구 의미 검토",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:46:52.632Z",
+          "duration_ms": 787.68,
+          "total": 0,
+          "names": [],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "문구 검토",
+            "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:46:56.803Z",
+          "duration_ms": 787.88,
+          "total": 0,
+          "names": [],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        }
+      ],
+      "completed": true,
+      "prompt": "버튼 문구 “저장하기”를 “저장”으로 바꿨을 때 사용자 의미가 달라지는지 한 문장으로 검토해줘. 파일 수정은 필요 없어.",
+      "started_at": "2026-09-28T01:46:42.179Z",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "duration_ms": 22540,
+      "answer": "버튼 문구를 “저장하기”에서 “저장”으로 바꿔도 사용자가 기대하는 저장 동작의 의미는 달라지지 않고, 표현만 더 간결해집니다.",
+      "loaded": [],
+      "searched": true,
+      "selection_success": true
+    },
+    {
+      "case": "dev-status",
+      "session_id": "01a0e5b2-034e-7f21-aba5-17fc46cf4926",
+      "calls": [
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "개발 진행상황 공유 검증 일정",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:48:16.963Z",
+          "duration_ms": 876.44,
+          "total": 1,
+          "names": [
+            "development-status"
+          ],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "tool": "load_skill",
+          "arguments": {
+            "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+            "uri": "skill://gisul/gisul/development-status/SKILL.md"
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:48:25.142Z",
+          "duration_ms": 998.82
+        }
+      ],
+      "completed": true,
+      "prompt": "아래 개발 기록을 팀원이 읽을 진행 상황 공유문으로 정리해줘. 완료된 것과 아직 검증하지 않은 것, 일정에 영향을 줄 수 있는 부분이 드러나야 해. 외부 조회나 실제 메시지 전송, 파일 수정은 필요 없어.\n- 로그인 API 구현 및 단위 테스트 통과\n- 프런트 연동 PR은 리뷰 중\n- 브라우저에서 로그인부터 로그아웃까지 연결한 검증은 아직 안 함\n- 스테이징 배포는 내일 예정이지만 인증 제공자 설정 승인이 필요함\n- 담당자에게 승인 시점 확인이 필요함",
+      "started_at": "2026-09-28T01:47:35.482Z",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "duration_ms": 73073,
+      "answer": "로그인 API 구현을 완료했고 단위 테스트는 통과했습니다. **내일 스테이징 배포를 예정하고 있으나, 인증 제공자 설정 승인 시점에 따라 일정이 달라질 수 있습니다.**\n\n- **리뷰 중:** 프런트엔드 연동 PR\n- **미검증:** 브라우저에서 로그인부터 로그아웃까지 이어지는 전체 흐름\n- **확인 필요:** 담당자에게 인증 제공자 설정 승인 가능 시점을 확인해 내일 배포 가능 여부를 판단해야 합니다.",
+      "loaded": [
+        "development-status"
+      ],
+      "searched": true,
+      "selection_success": true
+    },
+    {
+      "case": "dev-status-unconstrained",
+      "session_id": "01a0e5b3-a441-7cd2-84e7-51354bb0391e",
+      "calls": [
+        {
+          "tool": "search_skills",
+          "arguments": {
+            "mode": "discovery",
+            "query": "개발 진행상황 공유문 검증 일정",
+            "limit": 5
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:49:35.144Z",
+          "duration_ms": 822.5,
+          "total": 1,
+          "names": [
+            "development-status"
+          ],
+          "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+          "runtime": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "tool": "load_skill",
+          "arguments": {
+            "commit": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc",
+            "uri": "skill://gisul/gisul/development-status/SKILL.md"
+          },
+          "plugin": "gisul@arkpoint",
+          "time": "2026-09-28T01:49:42.043Z",
+          "duration_ms": 1019.77
+        }
+      ],
+      "completed": true,
+      "prompt": "아래 개발 기록을 팀원이 읽을 진행 상황 공유문으로 정리해줘. 완료된 것과 아직 검증하지 않은 것, 일정에 영향을 줄 수 있는 부분이 드러나야 해. 실제 메시지를 전송하지는 말고 공유문 초안을 작성해줘.\n- 로그인 API 구현 및 단위 테스트 통과\n- 프런트 연동 PR은 리뷰 중\n- 브라우저에서 로그인부터 로그아웃까지 연결한 검증은 아직 안 함\n- 스테이징 배포는 내일 예정이지만 인증 제공자 설정 승인이 필요함\n- 담당자에게 승인 시점 확인이 필요함",
+      "started_at": "2026-09-28T01:49:21.707Z",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "duration_ms": 41976,
+      "answer": "로그인 기능 개발 현황 공유드립니다. **스테이징 배포는 내일 예정이지만, 인증 제공자 설정 승인이 필요해 승인 시점에 따라 일정이 조정될 수 있습니다.**\n\n- **완료:** 로그인 API 구현 및 단위 테스트 통과.\n- **진행 중:** 프런트 연동 PR 리뷰 중.\n- **미검증:** 브라우저에서 로그인부터 로그아웃까지 이어지는 전체 흐름은 아직 검증하지 않았습니다. 실제 연동 동작 확인이 남아 있습니다.\n- **일정 확인 필요:** 담당자에게 인증 제공자 설정의 승인 예상 시점을 확인해야 합니다. 확인 후 내일 스테이징 배포 가능 여부를 판단할 수 있습니다.",
+      "loaded": [
+        "development-status"
+      ],
+      "searched": true,
+      "selection_success": true
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # ARKPOINT registration metadata deployment — 2026-09-28
 
+The later [search discovery deployment](search-discovery-20260928.md) records the current runtime/content identities. This page preserves the registration rollout's original evidence.
+
 ## Implemented behavior
 
 Native search and load expose only four registration fields: created_by, created_at, updated_by, updated_at. GitHub account logins and team Git history determine the values. Supporting-file edits update the edit information; publication-only changes leave it unchanged. Skill bodies stay unchanged. Prior pinned releases without metadata return null.

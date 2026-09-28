@@ -86,7 +86,7 @@ The native `load_id` is a stateless release/manifest identity, not an authorizat
 
 Local acceptance includes a clean Codex-home marketplace installation, native `streamable_http` configuration, Worker OAuth integration tests, staged-version read tests, plugin validation, TypeScript checks and dry-run Worker compilation. Record real deployment commit, Cloudflare version, content release, login/read evidence and canonical paths in a dated deployment record when production activation is complete.
 
-Current activation status and exact deployment evidence: [2026-09-28 deployment](deployment-2026-09-28.md).
+Current runtime/content identities and discovery verification: [2026-09-28 search deployment](search-discovery-20260928.md). The earlier [registration metadata deployment](deployment-2026-09-28.md) remains recorded separately.
 
 ## Skill registration details
 

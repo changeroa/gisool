@@ -2,19 +2,194 @@
   "schema_version": 2,
   "task_id": "gisul-search-quality-20260928",
   "objective": "Improve subject-first skill discovery, relevance, abstention, policy visibility and measured latency; publish verified runtime/content and validate fresh Codex sessions.",
-  "status": "in_progress",
+  "status": "complete",
   "requirements": [
-    {"id":"ranking","text":"Improve natural-language retrieval without regressing exact identities, irrelevant-query abstention or explicit invocation policy.","source":"User: 검색 관련 벤치마크들 전부 높이는 방향으로 진행","checks":["benchmark","server","worker"]},
-    {"id":"metadata","text":"Publish bilingual discovery metadata with valid immutable content; preserve skill bodies and deliberate invocation restrictions.","source":"Current user request and search benchmark findings","checks":["content"]},
-    {"id":"production","text":"Verify deployed authenticated search/load against the new benchmark and exact identity/policy checks.","source":"Current user request; existing ARKPOINT deployment authorization","checks":["live"]},
-    {"id":"agent","text":"Rerun fresh Herdr Codex sessions with original prompts; report observed search, selection, false activation and timing without overstating sample size.","source":"User's Herdr benchmark request continues into improvement","checks":["sessions"]}
+    {
+      "id": "ranking",
+      "text": "Improve natural-language retrieval without regressing exact identities, irrelevant-query abstention or explicit invocation policy.",
+      "source": "User: 검색 관련 벤치마크들 전부 높이는 방향으로 진행",
+      "checks": [
+        "benchmark",
+        "server",
+        "worker"
+      ]
+    },
+    {
+      "id": "metadata",
+      "text": "Publish bilingual discovery metadata with valid immutable content; preserve skill bodies and deliberate invocation restrictions.",
+      "source": "Current user request and search benchmark findings",
+      "checks": [
+        "content"
+      ]
+    },
+    {
+      "id": "production",
+      "text": "Verify deployed authenticated search/load against the new benchmark and exact identity/policy checks.",
+      "source": "Current user request; existing ARKPOINT deployment authorization",
+      "checks": [
+        "live"
+      ]
+    },
+    {
+      "id": "agent",
+      "text": "Rerun fresh Herdr Codex sessions with original prompts; report observed search, selection, false activation and timing without overstating sample size.",
+      "source": "User's Herdr benchmark request continues into improvement",
+      "checks": [
+        "sessions"
+      ]
+    }
   ],
   "checks": [
-    {"id":"benchmark","cwd":"/Users/victor/projects/gisul","command":["node","server/bench/search.mjs","--inventory","docs/evidence/search-20260928/catalog-after.json","--check"],"format":"exit","inputs":["server/src/skill-search.ts","server/bench","docs/evidence/search-20260928/catalog-after.json"]},
-    {"id":"server","cwd":"/Users/victor/projects/gisul","command":["npm","--prefix","server","test"],"format":"exit","inputs":["server/src","server/test","server/package.json"]},
-    {"id":"worker","cwd":"/Users/victor/projects/gisul","command":["npm","--prefix","worker","test"],"format":"exit","inputs":["server/src","worker/src","worker/test","worker/package.json"]},
-    {"id":"content","cwd":"/Users/victor/projects/arkpoint-gisul-skills","command":["npm","run","validate"],"format":"exit","inputs":["skills","scripts/validate.mjs"]},
-    {"id":"live","cwd":"/Users/victor/projects/gisul","command":["node","scripts/check-search-live.mjs","--token-file","/Users/victor/.config/gisul-arkpoint/machine-secrets.json","--output","docs/evidence/search-20260928/live.json"],"format":"json","inputs":["scripts/check-search-live.mjs","server/bench/search-cases.json","docs/evidence/search-20260928/catalog-after.json"],"assertions":[{"pointer":"/executed","op":"eq","value":54},{"pointer":"/hit_at_1","op":"gte","value":0.9},{"pointer":"/negative_abstention","op":"eq","value":1},{"pointer":"/exact","op":"eq","value":39}],"max_age_seconds":14400},
-    {"id":"sessions","cwd":"/Users/victor/projects/gisul","command":["python3","scripts/check-search-sessions.py"],"format":"json","inputs":["scripts/check-search-sessions.py","docs/evidence/search-20260928/agent-cases.json"],"assertions":[{"pointer":"/completed","op":"gte","value":5},{"pointer":"/searched","op":"gte","value":5},{"pointer":"/irrelevant_ux_loads","op":"eq","value":0}]}
-  ]
+    {
+      "id": "benchmark",
+      "cwd": "/Users/victor/projects/gisul",
+      "command": [
+        "node",
+        "server/bench/search.mjs",
+        "--inventory",
+        "docs/evidence/search-20260928/catalog-after.json",
+        "--check"
+      ],
+      "format": "exit",
+      "inputs": [
+        "server/src/skill-search.ts",
+        "server/bench",
+        "docs/evidence/search-20260928/catalog-after.json"
+      ]
+    },
+    {
+      "id": "server",
+      "cwd": "/Users/victor/projects/gisul",
+      "command": [
+        "npm",
+        "--prefix",
+        "server",
+        "test"
+      ],
+      "format": "exit",
+      "inputs": [
+        "server/src",
+        "server/test",
+        "server/package.json"
+      ]
+    },
+    {
+      "id": "worker",
+      "cwd": "/Users/victor/projects/gisul",
+      "command": [
+        "npm",
+        "--prefix",
+        "worker",
+        "test"
+      ],
+      "format": "exit",
+      "inputs": [
+        "server/src",
+        "worker/src",
+        "worker/test",
+        "worker/package.json"
+      ]
+    },
+    {
+      "id": "content",
+      "cwd": "/Users/victor/projects/arkpoint-gisul-skills",
+      "command": [
+        "npm",
+        "run",
+        "validate"
+      ],
+      "format": "exit",
+      "inputs": [
+        "skills",
+        "scripts/validate.mjs"
+      ]
+    },
+    {
+      "id": "live",
+      "cwd": "/Users/victor/projects/gisul",
+      "command": [
+        "node",
+        "scripts/check-search-live.mjs",
+        "--token-file",
+        "/Users/victor/.config/gisul-arkpoint/machine-secrets.json",
+        "--output",
+        "docs/evidence/search-20260928/live.json"
+      ],
+      "format": "json",
+      "inputs": [
+        "scripts/check-search-live.mjs",
+        "server/bench/search-cases.json",
+        "docs/evidence/search-20260928/catalog-after.json"
+      ],
+      "assertions": [
+        {
+          "pointer": "/executed",
+          "op": "eq",
+          "value": 54
+        },
+        {
+          "pointer": "/hit_at_1",
+          "op": "gte",
+          "value": 0.9
+        },
+        {
+          "pointer": "/negative_abstention",
+          "op": "eq",
+          "value": 1
+        },
+        {
+          "pointer": "/exact",
+          "op": "eq",
+          "value": 39
+        },
+        {
+          "pointer": "/runtime",
+          "op": "eq",
+          "value": "6f8871285f7b850047151d757dba6d63b4935025"
+        },
+        {
+          "pointer": "/commit",
+          "op": "eq",
+          "value": "bf5c9674aee361bcaa183e78488cc5bb1b8a40cc"
+        }
+      ],
+      "max_age_seconds": 14400
+    },
+    {
+      "id": "sessions",
+      "cwd": "/Users/victor/projects/gisul",
+      "command": [
+        "python3",
+        "scripts/check-search-sessions.py"
+      ],
+      "format": "json",
+      "inputs": [
+        "scripts/check-search-sessions.py",
+        "docs/evidence/search-20260928/agent-cases.json"
+      ],
+      "assertions": [
+        {
+          "pointer": "/completed",
+          "op": "gte",
+          "value": 5
+        },
+        {
+          "pointer": "/searched",
+          "op": "gte",
+          "value": 5
+        },
+        {
+          "pointer": "/irrelevant_ux_loads",
+          "op": "eq",
+          "value": 0
+        },
+        {
+          "pointer": "/selection_successes",
+          "op": "gte",
+          "value": 4
+        }
+      ]
+    }
+  ],
+  "change_basis": "Strengthen the existing production and agent acceptance checks: pin the actual deployed runtime/content commits and require four relevant skill selections in the already-frozen five scenarios. This implements the approved search benchmark improvement objective without reducing any requirement."
 }

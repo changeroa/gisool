@@ -35,9 +35,11 @@ for case in cases:
         result['calls'].append(call)
     result['loaded'] = [c['arguments']['uri'].split('/')[-2] for c in result['calls'] if c['tool'] == 'load_skill']
     result['searched'] = any(c['tool'] == 'search_skills' for c in result['calls'])
+    result['selection_success'] = bool(set(result['loaded']) & set(case['expected'])) if case['expected'] else not result['loaded']
     rows.append(result)
 assert len({r['session_id'] for r in rows}) == len(rows)
 summary = {'completed': sum(r['completed'] for r in rows), 'searched': sum(r['searched'] for r in rows),
+           'selection_successes': sum(r['selection_success'] for r in rows if r['case'] != 'simple-edit'),
            'irrelevant_ux_loads': sum('ux-state-review' in r['loaded'] for r in rows if r['case'] != 'state-flow'),
            'results': rows}
 (evidence / 'agent-after.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
