@@ -2,7 +2,8 @@ import { assertCommit, assertDigest, readCurrent, readVerifiedObject, releaseKey
 import type { FileDigest, ReleaseIdentity } from "./r2-objects.ts";
 
 export type SkillResource = FileDigest & { uri: string };
-export type SkillEntry = { uri: string; frontmatter: Record<string, unknown> & { name: string; description: string }; resources: SkillResource[] };
+export type SkillRegistration = { created_by: string; created_at: string; updated_by: string; updated_at: string };
+export type SkillEntry = { uri: string; frontmatter: Record<string, unknown> & { name: string; description: string }; resources: SkillResource[]; registration?: SkillRegistration };
 export type ReleaseFile = FileDigest & { path: string; uri?: string };
 export type ReleaseInventory = {
   schema_version: 1;
@@ -51,6 +52,13 @@ export function parseInventory(text: string, identity: ReleaseIdentity): Snapsho
     canonicalUri(entry.uri);
     if (!entry.uri.endsWith("/SKILL.md") || skills.has(entry.uri) || typeof entry.frontmatter?.name !== "string" || entry.frontmatter.name !== decodeURIComponent(entry.uri.split("/").at(-2)!) || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description || !Array.isArray(entry.resources) || entry.resources.length > 512) throw new ReleaseError("Invalid skill manifest");
     skills.add(entry.uri);
+    if (entry.registration !== undefined) {
+      const value = entry.registration;
+      const keys = ["created_by", "created_at", "updated_by", "updated_at"];
+      const login = (s: unknown) => typeof s === "string" && /^[a-z\d][a-z\d-]{0,38}(?:\[bot\])?$/i.test(s);
+      const timestamp = (s: unknown) => typeof s === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString() === s;
+      if (!value || typeof value !== "object" || Object.keys(value).length !== 4 || keys.some(key => !Object.hasOwn(value, key)) || !login(value.created_by) || !login(value.updated_by) || !timestamp(value.created_at) || !timestamp(value.updated_at) || value.updated_at < value.created_at) throw new ReleaseError("Invalid skill registration metadata");
+    }
     const root = entry.uri.slice(0, -8);
     const resources = new Set<string>();
     let size = 0;

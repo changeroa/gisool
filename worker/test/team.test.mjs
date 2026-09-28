@@ -10,14 +10,14 @@ const uri = "skill://gisul/gisul/example/SKILL.md";
 const hash = body => `sha256:${createHash("sha256").update(body).digest("hex")}`;
 const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/team.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:workers"] });
 
-async function release(bucket, letter) {
+async function release(bucket, letter, registration) {
   const commit = letter.repeat(40);
   const markdown = `---\nname: example\ndescription: Team review workflow\n---\nRevision ${letter}\n`;
   const contents = [["SKILL.md", markdown], ["references/guide.md", `Guide ${letter}`]];
   const resources = contents.map(([path, text]) => ({ uri: uri.replace("SKILL.md", path), digest: hash(text), size: Buffer.byteLength(text) }));
   const files = contents.map(([path, text]) => ({ path: `skills/example/${path}`, uri: uri.replace("SKILL.md", path), digest: hash(text), size: Buffer.byteLength(text) }));
   for (const [index, [, text]] of contents.entries()) await bucket.put(`releases/${commit}/${files[index].path}`, text);
-  const inventory = JSON.stringify({ schema_version: 1, commit, release: `team-${letter}`, skills: [{ uri, frontmatter: { name: "example", description: "Team review workflow" }, resources }], files, aliases: {} });
+  const inventory = JSON.stringify({ schema_version: 1, commit, release: `team-${letter}`, skills: [{ uri, frontmatter: { name: "example", description: "Team review workflow" }, resources, ...(registration ? { registration } : {}) }], files, aliases: {} });
   const identity = { commit, release: `team-${letter}`, inventory_digest: hash(inventory) };
   await bucket.put(`releases/${commit}/inventory.json`, inventory);
   await bucket.put(`releases/${commit}/complete.json`, JSON.stringify(identity));
@@ -140,6 +140,41 @@ test("member login enables direct search/load/read and pins files across later r
   const outside = await (await f.rpc(token.access_token, "tools/call", { name: "read_skill_file", arguments: { skill_uri: uri, uri: "skill://gisul/gisul/other/SKILL.md", load_id: loaded.load_id } })).json();
   assert.equal(outside.result.isError, true);
   assert.equal((await f.fetch(`/callback?state=${token.flow.state}&code=replay`, { headers: { cookie: token.flow.cookie } })).status, 400);
+});
+
+test("native search and load expose four registration fields and keep them pinned across edits", async t => {
+  const f = await fixture(t);
+  const token = await f.login();
+  const fields = ["created_by", "created_at", "updated_by", "updated_at"];
+  const pick = value => Object.fromEntries(fields.map(key => [key, value[key]]));
+  const old = await f.tool(token.access_token, "load_skill", { uri });
+  assert.deepEqual(pick(old), Object.fromEntries(fields.map(key => [key, null])));
+  const first = { created_by: "alice", created_at: "2026-09-23T00:00:00.000Z", updated_by: "alice", updated_at: "2026-09-23T00:00:00.000Z" };
+  const registered = await release(f.bucket, "b", first);
+  for (const mode of ["legacy", "explicit", "automatic"]) {
+    const found = await f.tool(token.access_token, "search_skills", { query: "review", mode });
+    assert.deepEqual(pick(found.skills[0]), first);
+    assert.equal(Object.hasOwn(found.skills[0], "source"), false);
+  }
+  const edited = { ...first, updated_by: "bob", updated_at: "2026-09-24T00:00:00.000Z" };
+  await release(f.bucket, "c", edited);
+  assert.deepEqual(pick(await f.tool(token.access_token, "load_skill", { uri })), edited);
+  assert.deepEqual(pick(await f.tool(token.access_token, "load_skill", { uri, commit: registered.commit })), first);
+  const pinned = await f.tool(token.access_token, "search_skills", { commit: registered.commit });
+  assert.deepEqual(pick(pinned.skills[0]), first);
+});
+
+test("invalid registration metadata cannot be served as a verified release", async t => {
+  const f = await fixture(t);
+  const token = await f.login();
+  const valid = { created_by: "alice", created_at: "2026-09-23T00:00:00.000Z", updated_by: "bob", updated_at: "2026-09-24T00:00:00.000Z" };
+  for (const registration of [{ ...valid, updated_at: "2026-09-22T00:00:00.000Z" }, { ...valid, created_by: "<forged>" }, { ...valid, created_at: "2026-02-30T00:00:00.000Z" }, { ...valid, source: "extra" }, { created_by: "alice" }]) {
+    await release(f.bucket, "b", registration);
+    const response = await f.rpc(token.access_token, "tools/call", { name: "search_skills", arguments: {} });
+    const result = await response.json();
+    assert.equal(result.result.isError, true, JSON.stringify(result));
+    assert.match(result.result.content[0].text, /registration metadata/);
+  }
 });
 
 test("reader scope cannot write; membership revocation and outages remain distinct", async t => {
