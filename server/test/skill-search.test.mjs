@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createCodexBridge } from "../dist/codex.js";
+import { searchSkills } from "../dist/skill-search.js";
 
 const make = (source, name, keywords = [], manual = false) => {
   const uri = `skill://gisul/${source}/${name}/SKILL.md`;
@@ -36,6 +37,9 @@ test("ranked discovery preserves exact identities, uses bilingual keywords and r
   assert.deepEqual(ranked.skills.slice(0, 2).map(item => item.uri), [entries[2].uri, entries[1].uri], "exact same-named sources stay distinct and rank before substrings");
   const manual = ranked.skills.find(item => item.uri === entries[3].uri);
   assert.equal(manual.invocation, "explicit");
+  const discovery = await search({ query: "평가 설계", mode: "discovery" });
+  assert.equal(discovery.totalMatches, 3);
+  assert.equal(discovery.skills.find(item => item.uri === entries[3].uri).invocation, "explicit");
   const automatic = await search({ query: "평가  설계".normalize("NFD"), mode: "automatic", limit: 1 });
   assert.equal(automatic.totalMatches, 2);
   assert.equal(automatic.skills[0].invocation, "automatic");
@@ -47,7 +51,7 @@ test("ranked discovery preserves exact identities, uses bilingual keywords and r
   assert.equal((await search({ query: "spec", mode: "automatic" })).totalMatches, 0, "short Latin terms cannot match inside another word such as inspector");
   assert.equal((await search({ query: "spec" })).totalMatches, 4, "legacy clients retain substring behavior");
   const before = requests;
-  for (const args of [{ mode: "automatic" }, { mode: "automatic", query: "  " }, { mode: "typo" }]) {
+  for (const args of [{ mode: "automatic" }, { mode: "automatic", query: "  " }, { mode: "discovery" }, { mode: "discovery", query: "  " }, { mode: "typo" }]) {
     assert.equal((await client.callTool({ name: "search_skills", arguments: args })).isError, true);
   }
   assert.equal(requests, before, "invalid discovery does not enumerate the upstream catalog");
@@ -83,7 +87,7 @@ test("compact excerpts retain Unicode and full descriptions remain searchable", 
   const [front, back] = InMemoryTransport.createLinkedPair();
   await server.connect(back); await client.connect(front);
   t.after(async () => { await client.close(); await server.close(); });
-  for (const mode of ["legacy", "automatic", "explicit"]) {
+  for (const mode of ["legacy", "automatic", "explicit", "discovery"]) {
     const response = await client.callTool({ name: "search_skills", arguments: { query: "needle", mode } });
     assert.ok(!response.isError);
     const data = JSON.parse(response.content[0].text);
@@ -101,4 +105,24 @@ test("compact excerpts retain Unicode and full descriptions remain searchable", 
     assert.equal(next.nextOffset, undefined);
     assert.equal(new Set([...data.skills, ...next.skills].map(item => item.uri)).size, 7);
   }
+});
+
+test("natural requests rank subject evidence, preserve identity and abstain on incidental words", () => {
+  const docs = [
+    { uri: 'skill://test/state/SKILL.md', name: 'state', description: '온보딩과 인증 대기 상태를 검토한다.', keywords: ['이메일 인증', '링크 만료'], automatic: true, digest: '1' },
+    { uri: 'skill://test/report/SKILL.md', name: 'report', description: '개발 진행 상황 공유문을 작성한다.', keywords: ['진행 상황', '일정 의존성'], automatic: true, digest: '2' },
+    { uri: 'skill://test/manual/SKILL.md', name: 'manual', description: '실패 원인 분석 방법', keywords: ['실패 원인'], automatic: false, digest: '3' },
+  ];
+  assert.equal(searchSkills(docs, '이메일 인증 링크가 만료되면 다음에 무엇을 보여줄지 검토해줘', 'discovery')[0].name, 'state');
+  assert.equal(searchSkills(docs, '개발 진행 상황을 팀에 공유할 때 일정 의존성도 설명해줘', 'automatic')[0].name, 'report');
+  assert.equal(searchSkills(docs, '토마토 조리 방법', 'discovery').length, 0);
+  assert.equal(searchSkills(docs, '치통 원인 치료 방법', 'discovery').length, 0);
+  assert.equal(searchSkills(docs, 'manual', 'discovery')[0].automatic, false);
+  assert.equal(searchSkills(docs, 'manual', 'automatic').length, 0);
+  assert.equal(searchSkills(docs, 'man', 'discovery').length, 0);
+  const old = searchSkills(docs, '일정 의존성', 'discovery').map(d => d.uri);
+  assert.deepEqual(searchSkills(structuredClone(docs), '일정 의존성', 'discovery').map(d => d.uri), old);
+  docs[1].keywords = ['독립 주제']; docs[1].description = '완전히 다른 내용';
+  assert.equal(searchSkills(docs, '일정 의존성', 'discovery').length, 0, 'metadata updates must not reuse an old index');
+  assert.equal(searchSkills(docs, '독립 주제', 'discovery')[0].name, 'report');
 });

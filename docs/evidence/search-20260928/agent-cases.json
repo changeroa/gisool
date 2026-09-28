@@ -1,0 +1,62 @@
+[
+  {
+    "id": "state-flow",
+    "prompt": "회원가입 후 이메일 인증을 기다리는 동안 사용자가 새로고침하거나 인증 링크가 만료될 수 있어. 이 가입 흐름에서 빠뜨리기 쉬운 상태와 다음 행동을 검토하고, 검증할 시나리오를 간단히 작성해줘. 실제 앱 접속이나 파일 수정은 필요 없어.",
+    "expected": [
+      "ux-state-review",
+      "test-behavior-flows"
+    ],
+    "undesired": [
+      "preserve-decisions"
+    ],
+    "after_epoch": 1790559484
+  },
+  {
+    "id": "prose",
+    "prompt": "다음 안내문은 의미가 반복되고 너무 길어. 의미는 유지하면서 간결하게 다듬어줘. 파일 수정은 필요 없어.\n“본 서비스의 이용을 시작하시기 이전에, 서비스를 이용하는 데 필요한 준비 사항을 먼저 사전에 확인해 주시기 바랍니다. 준비 사항의 확인이 완료된 이후에는 서비스를 이용하기 위한 이용 시작 버튼을 클릭하시면 서비스 이용을 시작하실 수 있습니다.”",
+    "expected": [
+      "debloat",
+      "re0"
+    ],
+    "undesired": [
+      "ux-state-review",
+      "preserve-decisions"
+    ],
+    "after_epoch": 1790559484
+  },
+  {
+    "id": "simple-edit",
+    "prompt": "버튼 문구 “저장하기”를 “저장”으로 바꿨을 때 사용자 의미가 달라지는지 한 문장으로 검토해줘. 파일 수정은 필요 없어.",
+    "expected": [],
+    "undesired": [
+      "ux-state-review",
+      "preserve-decisions",
+      "browser-e2e-review"
+    ],
+    "after_epoch": 1790559484
+  },
+  {
+    "id": "dev-status",
+    "prompt": "아래 개발 기록을 팀원이 읽을 진행 상황 공유문으로 정리해줘. 완료된 것과 아직 검증하지 않은 것, 일정에 영향을 줄 수 있는 부분이 드러나야 해. 외부 조회나 실제 메시지 전송, 파일 수정은 필요 없어.\n- 로그인 API 구현 및 단위 테스트 통과\n- 프런트 연동 PR은 리뷰 중\n- 브라우저에서 로그인부터 로그아웃까지 연결한 검증은 아직 안 함\n- 스테이징 배포는 내일 예정이지만 인증 제공자 설정 승인이 필요함\n- 담당자에게 승인 시점 확인이 필요함",
+    "expected": [
+      "development-status"
+    ],
+    "undesired": [
+      "ux-state-review",
+      "preserve-decisions"
+    ],
+    "after_epoch": 1790559484
+  },
+  {
+    "id": "dev-status-unconstrained",
+    "prompt": "아래 개발 기록을 팀원이 읽을 진행 상황 공유문으로 정리해줘. 완료된 것과 아직 검증하지 않은 것, 일정에 영향을 줄 수 있는 부분이 드러나야 해. 실제 메시지를 전송하지는 말고 공유문 초안을 작성해줘.\n- 로그인 API 구현 및 단위 테스트 통과\n- 프런트 연동 PR은 리뷰 중\n- 브라우저에서 로그인부터 로그아웃까지 연결한 검증은 아직 안 함\n- 스테이징 배포는 내일 예정이지만 인증 제공자 설정 승인이 필요함\n- 담당자에게 승인 시점 확인이 필요함",
+    "expected": [
+      "development-status"
+    ],
+    "undesired": [
+      "ux-state-review",
+      "preserve-decisions"
+    ],
+    "after_epoch": 1790559484
+  }
+]

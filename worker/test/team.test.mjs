@@ -10,14 +10,14 @@ const uri = "skill://gisul/gisul/example/SKILL.md";
 const hash = body => `sha256:${createHash("sha256").update(body).digest("hex")}`;
 const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/team.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:workers"] });
 
-async function release(bucket, letter, registration) {
+async function release(bucket, letter, registration, manual = false) {
   const commit = letter.repeat(40);
-  const markdown = `---\nname: example\ndescription: Team review workflow\n---\nRevision ${letter}\n`;
+  const markdown = `---\nname: example\ndescription: Team review workflow\n${manual ? 'disable-model-invocation: true\n' : ''}---\nRevision ${letter}\n`;
   const contents = [["SKILL.md", markdown], ["references/guide.md", `Guide ${letter}`]];
   const resources = contents.map(([path, text]) => ({ uri: uri.replace("SKILL.md", path), digest: hash(text), size: Buffer.byteLength(text) }));
   const files = contents.map(([path, text]) => ({ path: `skills/example/${path}`, uri: uri.replace("SKILL.md", path), digest: hash(text), size: Buffer.byteLength(text) }));
   for (const [index, [, text]] of contents.entries()) await bucket.put(`releases/${commit}/${files[index].path}`, text);
-  const inventory = JSON.stringify({ schema_version: 1, commit, release: `team-${letter}`, skills: [{ uri, frontmatter: { name: "example", description: "Team review workflow" }, resources, ...(registration ? { registration } : {}) }], files, aliases: {} });
+  const inventory = JSON.stringify({ schema_version: 1, commit, release: `team-${letter}`, skills: [{ uri, frontmatter: { name: "example", description: "Team review workflow", ...(manual ? { 'disable-model-invocation': true } : {}) }, resources, ...(registration ? { registration } : {}) }], files, aliases: {} });
   const identity = { commit, release: `team-${letter}`, inventory_digest: hash(inventory) };
   await bucket.put(`releases/${commit}/inventory.json`, inventory);
   await bucket.put(`releases/${commit}/complete.json`, JSON.stringify(identity));
@@ -109,6 +109,24 @@ async function fixture(t, overrides = {}) {
   };
   return { runtime, fetch, begin, authorize, callback, exchange, login, rpc, tool, bucket, first, state };
 }
+
+test("native discovery ranks natural requests, preserves invocation and pins the selected release", async t => {
+  const f = await fixture(t);
+  const a = await release(f.bucket, 'a', undefined, true);
+  const token = (await f.login()).access_token;
+  const query = 'Please inspect the team review workflow for this new task';
+  const found = await f.tool(token, 'search_skills', { query, mode: 'discovery' });
+  assert.equal(found.skills[0].uri, uri);
+  assert.equal(found.skills[0].invocation, 'explicit');
+  assert.equal((await f.tool(token, 'search_skills', { query, mode: 'automatic' })).totalMatches, 0);
+  const invalid = await (await f.rpc(token, 'tools/call', { name: 'search_skills', arguments: { mode: 'discovery' } })).json();
+  assert.equal(invalid.result.isError, true);
+  assert.equal((await f.tool(token, 'search_skills', { query: 'banana smoothie recipe', mode: 'discovery' })).totalMatches, 0);
+  await release(f.bucket, 'b');
+  const loaded = await f.tool(token, 'load_skill', { uri: found.skills[0].uri, commit: found.commit });
+  assert.equal(loaded.commit, a.commit);
+  assert.match(loaded.markdown, /Revision a/);
+});
 
 test("team endpoint advertises native OAuth and denies legacy/shared tokens and alternate hosts", async t => {
   const f = await fixture(t);

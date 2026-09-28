@@ -131,16 +131,16 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   }
 
   server.registerTool("search_skills", {
-    description: "Find remote skills without reading their bodies. Automatic and explicit modes are opt-in; automatic excludes user-invoked-only skills. Explicit includes them. Both rank exact names and keywords first. Omitted mode preserves legacy matching/order. Results default to 5 descriptions of at most 240 Unicode code points. Continue with the same query, mode, commit and nextOffset, or load a selected URI with the returned commit.",
+    description: "Find remote skills by task subject without reading bodies. Use discovery for ranked candidates, including invocation=explicit skills that require a user request before application. Automatic filters those out; explicit is for user-requested skills. Use a few subject/outcome terms; if empty, retry once with a shorter subject. Omitted mode preserves legacy matching. Search does not activate skills. Continue with the same query, mode, commit and nextOffset; load only a relevant exact URI with its commit.",
     inputSchema: {
       query: z.string().max(2048).optional(),
-      mode: z.enum(["legacy", "automatic", "explicit"]).default("legacy"),
+      mode: z.enum(["legacy", "automatic", "explicit", "discovery"]).default("legacy"),
       commit: z.string().regex(/^[a-f0-9]{40}$/).optional().describe("Pin continuation pages to a previous search's commit; omit for a new task's current catalog"),
       limit: z.number().int().min(1).max(50).default(5),
       offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe("Zero-based offset; use nextOffset with the same query, mode, limit and commit"),
     }, annotations,
   }, async ({ query, mode, commit, limit, offset }) => observe("search", { query, mode, limit, offset }, async () => {
-    if (mode === "automatic" && !query?.trim()) throw new Error("Automatic discovery requires a subject; do not enumerate the whole catalog");
+    if ((mode === "automatic" || mode === "discovery") && !query?.trim()) throw new Error("Automatic discovery requires a subject; do not enumerate the whole catalog");
     const documents: SearchDocument[] = [];
     let cursor: string | undefined;
     const cursors = new Set<string>();

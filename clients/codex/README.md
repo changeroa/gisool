@@ -229,18 +229,22 @@ directory RPC or pagination. This does not discover newly added files until relo
 ## Opt-in discovery modes and version selection
 
 `search_skills` keeps its original substring matching and URI order when `mode`
-is omitted or `legacy`. New clients can opt into `automatic` or `explicit`.
-Both normalize case, Unicode width/composition and whitespace, require every
-query term to match, and rank exact names before exact keywords, then other
-name/keyword/description matches. URI order breaks ties; same-named skills from
+is omitted or `legacy`. New clients can opt into `discovery`, `automatic` or `explicit`.
+These modes normalize case, Unicode width/composition, punctuation, common Korean
+particles and English plurals. They rank exact names, exact keywords and weighted
+subject matches, using term rarity and coverage without requiring every narrative
+detail to match. Incidental single-word matches in longer requests are excluded.
+URI order breaks ties; same-named skills from
 different sources remain distinct. Keywords come from the skill's versioned
 frontmatter, so adding bilingual discovery terms is a content change.
-Latin alphanumeric terms match whole words in these modes: `UI` does not match
-inside `build`, and `hate` does not match inside `whatever`. Non-Latin terms and
-compound names retain substring matching after Unicode normalization.
+Tokens match whole words after normalization: `UI` does not match inside `build`,
+and `hate` does not match inside `whatever`. Compound names are also tokenized;
+exact full names retain priority. There is no embedded map of skill names to queries.
 
-`automatic` excludes entries with `disable-model-invocation: true` and requires
-a nonempty subject. `explicit` includes them for a user-requested workflow.
+`discovery` searches all candidates but never activates them. Candidates marked
+`invocation: explicit` still require an explicit user request before application.
+`automatic` excludes entries with `disable-model-invocation: true`.
+Both require a nonempty subject. `explicit` includes all candidates for a user-requested workflow.
 These modes return `invocation` and the SKILL.md `digest` with each match. This
 is a discovery policy, not an authorization boundary. The tool does not schedule
 automatic searches or change global Codex instructions.

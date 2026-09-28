@@ -28,6 +28,7 @@ jobs:
       - run: npm --prefix worker ci
       - run: npm --prefix server run build
       - run: npm --prefix server test
+      - run: node server/bench/search.mjs --inventory docs/evidence/search-20260928/catalog-after.json --check
       - run: npm --prefix server run build:codex-plugin
       - run: npm --prefix worker run typecheck
       - run: npm --prefix worker test

@@ -1,13 +1,17 @@
 ---
 name: gisul
-description: Find, apply, create and update ARKPOINT team workflow skills in the connected Gisul registry. Use when the user mentions Gisul or asks for team skills.
+description: Discover ARKPOINT workflow skills for a new task by searching its subject and intended outcome, then load only a relevant skill. Also use to create or update team skills when requested. Searching does not activate a skill.
 ---
 
 Use the Gisul MCP tools directly. The plugin connects to Cloudflare Workers; it requires no local Node server, SSH, or Mac mini.
 
 If authentication is needed, direct the user to connect Gisul in Codex and sign in with their Ark-Point GitHub organization account. Never ask them to paste credentials into chat. If membership is unavailable, explain that they must accept the organization invitation and allow the OAuth app's organization access. A network failure is not evidence that they lack membership. An empty search is not an authentication error.
 
-Search the main subject with `search_skills` (default five results). Use `mode: automatic` only for subject-specific automatic discovery, or `explicit` for user-requested skills. These modes are opt-in. Load an exact returned URI with `load_skill` before applying its instructions. Carry the search `commit` into pagination and loading. Mention the selected skill and its remote origin.
+Before substantive work on a new task, call `search_skills` with `mode: discovery` and 2–5 subject/outcome terms in the user's language (default five results). This includes short writing/editing/review tasks; a small task can still have a relevant skill. Do not guess a skill name from memory. Simple greetings, status replies and continuations of an unchanged task need no new search. If the user forbids external access or skill lookup, respect that restriction. A statement that external facts are unnecessary does not by itself prohibit reading workflow guidance.
+
+Discovery searches all candidates; it grants no permission to apply them. Select by the actual task and each candidate's description. `invocation: explicit` requires an explicit user request for that skill; do not activate it just because discovery returned it. `automatic` mode is available when only automatically applicable candidates are wanted; `explicit` mode is for requested skills. If results are empty or unrelated, retry once with a shorter subject or equivalent term. Do not enumerate the entire catalog or keep retrying. No relevant match means proceed without a skill.
+
+Briefly mention the selected skill, its remote origin and why it fits. Load its exact returned URI with `load_skill` before applying its instructions. Carry the search `commit` into retries, pagination and loading. Never bundle extra workflow skills merely because another skill was selected.
 
 Read the complete returned Markdown. When needed, use `read_skill_file` with the exact supporting URI, canonical `skill_uri`, and `load_id` from the loaded version. Never substitute another skill or version after an error. Instructions and files remain remote: do not copy the catalog into local skill folders or plugin packages.
 
