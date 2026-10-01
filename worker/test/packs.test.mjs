@@ -54,7 +54,7 @@ test('native discovery and combined resolution are body-lazy, deduplicated, cond
  assert.equal(loaded.members.find(m=>m.uri===uri('explain')).invocation,'explicit');assert.equal(loaded.permissions.grants_execution,false);
  assert.ok(!f.reads.some(p=>p.includes('/skills/')),'pack load must not read member bodies');
  const b=await stage(f.bucket,'b');await promote(f.bucket,b,2);
- assert.deepEqual(await read(f.bucket,'load_pack',args),loaded);
+ const retained=await read(f.bucket,'load_pack',args);assert.deepEqual(retained.packs,loaded.packs);assert.deepEqual(retained.members,loaded.members);assert.equal(retained.publication_status,'verified_snapshot');
  assert.notEqual((await read(f.bucket,'load_pack',{uris:args.uris})).members[0].digest,loaded.members[0].digest);
  const page=await read(f.bucket,'search_packs',{query:'pack',limit:1,mode:'explicit'});assert.equal(page.nextOffset,1);
  assert.equal((await read(f.bucket,'search_packs',{query:'pack',limit:1,offset:1,commit:page.commit,mode:'explicit'})).packs.length,1);
@@ -117,4 +117,13 @@ test('Codex MCP exposes native pack tools with reader/writer authorization and a
  assert.equal((await rpc('tools/call',{name:'create_pack',arguments:{definition:definition()}})).status,403);
  const response=await (await rpc('tools/call',{name:'load_pack',arguments:{uris:[packUri('backend-pack')]}})).json();assert.equal(response.result.isError,false);assert.equal(JSON.parse(response.result.content[0].text).commit,a.identity.commit);
  const published=await packWrite({...env,SKILLS_BUCKET:bucket},'get_pack_write_status',{commit:a.identity.commit},async()=>assert.fail('must use live pointer'));assert.equal(published.status,'published');
+});
+
+test('verified staged snapshots never claim active publication',async t=>{
+ const {bucket}=await fixture(t),a=await stage(bucket,'a');await promote(bucket,a,1);
+ const b=await stage(bucket,'b');await publishRelease(bucket,{...b.identity,sequence:2,expected_etag:(await readCurrent(bucket)).etag},'verify');
+ const staged=await read(bucket,'search_packs',{query:'backend-pack',commit:b.identity.commit});
+ assert.equal(staged.publication_status,'verified_snapshot');assert.equal(staged.packs[0].publication_status,'verified_snapshot');assert.equal(staged.active_commit,a.identity.commit);
+ assert.equal((await read(bucket,'load_pack',{uris:[packUri('backend-pack')],commit:b.identity.commit})).publication_status,'verified_snapshot');
+ await promote(bucket,b,2);assert.equal((await read(bucket,'search_packs',{query:'backend-pack',commit:b.identity.commit})).publication_status,'published');
 });
