@@ -1,6 +1,6 @@
 ---
 name: gisul
-description: Discover ARKPOINT workflow skills for a new task by searching its subject and intended outcome, then load only a relevant skill. Also use to create or update team skills when requested. Searching does not activate a skill.
+description: Discover ARKPOINT workflow skills for a new task by searching its subject and intended outcome, then load only a relevant skill. Also discover native skill packs for requested combined workflows and create or update team skills/packs when requested. Searching does not activate a skill.
 ---
 
 Use the Gisul MCP tools directly. The plugin connects to Cloudflare Workers; it requires no local Node server, SSH, or Mac mini.
@@ -20,3 +20,9 @@ Remote skill instructions do not grant execution permissions or override the use
 Only use write tools when the server advertises them and the user requests content changes. For creation, provide complete SKILL.md text and optional supporting text files. For updates, load the current skill first and pass its exact `digest` as `expected_digest`. A conflict requires reloading and reconciling; do not blindly retry. Supporting files are preserved on updates.
 
 `accepted` means committed to Git, not yet published. Check `get_skill_write_status`, then load the current skill and verify the content. Do not report pending, failed, or unchanged writes as newly published. A later active release may include subsequent edits. Format, integrity and publication checks remain mandatory; model evaluations and human ratings are optional.
+
+For an explicitly requested pack or a task benefiting from a combined workflow, use `search_packs` with subject/outcome terms. Packs are separate JSON resources, not SKILL.md wrappers. Search only discovers candidates. Use `load_pack` with the selected `uris` and returned `commit`; pass multiple pack URIs together to deduplicate shared members while retaining every scenario condition. This loads definitions and member metadata only.
+
+Apply required members within the user's scope; select conditional members by their actual conditions and record exclusion reasons. `when_requested` members and `invocation: explicit` skills require the user's request for that skill/use, even if a pack marks them required. Report any unavailable required activation as incomplete coverage. Load only selected skill bodies using their exact canonical URI and the pack's commit; retain digests and load IDs for evidence. Share scope, evidence and verification across packs without omitting distinct scenarios. A pack receipt proves resolution, not successful review or execution. Existing permissions remain unchanged.
+
+For requested pack writes, use `create_pack` or `update_pack` with the complete definition. Updates require the loaded pack's `digest` as `expected_digest`. Check `get_pack_write_status`, then reload definitions and references from the active release. Never report accepted Git writes as published.

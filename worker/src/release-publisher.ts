@@ -31,10 +31,13 @@ export async function publishRelease(bucket: R2Bucket, input: PublishRequest, op
   const inventoryObject = await bucket.head(inventoryKey);
   if (!inventoryObject) throw new ReleaseError("Missing release inventory");
   const skillBodies = new Map(snapshot.inventory.skills.map(skill => [releaseKey(identity.commit, snapshot.files.get(skill.uri)!.path), skill.frontmatter]));
+  const packBodies = new Map((snapshot.inventory.packs ?? []).map(pack => [releaseKey(identity.commit, `packs/${pack.definition.name}.json`), pack.definition]));
   await verifyInventory(bucket, identity.commit, [
     ...snapshot.inventory.files.map(({ path, digest, size }) => ({ key: releaseKey(identity.commit, path), digest, size })),
     { key: inventoryKey, digest: identity.inventory_digest, size: inventoryObject.size },
   ], ["complete.json"], (file, bytes) => {
+    const pack = packBodies.get(file.key);
+    if (pack && !equalMetadata(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), pack)) throw new ReleaseError("Pack definition differs from inventory");
     const frontmatter = skillBodies.get(file.key);
     if (!frontmatter) return;
     const markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

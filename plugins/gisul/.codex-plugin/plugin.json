@@ -1,7 +1,7 @@
 {
   "name": "gisul",
-  "version": "0.4.0",
-  "description": "Search and maintain ARKPOINT team skills directly through Cloudflare Workers.",
+  "version": "0.5.0",
+  "description": "Search and maintain ARKPOINT team skills and native packs directly through Cloudflare Workers.",
   "author": {
     "name": "ARKPOINT",
     "url": "https://github.com/Ark-Point"
