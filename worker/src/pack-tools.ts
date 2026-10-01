@@ -1,6 +1,6 @@
 import { searchSkills, type SearchMode } from "../../server/src/skill-search.ts";
 import { manifestDigest, readSnapshot } from "./release-reader.ts";
-import { readVerifiedObject, releaseKey, ReleaseError } from "./r2-objects.ts";
+import { readCurrent, readVerifiedObject, releaseKey, ReleaseError } from "./r2-objects.ts";
 import { packName, phases, type PackMember } from "./pack-schema.ts";
 
 const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
@@ -16,7 +16,9 @@ export async function packRead(bucket: R2Bucket, name: string, input: unknown, o
   const tool = packReadTools.find(t => t.name === name);
   if (!tool || Object.keys(args).some(k => !Object.hasOwn(tool.inputSchema.properties, k))) throw new ReleaseError("Unknown pack tool or argument", 400);
   const snapshot = await readSnapshot(bucket, args.commit);
-  const meta = { origin, release: snapshot.identity.release, commit: snapshot.identity.commit, server_version: serverVersion, publication_status: "published" };
+  const active = await readCurrent(bucket);
+  const publication_status = active?.value.commit === snapshot.identity.commit ? "published" : "verified_snapshot";
+  const meta = { origin, release: snapshot.identity.release, commit: snapshot.identity.commit, server_version: serverVersion, publication_status, active_commit: active?.value.commit ?? null };
   const packs = snapshot.inventory.packs ?? [];
   if (name === "search_packs") {
     const { query, offset = 0, limit = 5, mode = "discovery" } = args;
@@ -24,7 +26,7 @@ export async function packRead(bucket: R2Bucket, name: string, input: unknown, o
     const matches = searchSkills(packs.map(p => ({ uri: p.uri, name: p.definition.name, description: p.definition.description, keywords: [p.definition.display_name, p.definition.scope, ...p.definition.members.map(m => m.uri.split("/").at(-2)!)], automatic: true, digest: p.digest })), query as string | undefined, mode as SearchMode);
     const found = matches.slice(offset as number, (offset as number) + (limit as number)).map(m => {
       const p = packs.find(p => p.uri === m.uri)!;
-      return { uri: p.uri, kind: "skill-pack", name: p.definition.name, display_name: p.definition.display_name, description: p.definition.description, members: p.definition.members, digest: p.digest, ...(p.registration ?? unknownRegistration), publication_status: "published" };
+      return { uri: p.uri, kind: "skill-pack", name: p.definition.name, display_name: p.definition.display_name, description: p.definition.description, members: p.definition.members, digest: p.digest, ...(p.registration ?? unknownRegistration), publication_status, active_commit: active?.value.commit ?? null };
     });
     return { ...meta, packs: found, totalMatches: matches.length, offset, limit, ...((offset as number) + found.length < matches.length ? { nextOffset: (offset as number) + found.length } : {}) };
   }
