@@ -9,7 +9,7 @@ export interface WriteEnv {
   GISUL_SKILLS_REPOSITORY?: string;
   GISUL_PUBLISH_WORKFLOW?: string;
 }
-function repository(env: WriteEnv): string {
+export function repository(env: WriteEnv): string {
   const value = env.GISUL_SKILLS_REPOSITORY ?? "changeroa/gisul-skills";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) throw new ReleaseError("Invalid skill repository configuration", 503);
   return value;
@@ -24,9 +24,9 @@ export const writeTools = [
   { name: "get_skill_write_status", description: "Check a returned Git commit against the active release and publication workflow. Accepted or a successful workflow alone does not mean published.", inputSchema: { type: "object", required: ["commit"], additionalProperties: false, properties: { commit: { type: "string", pattern: "^[a-f0-9]{40}$" } } }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
 ];
 
-type TreeEntry = { path: string; type: string; mode: string; sha: string };
-type GitCall = (path: string, method?: string, body?: unknown) => Promise<any>;
-function gitClient(env: WriteEnv): GitCall {
+export type TreeEntry = { path: string; type: string; mode: string; sha: string };
+export type GitCall = (path: string, method?: string, body?: unknown) => Promise<any>;
+export function gitClient(env: WriteEnv): GitCall {
   const apiRoot = `https://api.github.com/repos/${repository(env)}`;
   return async (path, method = "GET", body) => {
     let response: Response;
@@ -51,7 +51,7 @@ function markdownName(markdown: unknown, expected: string): asserts markdown is 
 function supportingPath(path: string): boolean {
   return /^(references|scripts|assets|agents)\/[A-Za-z0-9_./-]+$/.test(path) && path.split("/").every(part => !!part && !part.startsWith(".") && part !== "node_modules") && !path.endsWith("/SKILL.md");
 }
-function decodeBlob(blob: { encoding: string; content: string }): string {
+export function decodeBlob(blob: { encoding: string; content: string }): string {
   if (blob.encoding !== "base64") throw new ReleaseError("Unexpected Git blob encoding", 502);
   return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(blob.content.replace(/\s/g, "")), c => c.charCodeAt(0)));
 }

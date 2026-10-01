@@ -1,15 +1,18 @@
+import { packUri, validatePack, type PackDefinition } from "./pack-schema.ts";
 import { assertCommit, assertDigest, readCurrent, readVerifiedObject, releaseKey, ReleaseError, sha256 } from "./r2-objects.ts";
 import type { FileDigest, ReleaseIdentity } from "./r2-objects.ts";
 
 export type SkillResource = FileDigest & { uri: string };
 export type SkillRegistration = { created_by: string; created_at: string; updated_by: string; updated_at: string };
 export type SkillEntry = { uri: string; frontmatter: Record<string, unknown> & { name: string; description: string }; resources: SkillResource[]; registration?: SkillRegistration };
+export type PackEntry = { uri: string; definition: PackDefinition; digest: string; size: number; registration?: SkillRegistration };
 export type ReleaseFile = FileDigest & { path: string; uri?: string };
 export type ReleaseInventory = {
   schema_version: 1;
   commit: string;
   release: string;
   skills: SkillEntry[];
+  packs?: PackEntry[];
   files: ReleaseFile[];
   aliases: Record<string, string>;
 };
@@ -28,6 +31,13 @@ export function canonicalUri(uri: unknown): string {
 
 export async function manifestDigest(entry: SkillEntry): Promise<string> {
   return sha256(JSON.stringify(entry.resources.map(({ uri, digest, size }) => ({ uri, digest, size })).sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0)));
+}
+
+function validateRegistration(value: SkillRegistration): void {
+  const keys = ["created_by", "created_at", "updated_by", "updated_at"];
+  const login = (s: unknown) => typeof s === "string" && /^[a-z\d][a-z\d-]{0,38}(?:\[bot\])?$/i.test(s);
+  const timestamp = (s: unknown) => typeof s === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString() === s;
+  if (!value || typeof value !== "object" || Object.keys(value).length !== 4 || keys.some(key => !Object.hasOwn(value, key)) || !login(value.created_by) || !login(value.updated_by) || !timestamp(value.created_at) || !timestamp(value.updated_at) || value.updated_at < value.created_at) throw new ReleaseError("Invalid skill registration metadata");
 }
 
 export function parseInventory(text: string, identity: ReleaseIdentity): Snapshot {
@@ -53,11 +63,7 @@ export function parseInventory(text: string, identity: ReleaseIdentity): Snapsho
     if (!entry.uri.endsWith("/SKILL.md") || skills.has(entry.uri) || typeof entry.frontmatter?.name !== "string" || entry.frontmatter.name !== decodeURIComponent(entry.uri.split("/").at(-2)!) || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description || !Array.isArray(entry.resources) || entry.resources.length > 512) throw new ReleaseError("Invalid skill manifest");
     skills.add(entry.uri);
     if (entry.registration !== undefined) {
-      const value = entry.registration;
-      const keys = ["created_by", "created_at", "updated_by", "updated_at"];
-      const login = (s: unknown) => typeof s === "string" && /^[a-z\d][a-z\d-]{0,38}(?:\[bot\])?$/i.test(s);
-      const timestamp = (s: unknown) => typeof s === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString() === s;
-      if (!value || typeof value !== "object" || Object.keys(value).length !== 4 || keys.some(key => !Object.hasOwn(value, key)) || !login(value.created_by) || !login(value.updated_by) || !timestamp(value.created_at) || !timestamp(value.updated_at) || value.updated_at < value.created_at) throw new ReleaseError("Invalid skill registration metadata");
+      validateRegistration(entry.registration);
     }
     const root = entry.uri.slice(0, -8);
     const resources = new Set<string>();
@@ -79,6 +85,19 @@ export function parseInventory(text: string, identity: ReleaseIdentity): Snapsho
     if (!from.endsWith("/SKILL.md") || !to.endsWith("/SKILL.md") || skills.has(from)) throw new ReleaseError("Invalid or shadowing skill alias");
     resolveAlias(inventory, from);
   }
+  if (inventory.packs !== undefined) {
+    if (!Array.isArray(inventory.packs) || inventory.packs.length > 256) throw new ReleaseError("Invalid pack inventory");
+    const names = new Set<string>();
+    for (const pack of inventory.packs) {
+      const definition = validatePack(pack.definition, skills);
+      assertDigest(pack);
+      const file = inventory.files.find(f => f.path === `packs/${definition.name}.json`);
+      if (pack.uri !== packUri(definition.name) || names.has(pack.uri) || !file || file.uri !== undefined || file.digest !== pack.digest || file.size !== pack.size) throw new ReleaseError("Pack differs from release inventory");
+      names.add(pack.uri);
+      if (pack.registration !== undefined) validateRegistration(pack.registration);
+    }
+    if (inventory.files.filter(f => f.path.startsWith("packs/")).length !== inventory.packs.length) throw new ReleaseError("Unindexed pack file");
+  } else if (inventory.files.some(f => f.path.startsWith("packs/"))) throw new ReleaseError("Pack files require a pack index");
   return { identity, inventory, files };
 }
 

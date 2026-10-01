@@ -1,3 +1,5 @@
+import { packRead, packReadTools } from "./pack-tools.ts";
+import { packWrite, packWriteTools } from "./pack-writer.ts";
 import { corsHeaders, jsonResponse, readBody, validBearer } from "./http.ts";
 import { ReleaseError } from "./r2-objects.ts";
 import { canonicalUri, mimeType, readDirectory, readResource, readSnapshot, resolveAlias } from "./release-reader.ts";
@@ -84,18 +86,22 @@ export async function serveMcp(request: Request, env: DirectEnv, trusted?: { can
       protocolVersion: versions.includes(String(params.protocolVersion)) ? params.protocolVersion : versions[0],
       serverInfo: { name: "gisul", version: env.GISUL_SERVER_VERSION ?? "0.2.0" },
       capabilities,
-      instructions: "Remote workflow skills. Discover metadata with skills/list, load a selected manifest with skills/get, then read supporting resources only when needed. Keep the returned commit in params._meta['io.gisul/commit'] for subsequent resource reads.",
+      instructions: "Remote workflow skills and native packs. When a pack is requested or a multi-skill workflow helps, discover with search_packs and combine selected URIs with load_pack; choose members before loading bodies. Discover skill metadata with skills/list, load a selected manifest with skills/get, then read supporting resources only when needed. Keep the returned commit in params._meta['io.gisul/commit'] for subsequent resource reads.",
     });
     if (rpc.method === "ping") return respond({});
-    if (rpc.method === "tools/list") return respond({ tools: [...(native ? readTools : []), ...(canWrite ? writeTools : [])] });
+    if (rpc.method === "tools/list") return respond({ tools: [...(native ? [...readTools, ...packReadTools] : []), ...(canWrite ? [...writeTools, ...packWriteTools] : [])] });
     if (rpc.method === "tools/call") {
+      if (native && packReadTools.some(tool => tool.name === params.name)) {
+        try { return respond({ content: [{ type: "text", text: JSON.stringify(await packRead(env.SKILLS_BUCKET, String(params.name), params.arguments ?? {}, url.origin, serverInfo.version)) }], isError: false }); }
+        catch (error) { return respond({ content: [{ type: "text", text: error instanceof ReleaseError ? error.message : "Pack could not be read or verified" }], isError: true }); }
+      }
       if (native && readTools.some(tool => tool.name === params.name)) {
         try { return respond({ content: [{ type: "text", text: JSON.stringify(await skillRead(env.SKILLS_BUCKET, String(params.name), params.arguments ?? {}, url.origin, serverInfo.version)) }], isError: false }); }
         catch (error) { return respond({ content: [{ type: "text", text: error instanceof ReleaseError ? error.message : "Skill could not be read or verified" }], isError: true }); }
       }
       if (!canWrite) return rpcError(request, rpc.id, -32001, "A configured write credential is required", 403);
       try {
-        const result = await skillWrite(env, String(params.name), params.arguments);
+        const result = await (packWriteTools.some(t => t.name === params.name) ? packWrite : skillWrite)(env, String(params.name), params.arguments);
         return respond({ content: [{ type: "text", text: JSON.stringify(result) }], isError: false });
       } catch (error) {
         return respond({ content: [{ type: "text", text: error instanceof ReleaseError ? error.message : "Skill write failed" }], isError: true });
