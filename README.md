@@ -1,3 +1,5 @@
+<p align="center"><a href="README.md">English</a> · <a href="README.ko.md">한국어</a></p>
+
 <p align="center">
   <img src="docs/assets/gisul-workshop.png" alt="A mechanical arm selects an instruction card from a workshop cabinet and brings it to a verification bench" width="100%">
 </p>
