@@ -1,0 +1,46 @@
+name: Deploy ARKPOINT Worker
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['worker/**', 'server/src/skill-search.ts', 'scripts/team-config.mjs', '.github/workflows/deploy-team.yml']
+permissions:
+  contents: read
+concurrency:
+  group: gisul-arkpoint-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'Ark-Point/gisul' && vars.GISUL_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: arkpoint-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      GISUL_OAUTH_KV_ID: ${{ vars.GISUL_OAUTH_KV_ID }}
+      GITHUB_CLIENT_ID: ${{ vars.GITHUB_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            worker/package-lock.json
+      - run: npm --prefix server ci
+      - run: npm --prefix worker ci
+      - run: npm --prefix server run build
+      - run: npm --prefix worker run typecheck
+      - run: npm --prefix worker test
+      - run: node scripts/team-config.mjs
+      - run: npx wrangler deploy --config wrangler.team.generated.json --dry-run
+        working-directory: worker
+      - name: Deploy tested source
+        working-directory: worker
+        run: npx wrangler deploy --config wrangler.team.generated.json
+      - name: Verify deployment identity and OAuth discovery
+        run: node scripts/smoke-team.mjs
+        env:
+          GISUL_EXPECTED_COMMIT: ${{ github.sha }}

@@ -1,0 +1,675 @@
+[
+  {
+    "uri": "skill://gisul/gisul/aim/SKILL.md",
+    "name": "aim",
+    "description": "When data lands with a thin ask — files, a repo, a paste, a chat scrollback — read it and propose what the user is trying to do with it, as a proposal to confirm rather than a question to answer. Use the moment material arrives without a fully-formed ask, or when the ask reads thinner than the data suggests.",
+    "keywords": [
+      "의도 파악",
+      "자료 해석",
+      "요청 추론",
+      "목적 제안",
+      "얇은 요청",
+      "자료",
+      "무엇",
+      "intent inference",
+      "ambiguous material",
+      "propose objective"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/archify/SKILL.md",
+    "name": "archify",
+    "description": "Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG, dark/light themes, optional trace motion, and PNG/JPEG/WebP/SVG/WebM export. Accept plain-language requirements or pasted Mermaid flowchart, sequenceDiagram, and stateDiagram input; inspect repository evidence when the diagram must reflect real code. Use when the user asks to visualize system architecture, infrastructure, cloud/security/network topology, technical workflows, API call sequences, request lifecycles, data pipelines, ETL/ELT, data lineage, state machines, or to convert/beautify Mermaid.",
+    "keywords": [
+      "아키텍처",
+      "서비스 구조",
+      "다이어그램",
+      "데이터 흐름",
+      "시퀀스",
+      "상태도",
+      "시각화",
+      "architecture diagram",
+      "data flow",
+      "interactive export",
+      "sequence diagram"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/arkpoint-gisul/SKILL.md",
+    "name": "arkpoint-gisul",
+    "description": "ARKPOINT 팀 Gisul 플러그인의 연결 문제를 확인하거나 팀 스킬 등록 방법을 안내할 때 사용한다.",
+    "keywords": [
+      "팀 스킬",
+      "연결 진단",
+      "등록 안내",
+      "Gisul 연결",
+      "ARKPOINT",
+      "team skill registration",
+      "registry connection troubleshooting"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/aside-browser/SKILL.md",
+    "name": "aside-browser",
+    "description": "Read when you need a browser, or have to work across user's logged-in websites (e.g. Gmail, Slack, cloud consoles, etc.), or have to refer personal contexts like memory and browsing history.",
+    "keywords": [
+      "브라우저",
+      "웹사이트",
+      "로그인",
+      "페이지 탐색",
+      "버튼 클릭",
+      "화면 열기",
+      "browser automation",
+      "authenticated website",
+      "navigate click",
+      "browsing history"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/autobahn/SKILL.md",
+    "name": "autobahn",
+    "description": "Carve guardrail-adjacent items out of scope with safe alternatives before risk-adjacent work starts, then run the safe remainder at full strength in a fresh subagent that only ever sees the carved prompt, never the risky input. Use when a task includes stealth, scraping, privacy, IP, policy, licensing, security, or other safety-adjacent material that could be silently dropped, over-elaborated, or needlessly diluted. Fires on the impulse, not only the topic: the moment you notice yourself about to hedge, soften, silently skip, or brace for a refusal, carve before you execute.",
+    "keywords": [
+      "위험 범위",
+      "안전한 대안",
+      "위험한 요청",
+      "제외",
+      "나머지 진행",
+      "risk scoping",
+      "safe alternatives",
+      "guardrail adjacent"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/browser-e2e-review/SKILL.md",
+    "name": "browser-e2e-review",
+    "description": "브라우저 E2E 테스트를 설계·실행·보강할 때 에이전트가 놓치는 UI 상태 변화와 시각적 드리프트를 검사한다. 처리 중·실패·복구, 화면 비교, 증거 기반 판정에 사용하며 단순 사이트 탐색이나 일반 코드 리뷰에는 적용하지 않는다.",
+    "keywords": [
+      "브라우저 E2E",
+      "시각적 드리프트",
+      "화면 비교",
+      "상태 변화",
+      "visual regression",
+      "screenshot comparison",
+      "end to end testing"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/catchup/SKILL.md",
+    "name": "catchup",
+    "description": "Rebuild the human's lost context on a project from live state, in plain language: what needs them, what changed, what new words mean. Use when the human returns after a gap, says they can't follow the project anymore, asks what happened or what a term means, or before deciding what to do next when their mental model is stale. Read-only; it briefs, it does not act.",
+    "keywords": [
+      "프로젝트 복귀",
+      "오랜만",
+      "그동안",
+      "달라진 상황",
+      "맥락 복원",
+      "진행 이해",
+      "project catchup",
+      "context recovery",
+      "return after gap"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/debloat/SKILL.md",
+    "name": "debloat",
+    "description": "Compress an artifact that has accreted into bloat — padding, over-qualification, fused sentences, walls of enumeration, adjacent restatement — down to its load-bearing density, meaning preserved. Use when prose is correct and current but has grown verbose or patched-over and you want it tight without a full rewrite.",
+    "keywords": [
+      "중복 문장",
+      "반복",
+      "장황",
+      "간결",
+      "의미 보존",
+      "안내문",
+      "압축",
+      "문장 축약",
+      "prose compression",
+      "concise",
+      "shorten",
+      "remove repetition"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/dedash/SKILL.md",
+    "name": "dedash",
+    "description": "Remove em-dashes and the dashes standing in for them from a user-owned scope, reading each occurrence in context and choosing the punctuation or wording that fits.",
+    "keywords": [
+      "대시",
+      "구두점",
+      "문장부호",
+      "문맥",
+      "em dash removal",
+      "punctuation editing"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/detool/SKILL.md",
+    "name": "detool",
+    "description": "Make durable artifacts portable by replacing incidental stack, vendor, model, CLI, path, quota, or harness nouns with the mechanism they mean, while keeping provenance, runbooks, and tool-subject claims concrete.",
+    "keywords": [
+      "특정 도구",
+      "공급자 이름",
+      "일반적인 개념",
+      "이식성",
+      "벤더 중립",
+      "vendor neutral",
+      "tool agnostic",
+      "portable artifact"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/development-status/SKILL.md",
+    "name": "development-status",
+    "description": "개발 기록, PR, 이슈와 검증·배포 근거를 읽어 팀에 공유할 개발 현황을 작성한다. 개발자가 설명을 반복하지 않아도 기능별 진척, 남은 불확실성, 일정·범위 영향과 필요한 결정을 이해하게 한다. 주간 보고, 진행 상황 공유, 개발 인수인계에 사용하며 제품 기획이나 일반 코드 리뷰에는 적용하지 않는다.",
+    "keywords": [
+      "개발 현황",
+      "진행 상황",
+      "공유문",
+      "팀 공유",
+      "주간 보고",
+      "진척",
+      "일정 의존성",
+      "완료",
+      "미검증",
+      "development progress",
+      "weekly report",
+      "deployment evidence",
+      "pull requests"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/dont-make-me-think/SKILL.md",
+    "name": "dont-make-me-think",
+    "description": "Steve Krug의 Don't Make Me Think 원칙으로 실제 UI, URL, 스크린샷, 디자인 시안의 visual QA와 사용성 리뷰를 수행한다. 화면 이해, 탐색, 선택, 과업 완료를 방해하는 문제를 시각적 근거와 함께 우선순위화할 때 사용한다. 책 요약만 요청하거나 픽셀 차이 비교, 기능 테스트, 접근성 인증만 요청한 경우에는 적용하지 않는다.",
+    "keywords": [
+      "사용성",
+      "탐색 혼란",
+      "화면 이해",
+      "길 찾기",
+      "사용자 이해",
+      "usability review",
+      "navigation clarity",
+      "visual QA",
+      "Steve Krug"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/factchk/SKILL.md",
+    "name": "factchk",
+    "description": "Verify reality-grounded claims against external sources in both directions before they ship — could the 'absurd' be real, could the 'obvious' be false or long-established? Use whenever an artifact, or the sentence you are about to write, asserts something as plausible, realistic, absurd, novel, or impossible from intuition rather than a checked source; before relying on a factual claim in prose, a design rationale, a research claim, or a plan. Fires on metacognitive doubt — when you can't actually know, verify instead of trusting the feeling. Scans read-only, then fixes the clear errors or flags the judgment calls; leaves deliberate fiction alone.",
+    "keywords": [
+      "사실 주장",
+      "외부 출처",
+      "팩트 체크",
+      "사실 확인",
+      "fact checking",
+      "claim verification",
+      "external sources"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/feynman/SKILL.md",
+    "name": "feynman",
+    "description": "Press a decision you just made until you can explain it to a skeptic in your own words, or surface the gap where you can't. The Feynman test aimed at a choice: understanding is cheapest to fake the moment after you decide, so a fresh critic presses for what you can't actually explain. Use right after picking an option, especially one an agent laid out without arguing for.",
+    "keywords": [
+      "결정 설명",
+      "회의적인 사람",
+      "내 말",
+      "이해 점검",
+      "skeptical explanation",
+      "decision understanding",
+      "Feynman test"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/github/SKILL.md",
+    "name": "github",
+    "description": "GitHub 저장소에서 코드 변경을 커밋·push하고 PR을 생성·갱신하거나 배포를 준비할 때 사용한다. 배포보다 GitHub 반영을 항상 먼저 완료하고 원격 커밋과 배포 소스의 일치를 확인한다. 로컬 구현 완료 후 배포 요청에도 적용한다.",
+    "keywords": [
+      "커밋",
+      "push",
+      "PR",
+      "배포",
+      "변경사항",
+      "원격 반영",
+      "commit push",
+      "pull request",
+      "deploy verified source",
+      "GitHub release workflow"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/hate/SKILL.md",
+    "name": "hate",
+    "description": "Attack a plan, design, or argument like you want it to fail before you commit real effort — return the single load-bearing objection and the cheapest experiment that would prove it matters, not a checklist. User-invoked on purpose: a hate-it reflex always in the agent's reach would bias it toward demolition. Weighs many failure axes but owns the synthesis to one root.",
+    "keywords": [
+      "치명적인 반론",
+      "실패 원인",
+      "계획 공격",
+      "반증 실험",
+      "adversarial critique",
+      "load bearing objection",
+      "falsification experiment"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/herdr-orchestrator/SKILL.md",
+    "name": "herdr-orchestrator",
+    "description": "Proactively create Herdr panes and delegate independent work to coding agents, with active lifecycle monitoring, edit ownership, conflict resolution, and verified integration. Use when coordinating multiple agents through Herdr or when asked to act as a Herdr orchestrator.",
+    "keywords": [
+      "Herdr",
+      "다중 에이전트",
+      "코딩 에이전트",
+      "독립 작업",
+      "위임",
+      "분담",
+      "pane orchestration",
+      "multi agent coordination",
+      "delegate independent work"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/macrothink/SKILL.md",
+    "name": "macrothink",
+    "description": "User-invoked read-only pass for checking whether the current direction is tunnel-visioned: strip the session's bait, fan out 2 to 5 same-model fresh reads, and report divergence first without treating convergence as proof.",
+    "keywords": [
+      "터널 시야",
+      "거시적 방향",
+      "현재 방향",
+      "관점 확장",
+      "tunnel vision",
+      "direction audit",
+      "fresh independent reads"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/mandela/SKILL.md",
+    "name": "mandela",
+    "description": "Audit any eval, metric, experiment, or benchmark for leakage — does external ground-truth enter independently, or are the model, scorer, and designer just confirming a result no outside truth ever produced? Use before trusting any 'how we'll know it worked' — an A/B, a holdout, a score, a validation — and whenever a result feels too clean or self-confirming. Walks an 8-pattern leakage taxonomy and returns only the patterns that fire, each with an independence fix. Read-only.",
+    "keywords": [
+      "벤치마크",
+      "평가 누출",
+      "정답 누출",
+      "순환 검증",
+      "독립 근거",
+      "benchmark leakage",
+      "evaluation audit",
+      "independent ground truth"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/modelchk/SKILL.md",
+    "name": "modelchk",
+    "description": "Size a task's run before spending it: the cheapest sufficient capability tier (fast, standard, frontier) and the reasoning effort within it, on a neutral scale that binds to whatever levels the model exposes. Use when work seems over- or under-powered, costly, ambiguous, or high-risk, or asks which model class and how much thinking is enough.",
+    "keywords": [
+      "모델 선택",
+      "추론 강도",
+      "성능 등급",
+      "작업 비용",
+      "model selection",
+      "reasoning effort",
+      "capability tier",
+      "compute budget"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/nba/SKILL.md",
+    "name": "nba",
+    "description": "Read the live cycle state and return the single highest-leverage next best action, not a menu. Use when a project is between phases, the author asks what to do next, too many valid threads are open, or the work needs re-entry into frame, build, drive, re0-memo, hate, re0-work, or ship.",
+    "keywords": [
+      "다음 행동",
+      "우선순위",
+      "가장 중요한",
+      "프로젝트 재진입",
+      "next best action",
+      "highest leverage",
+      "prioritization"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/preserve-decisions/SKILL.md",
+    "name": "preserve-decisions",
+    "description": "Preserve scope and prior decisions during substantial implementation, deployments, cross-session handoffs, or material requirement changes. Ordinary lookups and small edits use the current request or existing checklist.",
+    "keywords": [
+      "합의 보존",
+      "결정 기록",
+      "작업 범위",
+      "세션 인계",
+      "다음 세션",
+      "인수인계",
+      "durable decisions",
+      "scope preservation",
+      "cross session handoff"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/prism/SKILL.md",
+    "name": "prism",
+    "description": "Split one artifact — a claim, plan, or file — across 2 to 5 independent lenses, one per genuinely distinct failure mode (correctness, security, readability, cost, adversarial-user), and return their convergence: where they agree, where they disagree, and the single next question that resolves the disagreement. Use when one reviewer isn't enough because the failure modes are heterogeneous, or a claim looks strong to its author and needs cross-lens pressure before it ships.",
+    "keywords": [
+      "독립 관점",
+      "다각도 검토",
+      "보안 정확성 비용",
+      "설계 분석",
+      "independent lenses",
+      "security correctness cost",
+      "multi perspective review"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0/SKILL.md",
+    "name": "re0",
+    "description": "Refresh an existing artifact into the current best v0. Use when the user asks to clean up, sync up, dedupe, de-noise, smooth, rewrite, or update an artifact after iteration; when nearby artifacts may have drifted; or when changes in one place should be reflected across related artifacts while keeping the result minimal.",
+    "keywords": [
+      "문서 정리",
+      "최신 상태",
+      "중복 제거",
+      "반복 수정",
+      "정합성",
+      "artifact refresh",
+      "rewrite cleanup",
+      "deduplicate",
+      "sync related artifacts"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-git/SKILL.md",
+    "name": "re0-git",
+    "description": "Rewrite a finished commit's message into a clean, handoff-ready form in your own log style, so `git log` alone tells the story. User-invoked: run it after a commit.",
+    "keywords": [
+      "커밋 메시지",
+      "변경 이력",
+      "인수인계 로그",
+      "commit message rewrite",
+      "git log clarity"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-loop/SKILL.md",
+    "name": "re0-loop",
+    "description": "Run repeated build -> QA -> re0-memo -> re0-work cycles while preserving learning and letting code die. Use for long agentic projects where progress must be measured by quality-cleared templates, reusable modules, and eliminated anti-patterns rather than hours spent or features accumulated.",
+    "keywords": [
+      "구현 검증 회고",
+      "장기 프로젝트",
+      "반복 개선",
+      "품질 게이트",
+      "iterative build QA",
+      "continuous learning",
+      "quality loop"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-memo/SKILL.md",
+    "name": "re0-memo",
+    "description": "Turn a finished, failed, or disappointing work cycle into portable lessons, anti-patterns, quality gates, and next-cycle vocabulary. Use after a build, QA pass, demo, user complaint, or abandoned attempt when the useful output is what the next pass must learn rather than the code itself.",
+    "keywords": [
+      "실패 교훈",
+      "회고",
+      "안티패턴",
+      "다음 반복",
+      "품질 기준",
+      "lessons learned",
+      "retrospective",
+      "anti patterns",
+      "quality gates"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-merge/SKILL.md",
+    "name": "re0-merge",
+    "description": "Review and land an external contribution the way this suite does: gate it against the thesis, land it with the author's credit intact, complete a new skill rather than merging it raw, then approve, credit, and explain before closing. Use when reviewing a pull request, as any collaborator or maintainer, not only the author.",
+    "keywords": [
+      "외부 기여",
+      "기여자 보존",
+      "병합 검토",
+      "원저자",
+      "contribution review",
+      "author credit",
+      "merge external contribution"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-plan/SKILL.md",
+    "name": "re0-plan",
+    "description": "Open a paperthin iteration's casebook before re0-loop's first turn — seeded with real content the moment the folder exists, never an empty directory. User-invoked, paperthin-only: assumes the full skill package installed. Run when opening a new build cycle in this repo.",
+    "keywords": [
+      "paperthin",
+      "반복 계획",
+      "사례 기록",
+      "시작 준비",
+      "casebook",
+      "iteration planning",
+      "paperthin setup"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-release/SKILL.md",
+    "name": "re0-release",
+    "description": "Walk a pending change through this repo's shipping and releasing checklist end to end, then tag and publish once confirmed. User-invoked: run it when you've decided to ship.",
+    "keywords": [
+      "paperthin",
+      "출시 체크리스트",
+      "태그 게시",
+      "릴리스",
+      "release checklist",
+      "tag publish",
+      "shipping"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-upgrade/SKILL.md",
+    "name": "re0-upgrade",
+    "description": "Bring your installed paperthin skills up to the full current catalog in one step: retire what's been renamed, add every skill you don't have yet, and refresh the rest, all shown and confirmed before anything changes.",
+    "keywords": [
+      "paperthin",
+      "스킬 묶음",
+      "최신 카탈로그",
+      "업그레이드",
+      "skill suite upgrade",
+      "catalog refresh",
+      "installed skills"
+    ],
+    "automatic": false,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/re0-work/SKILL.md",
+    "name": "re0-work",
+    "description": "Restart a project or artifact from v0 while preserving only proven lessons, contracts, gates, vocabulary, real-surface tests, and negative corpus. Use when the foundation is wrong, accumulated code is misleading progress, or a new pass should learn from the old one without inheriting its accidental architecture.",
+    "keywords": [
+      "처음부터",
+      "잘못된 기반",
+      "검증된 교훈",
+      "재시작",
+      "restart from scratch",
+      "proven lessons",
+      "rebuild foundation"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/readchk/SKILL.md",
+    "name": "readchk",
+    "description": "Verify the model's understanding of a user's instruction before spending non-trivial work. Use when a request is long, bundled, high-stakes, hard to undo, or has ambiguous scope or referents such as this, that, it, the other one, whatever is cleaner, or whichever order makes sense. Restate internally, cross-check against available context, proceed silently when resolved, and surface only a genuine surviving fork.",
+    "keywords": [
+      "요청 이해",
+      "모호한 지시",
+      "복잡한 요청",
+      "작업 전 확인",
+      "instruction understanding",
+      "ambiguous referents",
+      "scope interpretation"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/reorder/SKILL.md",
+    "name": "reorder",
+    "description": "Realign a listing whose order has gone arbitrary — a list, table, catalog, sections, an enum — into a logical sequence under one stated principle. Move items only: nothing is reworded, added, or removed. Use when the order no longer helps a reader follow the set.",
+    "keywords": [
+      "목록",
+      "순서",
+      "재배열",
+      "논리적 정렬",
+      "내용 유지",
+      "reorder listing",
+      "logical sequence",
+      "move items only"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/shower/SKILL.md",
+    "name": "shower",
+    "description": "Cold-read the artifact you're focused on from a fresh, zero-context sub-session to confirm it stands on its own — a shower-thought reset for accumulated session bias. Use when a long session has worn away your fresh eyes and you can no longer tell whether the artifact in focus is clear to someone with no prior context; before a handoff, publish, or merge; or when you want a clean-room comprehension smoke test. Spawns a separate context-free reviewer; it diagnoses, it does not fix.",
+    "keywords": [
+      "처음 보는",
+      "맥락 없이",
+      "새로운 시각",
+      "독립 독해",
+      "cold read",
+      "fresh context",
+      "standalone clarity"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/sip/SKILL.md",
+    "name": "sip",
+    "description": "After you create or change an artifact or skill, taste-test it with our own skills instead of trusting your in-session judgment — recursive self-improvement, made automatic. Use right after writing or editing anything, before calling it done, committing, or handing it off.",
+    "keywords": [
+      "산출물",
+      "자체 점검",
+      "다른 스킬",
+      "자기 개선",
+      "artifact taste test",
+      "recursive improvement",
+      "skill assisted review"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/ssotize/SKILL.md",
+    "name": "ssotize",
+    "description": "Audit and consolidate a fact that's scattered across places into one canonical source, after approval, and replace the rest with references. Use when asked to find duplication, check consistency, locate the source of truth, deduplicate, consolidate, unify, or establish SSOT across artifacts or platforms. Starts read-only, reports the map and plan, then mutates only after explicit approval.",
+    "keywords": [
+      "중복 문서",
+      "기준 문서",
+      "정책 통합",
+      "단일 출처",
+      "흩어진 사실",
+      "single source of truth",
+      "canonical source",
+      "consolidate duplication"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/test-behavior-flows/SKILL.md",
+    "name": "test-behavior-flows",
+    "description": "여러 행동과 상태 변화가 이어지는 기능의 테스트를 설계·실행하고 검증 공백을 찾는다. 상호작용, 비동기 처리, 복구, 데이터 일관성이 중요한 기능의 검증과 회귀 테스트에 사용한다.",
+    "keywords": [
+      "비동기",
+      "저장",
+      "중복 클릭",
+      "재시도",
+      "회귀 테스트",
+      "행동 흐름",
+      "데이터 일관성",
+      "asynchronous interactions",
+      "regression tests",
+      "data consistency",
+      "retry recovery"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  },
+  {
+    "uri": "skill://gisul/gisul/ux-state-review/SKILL.md",
+    "name": "ux-state-review",
+    "description": "온보딩, 권한, 선행정보 입력, 조건부 기능과 다단계 흐름을 구현하거나 검토할 때 상태별 UX 누락을 찾는다. 준비 전·대기·빈 결과·실패를 구분하고 화면, 다음 행동, 데이터 요청, 상태 전환을 함께 검증한다. 단순 스타일 변경이나 일반적인 코드 리뷰에는 적용하지 않는다.",
+    "keywords": [
+      "회원가입",
+      "이메일 인증",
+      "인증 링크 만료",
+      "새로고침",
+      "온보딩",
+      "상태 전환",
+      "권한",
+      "선행정보",
+      "다음 행동",
+      "signup verification",
+      "onboarding states",
+      "prerequisites",
+      "permission flow"
+    ],
+    "automatic": true,
+    "digest": "benchmark-metadata-only"
+  }
+]

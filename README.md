@@ -1,5 +1,7 @@
 # gisul
 
+For ARKPOINT team distribution, see [the native HTTPS Codex plugin](docs/arkpoint-plugin.md). It connects directly to Cloudflare Workers; neither clients nor deployment require a Mac mini. The team plugin is at `plugins/gisul`, with the Git marketplace in `.agents/plugins/marketplace.json`. Production readiness and prerequisites are documented separately from local verification.
+
 `gisul` is a personal MCP skill registry for serving Git-managed `SKILL.md` instruction bundles on demand.
 
 The name comes from 기술, Korean for "skill", "craft", or "technique".

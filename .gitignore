@@ -6,4 +6,4 @@ dist/
 *.log
 .DS_Store
 .omo/
-
+worker/wrangler.team.generated.json
