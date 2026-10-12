@@ -19,6 +19,17 @@ Git main -> GitHub Actions validation/evaluation -> immutable R2 release
 Codex plugin / MCP client -> authenticated Worker -------+
 ```
 
+## Agent runtimes
+
+| Runtime | Client | Connection |
+| --- | --- | --- |
+| Codex | [ARKPOINT plugin](docs/arkpoint-plugin.md) | Native HTTPS + OAuth |
+| oh-my-openagent / OmO 5 (`omo-ai`) | [Installer and loader](clients/oh-my-openagent/README.md) | OAuth stdio bridge, discovery extension |
+| Gajae Code (`gjc`) | [Installer and workflow integration](clients/gajae-code/README.md) | OAuth stdio bridge, deep-interview sub-skill, executor appendix |
+| OpenClaw | [Bundle and loader](clients/openclaw/README.md) | OAuth stdio bridge, in-memory bootstrap discovery hook |
+
+All four discover and read the same immutable remote releases. Gajae Code uses skills to propose interview scope and questions, carries accepted constraints and pinned references into the plan, and loads the relevant guidance for an executor's approved assignment. Runtime integration files are small loaders; the team skill catalog is never copied into client packages.
+
 ## Why
 
 This project is an experiment around "skills over MCP": instead of copying every skill into every agent runtime, a client can discover and load task-specific instruction bundles from a personal MCP server.

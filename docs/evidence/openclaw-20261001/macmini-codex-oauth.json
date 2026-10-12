@@ -1,0 +1,32 @@
+{
+  "verified": true,
+  "observed_at": "2026-10-01T09:04:02.098685+00:00",
+  "codex_version": "0.155.1",
+  "endpoint": "https://gisul.iyendev.com/mcp",
+  "transport": "native Streamable HTTP OAuth",
+  "registration": "DCR",
+  "server_source": "3af736e8161152504fd339f496b474eb47ba258c",
+  "release": "20260929.38",
+  "commit": "cb56c1ade59bd999e8ae859bd19d0b030ab8c03c",
+  "tools": [
+    "search_skills",
+    "load_skill",
+    "read_skill_file"
+  ],
+  "errors": 0,
+  "skill_digest_verified": true,
+  "supporting_digest_verified": true,
+  "commit_and_load_id_binding_verified": true,
+  "legacy_bearer_used": false,
+  "other_config_verified_equal": true,
+  "config_changes": [
+    "mcp_servers.gisul URL registration",
+    "plugins.gisul@personal.mcp_servers.gisul disabled"
+  ],
+  "backup": "/Users/iyen/.local/state/gisul-codex-oauth-20261001/config.before.toml",
+  "event_sha256": "f84dbf5558269c29901a482666ab0723e383584729535ff00e49e65cace9308a",
+  "limits": [
+    "Initial CIMD login completed but its token was rejected at MCP initialize. DCR login and fresh native Codex tool calls passed.",
+    "Existing running Codex sessions were not interrupted; start a new session to load the configuration."
+  ]
+}

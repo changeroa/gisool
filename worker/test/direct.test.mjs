@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 import { Client } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js";
 import { StreamableHTTPClientTransport } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js";
+import { StdioClientTransport } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js";
 import { InMemoryTransport } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js";
 import { NegotiatingTransport, protocolFetch, modernParams } from "../../server/dist/protocol.js";
 import { createCodexBridge } from "../../server/dist/codex.js";
+import { gajaeTransport, remotePackage } from "../../clients/runtime-install.mjs";
 
 const hash = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 const token = "direct-worker-fixture-token";
@@ -17,12 +22,12 @@ const uri = "skill://gisul/gisul/flow/SKILL.md";
 const root = uri.slice(0, -8);
 const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:workers"] });
 
-async function fixture(t, bearer = token, writes = false, outbound) {
+async function fixture(t, bearer = token, writes = false, outbound, native = false) {
   const modules = { "index.js": { type: "esm", contents: (await bundle).outputFiles[0].text } };
   const runtime = new Miniflare({ telemetry: { enabled: false }, logRequests: false, workers: [{ config: {
     type: "worker", name: "direct-test", compatibilityDate: "2026-09-03",
     manifest: { mainModule: "index.js", modules },
-    env: { ...(writes ? { GISUL_WRITE_TOKEN: { type: "text", value: "fixture-write-token" }, GISUL_GITHUB_TOKEN: { type: "text", value: "fixture-github-token" } } : {}), SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_ALLOWED_ORIGINS: { type: "text", value: "https://client.example" }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
+    env: { GISUL_NATIVE_TOOLS: { type: "text", value: String(native) }, ...(writes ? { GISUL_WRITE_TOKEN: { type: "text", value: "fixture-write-token" }, GISUL_GITHUB_TOKEN: { type: "text", value: "fixture-github-token" } } : {}), SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_ALLOWED_ORIGINS: { type: "text", value: "https://client.example" }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
   }, ...(outbound ? { dev: { outboundService: { type: "fetcher", handler: outbound } } } : {}) }] });
   t.after(() => runtime.dispose());
   const bucket = await runtime.getR2Bucket("SKILLS_BUCKET");
@@ -64,6 +69,50 @@ async function release(bucket, letter, complete = true) {
 async function activate(bucket, identity, revision) {
   await bucket.put("current.json", JSON.stringify({ ...identity, revision, sequence: revision, high_water: { commit: identity.commit, sequence: revision }, previous: null, operation: "promote", activated_at: "2026-09-17T00:00:00.000Z" }));
 }
+
+test("native HTTP and GJC's real stdio proxy preserve discovery, load errors, and pinned reads", { timeout: 30000 }, async t => {
+  const { bucket, endpoint } = await fixture(t, token, false, undefined, true);
+  const a = await release(bucket, "a"), b = await release(bucket, "b");
+  const authDir = await mkdtemp(join(tmpdir(), "gisul-proxy-test-"));
+  t.after(() => rm(authDir, { recursive: true, force: true }));
+  const registration = gajaeTransport(authDir);
+  const proxyPackage = JSON.parse(await readFile(new URL("../../server/node_modules/mcp-remote/package.json", import.meta.url), "utf8"));
+  assert.equal(remotePackage, `mcp-remote@${proxyPackage.version}`, "test the exact proxy version shipped in registration");
+  // Use the installed configuration's real flags, substituting only the local
+  // fixture endpoint/authentication and bypassing npx's package resolution.
+  const proxyArgs = registration.args.slice(registration.args.indexOf(remotePackage) + 1);
+  proxyArgs[0] = endpoint.href;
+  const transports = [
+    new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { authorization: `Bearer ${token}` } } }),
+    new StdioClientTransport({ command: process.execPath,
+      args: [fileURLToPath(new URL("../../server/node_modules/mcp-remote/dist/proxy.js", import.meta.url)), ...proxyArgs, "--allow-http", "--header", "Authorization: Bearer ${GISUL_FIXTURE_TOKEN}"],
+      env: { ...process.env, ...registration.env, GISUL_FIXTURE_TOKEN: token }, stderr: "pipe",
+    }),
+  ];
+  for (const [index, transport] of transports.entries()) {
+    await activate(bucket, a.identity, 1);
+    const client = new Client({ name: `runtime-client-${index}`, version: "1" });
+    t.after(() => client.close());
+    await client.connect(transport);
+    assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ["search_skills", "load_skill", "read_skill_file", "search_packs", "load_pack"]);
+    const call = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.ok(!result.isError, JSON.stringify(result));
+      return JSON.parse(result.content[0].text);
+    };
+    const found = await call("search_skills", { query: "R2 workflow", mode: "discovery" });
+    assert.equal(found.skills[0].uri, uri);
+    assert.equal(found.skills[0].invocation, "automatic");
+    await activate(bucket, b.identity, 2);
+    const loaded = await call("load_skill", { uri, commit: found.commit });
+    assert.equal(loaded.markdown, a.markdown);
+    assert.equal(loaded.commit, a.identity.commit);
+    assert.equal((await call("read_skill_file", { skill_uri: uri, load_id: loaded.load_id, uri: `${root}references/guide-0.md` })).text, "Supporting a-0");
+    assert.equal((await call("search_skills", { query: "R2 workflow", mode: "discovery" })).commit, b.identity.commit);
+    assert.equal((await client.callTool({ name: "read_skill_file", arguments: { skill_uri: uri, load_id: "wrong", uri: `${root}references/guide-0.md` } })).isError, true);
+    await client.close();
+  }
+});
 
 test("direct Worker authenticates locally, initializes without origin, and exposes no raw R2 paths", async t => {
   const { rpc, endpoint } = await fixture(t);
