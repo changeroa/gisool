@@ -297,7 +297,7 @@ function SearchBody({ detail }: { detail: SearchDetail }) {
           <SaveEvalButton detail={detail} />
         </div>
       ) : (
-        <Candidates candidates={detail.candidates} chosen={detail.chosen} />
+        <Candidates candidates={detail.candidates} chosen={detail.chosen} query={detail.query} />
       )}
     </div>
   );
@@ -540,10 +540,15 @@ const TRACE_CSS = `
 .foldbtn:hover { color: var(--accent-2); }
 .cands { display: grid; gap: var(--s-1); list-style: none; margin: var(--s-2) 0 0; padding: 0; }
 .cands__none { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }
-.cand { display: grid; grid-template-columns: var(--s-5) minmax(0, 11rem) auto minmax(4rem, 1fr) 2.6em var(--s-5); grid-template-areas: "rank name inv bar score pick" "rank desc desc desc desc desc"; align-items: center; column-gap: var(--s-2); padding: var(--s-2); border-radius: var(--r-sm); font-size: var(--fs-sm); }
+.cands__legend { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }
+.cands__legend + .cands { margin-top: var(--s-1); }
+.cand { display: grid; grid-template-columns: var(--s-5) minmax(0, 11rem) auto minmax(4rem, 1fr) 2.6em 4.6em var(--s-5); grid-template-areas: "rank name inv bar score cov pick" "rank desc desc desc desc desc desc"; align-items: center; column-gap: var(--s-2); padding: var(--s-2); border-radius: var(--r-sm); font-size: var(--fs-sm); }
 .cand--chosen { background: var(--wash); }
 .cand__rank { grid-area: rank; align-self: start; color: var(--ink-3); font-size: var(--fs-cap); line-height: 1.6; font-variant-numeric: tabular-nums; text-align: right; }
-.cand__name { grid-area: name; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand__name { grid-area: name; display: flex; align-items: baseline; gap: var(--s-1); min-width: 0; color: var(--ink); font-weight: 500; }
+.cand__nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand__root { flex: none; color: var(--ink-3); font: 500 var(--fs-micro) / 1 var(--font-mono); }
+.cand__cov { grid-area: cov; color: var(--ink-3); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cand__inv { grid-area: inv; display: inline-flex; align-items: center; height: 18px; padding: 0 var(--s-1); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font: 600 var(--fs-micro) / 1 var(--font-mono); letter-spacing: 0.02em; text-transform: uppercase; }
 .cand__bar { grid-area: bar; display: block; height: 6px; border-radius: var(--r-full); background: var(--wash-2); overflow: hidden; }
 .cand__fill { display: block; height: 100%; border-radius: inherit; background: color-mix(in srgb, var(--ink) 35%, transparent); }
@@ -556,7 +561,8 @@ const TRACE_CSS = `
   .trace__head, .tl__card { padding: var(--s-4); }
   .trace__meta { gap: var(--s-3) var(--s-5); }
   .tl__time { flex-basis: 100%; margin-inline-start: 0; }
-  .cand { grid-template-columns: var(--s-5) minmax(0, 1fr) auto 2.6em var(--s-5); grid-template-areas: "rank name inv score pick" "rank bar bar bar bar" "rank desc desc desc desc"; row-gap: var(--s-1); }
+  .cand { grid-template-columns: var(--s-5) minmax(0, 1fr) auto 2.6em var(--s-5); grid-template-areas: "rank name inv score pick" "rank bar bar cov cov" "rank desc desc desc desc"; row-gap: var(--s-1); }
+  .cand__cov { text-align: right; }
   .cand__desc { white-space: normal; }
 }
 `;

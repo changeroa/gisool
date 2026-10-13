@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { distImport } from "./_helpers.mjs";
 
 const { openDb } = await distImport("store/db.js");
-const { createSearchIndex, calibrate, DEFAULT_THRESHOLD, SEARCH_TOOL_GUIDANCE } = await distImport("search/index.js");
+const { createSearchIndex, calibrate, fuse, termCoverage, DEFAULT_THRESHOLD, SEARCH_TOOL_GUIDANCE } = await distImport("search/index.js");
 const { buildLexical } = await distImport("search/lexical.js");
 const { FtsIndex } = await distImport("search/fts.js");
 
@@ -34,7 +34,7 @@ function withIndex(fn, entries = ENTRIES) {
 
 const setThreshold = (db, value) => db.prepare("INSERT INTO meta(key, value) VALUES ('search_threshold', ?)").run(String(value));
 
-test("candidates carry scores in 0..1 and 1-based ranks, both ordered", () => withIndex((index) => {
+test("candidates carry scores in 0..1 and ordered 1-based ranks", () => withIndex((index) => {
   const o = index.search("slow database query and error logs", { mode: "discovery", limit: 10 });
   assert.equal(o.abstained, undefined);
   assert.ok(o.candidates.length >= 2, JSON.stringify(o.candidates));
@@ -42,12 +42,37 @@ test("candidates carry scores in 0..1 and 1-based ranks, both ordered", () => wi
     assert.equal(c.rank, i + 1);
     assert.ok(c.score > 0 && c.score <= 1, `score ${c.score}`);
     assert.ok(Array.isArray(c.matched) && c.matched.length > 0);
-    if (i) assert.ok(o.candidates[i - 1].score >= c.score, "scores descend");
   });
   assert.equal(o.candidates[0].name, "database-query");
   assert.equal(typeof o.traceId, "string");
   assert.equal(typeof o.elapsedMs, "number");
 }));
+
+test("score reflects match strength: an unrelated query's top candidate scores well below a strong match", () => withIndex((index) => {
+  const strong = index.search("inspect slow database query plans", { mode: "discovery", limit: 5 });
+  assert.equal(strong.candidates[0]?.name, "database-query");
+  assert.ok(strong.candidates[0].score > 0.8, `strong ${strong.candidates[0].score}`);
+
+  const weak = index.search("paint a watercolor landscape of slow mountain rivers at dusk", { mode: "discovery", limit: 5 });
+  assert.equal(weak.abstained, undefined, "the weak query still returns a top candidate");
+  assert.equal(weak.candidates[0].rank, 1);
+  assert.ok(weak.candidates[0].score < 0.6, `weak ${weak.candidates[0].score}`);
+}));
+
+test("fuse keeps RRF order while scaling the score by query-term coverage", () => {
+  const lexical = [
+    { uri: "a", score: 9, matched: ["slow"], anchor: 0 },
+    { uri: "b", score: 5, matched: ["slow", "query", "plan"], anchor: 0 },
+  ];
+  const fts = [{ uri: "a", rank: 1, bm25: -2, matched: ["slow"] }, { uri: "b", rank: 2, bm25: -1, matched: ["query"] }];
+  const fused = fuse(lexical, fts, ["slow", "query", "plan"]);
+  assert.deepEqual(fused.map((f) => f.uri), ["a", "b"], "order is rank-derived");
+  assert.ok(fused[0].score < fused[1].score, "a one-term match scores below the full match ranked under it");
+  assert.equal(fused[0].coverage, 1 / 3);
+  assert.equal(fused[1].coverage, 1);
+  assert.equal(fuse(lexical, fts)[0].score, 1, "without query terms the score stays rank-only");
+  assert.deepEqual(termCoverage(["slow", "query"], ["SLOW", "other"]), { hit: 1, total: 2 });
+});
 
 test("limit caps the candidate list", () => withIndex((index) => {
   assert.equal(index.search("slow database query and error logs", { mode: "discovery", limit: 1 }).candidates.length, 1);

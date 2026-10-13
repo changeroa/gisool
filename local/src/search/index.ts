@@ -5,9 +5,9 @@ import type { AbstainReason, CatalogDelta, SearchIndex, SearchMode, SearchOutcom
 import { FtsIndex } from "./fts.js";
 import { DEFAULT_THRESHOLD, fuse } from "./fusion.js";
 import { ABSTAIN_HINTS } from "./guidance.js";
-import { buildLexical, normalize } from "./lexical.js";
+import { buildLexical, normalize, terms } from "./lexical.js";
 
-export { DEFAULT_THRESHOLD, RRF_K, calibrate, fuse } from "./fusion.js";
+export { DEFAULT_THRESHOLD, RRF_K, calibrate, fuse, termCoverage } from "./fusion.js";
 export { SEARCH_TOOL_GUIDANCE, ABSTAIN_HINTS } from "./guidance.js";
 export { normalize, terms } from "./lexical.js";
 export { ftsTokens } from "./fts.js";
@@ -55,7 +55,7 @@ export function createSearchIndex(db: DatabaseSync): SearchIndex {
 
       const text = normalize(query ?? "");
       if (!text) return done([], "empty_query");
-      const fused = fuse(lexical.search(text), fts.search(text)).filter(f => entries.has(f.uri));
+      const fused = fuse(lexical.search(text), fts.search(text), terms(text)).filter(f => entries.has(f.uri));
       if (!fused.length) return done([], "no_overlap");
       const allowed = opts.mode === "automatic" ? fused.filter(f => entries.get(f.uri)!.invocation === "automatic") : fused;
       if (!allowed.length) return done([], "explicit_only");

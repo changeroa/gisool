@@ -62,18 +62,16 @@ test("traceCounts tallies each kind and abstained searches", () => {
   assert.deepEqual(trace.traceCounts([]), { steps: 0, searches: 0, abstained: 0, loads: 0, reads: 0, natives: 0, errors: 0 });
 });
 
-test("candidates render in descending score order and the loaded ones are marked from either source", () => {
+test("candidates render in rank order and the loaded ones are marked from either source", () => {
   const search = fixtures.traces[ALL_KINDS_SESSION].find((step) => step.kind === "search").detail;
   const ordered = candidates.orderCandidates(search.candidates);
-  const scores = ordered.map((c) => c.score);
-  assert.deepEqual(scores, [...scores].sort((a, b) => b - a));
-  assert.deepEqual(ordered.map((c) => c.rank), [1, 2, 3]);
+  assert.deepEqual(ordered.map((c) => c.rank), [1, 2, 3, 4]);
 
   const picked = candidates.chosenUris(search.candidates, search.chosen);
   assert.deepEqual([...picked], ["skill://local/agents/db-migration/SKILL.md", "skill://local/agents/api-contract/SKILL.md"]);
   assert.equal(picked.has("skill://local/agents/pr-review-ko/SKILL.md"), false);
 
-  const flagged = candidates.chosenUris([{ ...search.candidates[2], chosen: true }], undefined);
+  const flagged = candidates.chosenUris([{ ...search.candidates[3], chosen: true }], undefined);
   assert.deepEqual([...flagged], ["skill://local/agents/pr-review-ko/SKILL.md"], "the store's per-candidate flag also marks a row");
 
   const shuffled = [
@@ -81,7 +79,30 @@ test("candidates render in descending score order and the loaded ones are marked
     { uri: "b", name: "b", description: "", score: 0.9, rank: 1, invocation: "explicit", digest: "", matched: [] },
     { uri: "c", name: "c", description: "", score: 0.9, rank: 2, invocation: "automatic", digest: "", matched: [] },
   ];
-  assert.deepEqual(candidates.orderCandidates(shuffled).map((c) => c.uri), ["b", "c", "a"], "ties keep rank order");
+  assert.deepEqual(candidates.orderCandidates(shuffled).map((c) => c.uri), ["b", "c", "a"]);
+  const lowTop = [{ ...shuffled[0], rank: 1 }, { ...shuffled[1], rank: 2 }];
+  assert.deepEqual(candidates.orderCandidates(lowTop).map((c) => c.uri), ["a", "b"], "a weaker match score never reorders ranks");
+});
+
+test("coverage label counts query terms the candidate matched with the router's term rules", () => {
+  const search = fixtures.traces[ALL_KINDS_SESSION].find((step) => step.kind === "search").detail;
+  assert.equal(candidates.coverageLabel(search.query, search.candidates[0].matched), "6/8 terms");
+  assert.equal(candidates.coverageLabel("review this PR", ["review", "PR"]), "2/2 terms");
+  assert.equal(candidates.coverageLabel("deploy", []), "0/1 term");
+  assert.equal(candidates.coverageLabel("", ["x"]), undefined);
+  assert.equal(candidates.coverageLabel("how to", ["x"]), undefined, "stopword-only query has no terms to cover");
+});
+
+test("root hints appear only for names that repeat across roots", () => {
+  const search = fixtures.traces[ALL_KINDS_SESSION].find((step) => step.kind === "search").detail;
+  const hints = candidates.rootHints(search.candidates);
+  assert.deepEqual([...hints], [
+    ["skill://local/agents/db-migration/SKILL.md", "agents"],
+    ["skill://local/codex/db-migration/SKILL.md", "codex"],
+  ]);
+  assert.equal(candidates.rootOf("skill://local/claude/cloudflare-one-migrations/SKILL.md"), "claude");
+  assert.equal(candidates.rootOf("skill://local/my%20root/x/SKILL.md"), "my root");
+  assert.equal(candidates.rootOf("not-a-uri"), undefined);
 });
 
 test("score formatting is two decimals and bar widths are clamped percentages", () => {

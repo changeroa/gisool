@@ -805,42 +805,62 @@
        "uri": "skill://local/agents/db-migration/SKILL.md",
        "name": "db-migration",
        "description": "Writes reversible SQL migrations with backfill and rollback steps.",
-       "score": 0.82,
+       "score": 0.75,
        "rank": 1,
        "invocation": "automatic",
        "digest": "3ded922ddd04",
        "matched": [
-        "컬럼 추가",
-        "테이블"
+        "migration",
+        "index",
+        "order",
+        "statu",
+        "backfill",
+        "column"
+       ]
+      },
+      {
+       "uri": "skill://local/codex/db-migration/SKILL.md",
+       "name": "db-migration",
+       "description": "Writes reversible SQL migrations with backfill and rollback steps.",
+       "score": 0.18,
+       "rank": 2,
+       "invocation": "automatic",
+       "digest": "9b1f0c27aa41",
+       "matched": [
+        "migration",
+        "index",
+        "backfill"
        ]
       },
       {
        "uri": "skill://local/agents/api-contract/SKILL.md",
        "name": "api-contract",
        "description": "Keeps HTTP API request/response contracts in sync with handlers and docs.",
-       "score": 0.77,
-       "rank": 2,
+       "score": 0.18,
+       "rank": 3,
        "invocation": "automatic",
        "digest": "5ca4fda5d5ce",
        "matched": [
-        "API 응답"
+        "order",
+        "statu",
+        "column"
        ]
       },
       {
        "uri": "skill://local/agents/pr-review-ko/SKILL.md",
        "name": "pr-review-ko",
        "description": "Reviews a pull request and writes Korean review comments with risk notes.",
-       "score": 0.31,
-       "rank": 3,
+       "score": 0.06,
+       "rank": 4,
        "invocation": "automatic",
        "digest": "aca459effbb0",
        "matched": [
-        "반영"
+        "write"
        ]
       }
      ],
      "elapsedMs": 12,
-     "total": 3
+     "total": 4
     }
    },
    {
@@ -997,24 +1017,24 @@
        "uri": "skill://local/agents/status-brief/SKILL.md",
        "name": "status-brief",
        "description": "Turns recent work into a short status briefing for a team channel.",
-       "score": 0.44,
+       "score": 0.25,
        "rank": 1,
        "invocation": "automatic",
        "digest": "2cdafef7e4aa",
        "matched": [
-        "공유"
+        "추가"
        ]
       },
       {
        "uri": "skill://local/agents/meeting-notes/SKILL.md",
        "name": "meeting-notes",
        "description": "Drafts meeting prep and follow-up notes from a short agenda.",
-       "score": 0.22,
+       "score": 0.12,
        "rank": 2,
        "invocation": "automatic",
        "digest": "c64da30b4d65",
        "matched": [
-        "정리"
+        "테스트"
        ]
       }
      ],
@@ -1094,12 +1114,12 @@
        "uri": "skill://local/agents/pr-review-ko/SKILL.md",
        "name": "pr-review-ko",
        "description": "Reviews a pull request and writes Korean review comments with risk notes.",
-       "score": 0.71,
+       "score": 0.17,
        "rank": 1,
        "invocation": "automatic",
        "digest": "e28d51fee54a",
        "matched": [
-        "리뷰"
+        "risks"
        ]
       }
      ],
