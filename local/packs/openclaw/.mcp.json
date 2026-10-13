@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gisool": {
+      "transport": "stdio",
+      "command": "__COMMAND__",
+      "args": "__ARGS__",
+      "env": {
+        "GISOOL_HOME": "__GISOOL_HOME__"
+      }
+    }
+  }
+}
