@@ -7,7 +7,10 @@ const out = new URL("dist/dashboard/", root);
 await mkdir(new URL("assets/", out), { recursive: true });
 await build({
   entryPoints: [fileURLToPath(new URL("dashboard/main.tsx", root))],
-  outfile: fileURLToPath(new URL("assets/app.js", out)),
+  outdir: fileURLToPath(new URL("assets/", out)),
+  entryNames: "app",
+  chunkNames: "chunk-[hash]",
+  splitting: true,
   bundle: true,
   platform: "browser",
   format: "esm",

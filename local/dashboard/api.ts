@@ -1,5 +1,4 @@
 import type { Attribution, Filter, FlowDto, HeatmapDto, SessionRow, SkillEntry, SkillWeekDto, Store, TraceStep } from "../src/types.js";
-import fixtureJson from "./dev-fixtures.json";
 import { matchesFilter, serializeFilter } from "./state";
 
 export type Stats = ReturnType<Store["stats"]>;
@@ -110,28 +109,33 @@ export function fixtureVariant(search: string = typeof location === "undefined" 
 }
 
 function fixtureApi(variant: FixtureVariant): Api {
-  const data = fixtureJson as unknown as FixtureData;
-  const twelve = new Set(data.sessions12);
-  const rows = variant === "empty" ? [] : variant === "twelve" ? data.sessions.filter((row) => twelve.has(row.id)) : data.sessions;
-  const stats = variant === "empty" ? data.statsEmpty : data.stats;
-  const settle = <T>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(value), 0));
+  // Loaded on first call so the 43 kB fixture JSON stays out of the default bundle (esbuild splits it into its own chunk).
+  let loaded: Promise<FixtureData> | undefined;
+  const load = (): Promise<FixtureData> => (loaded ??= import("./dev-fixtures.json").then((m) => m.default as unknown as FixtureData));
+  const settle = async <T>(compute: (data: FixtureData) => T): Promise<T> => compute(await load());
+  const rowsOf = (data: FixtureData): SessionListRow[] => {
+    const twelve = new Set(data.sessions12);
+    return variant === "empty" ? [] : variant === "twelve" ? data.sessions.filter((row) => twelve.has(row.id)) : data.sessions;
+  };
   return {
     mode: "fixtures",
-    sessions: (filter) => settle(rows.filter((row) => matchesFilter(row, filter))),
-    trace: (sessionId) => settle(data.traces[sessionId] ?? []),
-    flow: (_filter, opts = {}) => {
-      const dto = variant === "twelve" ? data.flow12 : data.flow;
-      return settle(variant === "empty" ? { ...dto, nodes: [], links: [], sessionCount: 0, unit: opts.unit ?? dto.unit } : { ...dto, unit: opts.unit ?? dto.unit });
-    },
-    heatmap: () => {
-      const dto = variant === "twelve" ? data.heatmap12 : data.heatmap;
-      return settle(variant === "empty" ? { ...dto, cells: [], rowTotals: dto.rowTotals.map(() => 0), colTotals: dto.colTotals.map(() => 0) } : dto);
-    },
-    skillWeek: () => settle(variant === "empty" ? { ...data.skillWeek, rows: [] } : variant === "twelve" ? data.skillWeek12 : data.skillWeek),
-    stats: () => settle(stats),
-    skills: () => settle(data.skills),
-    addEvalCase: () => settle(undefined),
-    health: () => settle({ ok: true, version: "fixtures" }),
+    sessions: (filter) => settle((data) => rowsOf(data).filter((row) => matchesFilter(row, filter))),
+    trace: (sessionId) => settle((data) => data.traces[sessionId] ?? []),
+    flow: (_filter, opts = {}) =>
+      settle((data) => {
+        const dto = variant === "twelve" ? data.flow12 : data.flow;
+        return variant === "empty" ? { ...dto, nodes: [], links: [], sessionCount: 0, unit: opts.unit ?? dto.unit } : { ...dto, unit: opts.unit ?? dto.unit };
+      }),
+    heatmap: () =>
+      settle((data) => {
+        const dto = variant === "twelve" ? data.heatmap12 : data.heatmap;
+        return variant === "empty" ? { ...dto, cells: [], rowTotals: dto.rowTotals.map(() => 0), colTotals: dto.colTotals.map(() => 0) } : dto;
+      }),
+    skillWeek: () => settle((data) => (variant === "empty" ? { ...data.skillWeek, rows: [] } : variant === "twelve" ? data.skillWeek12 : data.skillWeek)),
+    stats: () => settle((data) => (variant === "empty" ? data.statsEmpty : data.stats)),
+    skills: () => settle((data) => data.skills),
+    addEvalCase: () => Promise.resolve(),
+    health: () => Promise.resolve({ ok: true, version: "fixtures" }),
     events({ onState }) {
       onState?.("fixtures");
       return () => undefined;
