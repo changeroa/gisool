@@ -117,6 +117,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     // Routes match exactly as authGate classifies them; `/API/...` must not reach an `/api/...` handler.
     app.set("case sensitive routing", true);
     app.use(localOnly(() => boundPort));
+    // Authenticate before parsing so unauthenticated callers cannot make the daemon buffer bodies or bump reject counters.
+    app.use(authGate(token));
     const smallJson = express.json({ limit: "1mb" });
     const otlpJson = express.json({ limit: "8mb" });
     app.use((req: Request, res: Response, next: NextFunction) => {
@@ -132,7 +134,6 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
         deny(res, 400, "bad_json");
       });
     });
-    app.use(authGate(token));
     app.use(requireJson((req) => {
       if (req.path.startsWith("/ingest/")) ownStore.countIngest("rejected", "unsupported_media_type");
     }));
@@ -144,7 +145,10 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     app.use((_req: Request, res: Response) => deny(res, 404, "not_found"));
     app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
       const status = (error as { status?: number }).status;
-      if (status === 404) return deny(res, 404, "not_found");
+      if (status === 400) return deny(res, 400, "bad_request");
+      // serve-static raises 403 for malformed paths (e.g. encoded traversal); nothing is served, so report not_found.
+      if (status === 403 || status === 404) return deny(res, 404, "not_found");
+      if (status !== undefined && status > 400 && status < 500) return deny(res, status, "request_rejected");
       log(`${req.method} ${req.path} failed: ${(error as Error).stack ?? String(error)}`);
       if (!res.headersSent) deny(res, 500, "internal_error");
     });

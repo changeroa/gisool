@@ -91,7 +91,7 @@ export function createCatalog(config: CatalogOptions): ManagedCatalog {
   const watcher = config.watch
     ? watchRoots(roots, () => {
         refresh().catch((error) => log(`catalog refresh failed: ${(error as Error).message}`));
-      }, { debounceMs: config.watchDebounceMs })
+      }, { debounceMs: config.watchDebounceMs, log })
     : undefined;
 
   return {

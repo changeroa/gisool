@@ -5,9 +5,14 @@ const WATCH_FALLBACK_MS = 2000;
 
 /**
  * Watches each root recursively and calls onChange once per quiet period of debounceMs.
- * Roots that do not exist (or cannot be watched) are skipped; the next refresh still reports them unreadable.
+ * Roots that do not exist (or cannot be watched) are skipped with one log line; the next refresh still reports them unreadable.
+ * A watcher that errors later (EMFILE, EACCES) is logged once and closed; the periodic refresh keeps detecting changes.
  */
-export function watchRoots(roots: { id: string; path: string }[], onChange: () => void, opts: { debounceMs?: number } = {}): { close(): void } {
+export function watchRoots(
+  roots: { id: string; path: string }[],
+  onChange: () => void,
+  opts: { debounceMs?: number; log: (msg: string) => void },
+): { close(): void } {
   const debounceMs = opts.debounceMs ?? WATCH_DEBOUNCE_MS;
   const watchers: FSWatcher[] = [];
   let timer: NodeJS.Timeout | undefined;
@@ -23,10 +28,16 @@ export function watchRoots(roots: { id: string; path: string }[], onChange: () =
   for (const root of roots) {
     try {
       const watcher = watch(root.path, { recursive: true, persistent: false }, schedule);
-      watcher.on("error", () => watcher.close());
+      let failed = false;
+      watcher.on("error", (error) => {
+        if (failed) return;
+        failed = true;
+        opts.log(`catalog watcher for root ${root.id} (${root.path}) failed: ${error.message}`);
+        watcher.close();
+      });
       watchers.push(watcher);
-    } catch {
-      // missing or unwatchable root
+    } catch (error) {
+      opts.log(`catalog watcher cannot watch root ${root.id} (${root.path}): ${(error as Error).message}`);
     }
   }
   // fs.watch can drop events under load; a periodic refresh (no-op when nothing changed) bounds detection latency.

@@ -1,8 +1,9 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { bearerOf, safeEqual } from "../api/security.js";
 import { createMcpServer, type ToolDeps } from "./tools.js";
 
 export const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
@@ -21,19 +22,12 @@ function rpcError(res: Response, status: number, message: string): void {
   res.status(status).json({ jsonrpc: "2.0", error: { code: -32000, message }, id: null });
 }
 
-function bearerMatches(header: string | undefined, token: string): boolean {
-  const presented = header?.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  const a = Buffer.from(presented);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export function registerMcp(app: Express, deps: McpHttpDeps): McpHttpHandle {
   const sessions = new Map<string, Session>();
   const idleMs = deps.idleMs ?? SESSION_IDLE_MS;
 
   const auth = (req: Request, res: Response, next: NextFunction) => {
-    if (deps.token && !bearerMatches(req.header("authorization"), deps.token)) {
+    if (deps.token && !safeEqual(bearerOf(req), deps.token)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
@@ -62,16 +56,16 @@ export function registerMcp(app: Express, deps: McpHttpDeps): McpHttpHandle {
     if (!session) {
       if (!isInitializeRequest(req.body)) return rpcError(res, 400, "Missing mcp-session-id; send initialize first");
       const server = createMcpServer(deps);
-      const created: Session = { server, lastSeen: Date.now(), transport: undefined as unknown as StreamableHTTPServerTransport };
-      created.transport = new StreamableHTTPServerTransport({
+      const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
         sessionIdGenerator: randomUUID,
         onsessioninitialized: (sid) => { sessions.set(sid, created); },
       });
-      created.transport.onclose = () => {
-        const sid = created.transport.sessionId;
+      const created: Session = { server, transport, lastSeen: Date.now() };
+      transport.onclose = () => {
+        const sid = transport.sessionId;
         if (sid && sessions.get(sid) === created) sessions.delete(sid);
       };
-      await server.connect(created.transport);
+      await server.connect(transport);
       session = created;
     }
     await session.transport.handleRequest(req, res, req.body);

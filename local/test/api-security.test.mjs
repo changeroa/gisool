@@ -129,6 +129,28 @@ test("body limits: 2 MB JSON is 413, 9 MB OTLP is 413 and counted as rejected", 
   assert.equal(ok.status, 202);
 });
 
+test("auth runs before body parsing: an unauthenticated 2 MB ingest body is 401, not 413, and is not counted", async () => {
+  const before = (await http(s.port, { path: "/api/stats", headers: bearer(s.token) })).json.ingest.rejected;
+  const two = JSON.stringify({ prompt: "x".repeat(2 * 1024 * 1024) });
+  const res = await http(s.port, { method: "POST", path: "/ingest/hook/codex", headers: { "Content-Type": "application/json" }, body: two });
+  assert.equal(res.status, 401);
+  assert.equal(res.json.error, "unauthorized");
+  const badJson = await http(s.port, { method: "POST", path: "/ingest/hook/codex", headers: { "Content-Type": "application/json" }, body: "{not json" });
+  assert.equal(badJson.status, 401);
+  assert.equal((await http(s.port, { path: "/api/stats", headers: bearer(s.token) })).json.ingest.rejected, before);
+  const authedBad = await http(s.port, { method: "POST", path: "/ingest/hook/codex", headers: jsonHeaders(s.token), body: "{not json" });
+  assert.equal(authedBad.status, 400);
+  const authedBig = await http(s.port, { method: "POST", path: "/ingest/hook/codex", headers: jsonHeaders(s.token), body: two });
+  assert.equal(authedBig.status, 413);
+});
+
+test("malformed /assets paths are 400 or 404, never 500", async () => {
+  for (const path of ["/assets/%E0%A4%A", "/assets/..%2f..%2fcli%2fmain.js", "/assets/%2e%2e/%2e%2e/package.json", "/assets/nope.js"]) {
+    const res = await http(s.port, { path });
+    assert.ok([400, 404].includes(res.status), `${path} -> ${res.status}`);
+  }
+});
+
 test("a second server on the same port fails with port_in_use", async () => {
   const sandbox = makeSandbox();
   try {

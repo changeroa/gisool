@@ -240,6 +240,21 @@ test("no-copy: refresh and readResource leave every root's listing, sizes and mt
   }
 });
 
+test("watcher logs a root it cannot watch instead of failing silently", () => {
+  const s = setup();
+  const lines = [];
+  const missing = join(s.base, "missing");
+  const c = createCatalog({ roots: [...s.roots, { id: "gone", path: missing }], log: (msg) => lines.push(msg), watch: true });
+  try {
+    const watcherLines = lines.filter((l) => l.includes("catalog watcher"));
+    assert.equal(watcherLines.length, 1);
+    assert.ok(watcherLines[0].includes("gone") && watcherLines[0].includes(missing), watcherLines[0]);
+  } finally {
+    c.close();
+    s.cleanup();
+  }
+});
+
 test("watcher refreshes after a debounced change and emits the delta", async () => {
   const s = setup();
   const c = createCatalog({ roots: s.roots, log: quietLog, watch: true, watchDebounceMs: 100 });

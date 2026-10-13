@@ -219,6 +219,9 @@ test("HTTP endpoint rejects a missing bearer token and unknown sessions", () => 
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
   assert.equal((await fetch(url, { method: "POST", headers, body })).status, 401);
+  for (const authorization of [`Bearer ${TOKEN}x`, `Bearer ${TOKEN.slice(1)}`, `Basic ${TOKEN}`, TOKEN]) {
+    assert.equal((await fetch(url, { method: "POST", headers: { ...headers, authorization }, body })).status, 401, authorization);
+  }
   const unknown = await fetch(url, { method: "POST", headers: { ...headers, authorization: `Bearer ${TOKEN}`, "mcp-session-id": "missing" }, body });
   assert.equal(unknown.status, 404);
 }));
