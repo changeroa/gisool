@@ -47,11 +47,20 @@ export function localOnly(port: () => number): RequestHandler {
   };
 }
 
-/** `/mcp` and `/ingest/*` take only the bearer token; `/api/*` also accepts the dashboard cookie; everything else is public. */
+/**
+ * `/mcp` and `/ingest/*` take only the bearer token; `/api/*` also accepts the dashboard cookie; everything else is public.
+ * The path is classified lowercased and percent-decoded so case or encoding variants (`/API/`, `/%61pi/`) cannot
+ * skip the gate even if a router ever matches them; a path that does not decode is refused.
+ */
 export function authGate(token: string): RequestHandler {
   const cookie = dashCookieValue(token);
   return (req: Request, res: Response, next: NextFunction) => {
-    const path = req.path;
+    let path: string;
+    try {
+      path = decodeURIComponent(req.path).toLowerCase();
+    } catch {
+      return deny(res, 400, "bad_path");
+    }
     const bearerOnly = path === "/mcp" || path.startsWith("/mcp/") || path.startsWith("/ingest/");
     const api = path === "/api" || path.startsWith("/api/");
     if (!bearerOnly && !api) return next();

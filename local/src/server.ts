@@ -114,6 +114,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     let boundPort = config.port;
     const app = express();
     app.disable("x-powered-by");
+    // Routes match exactly as authGate classifies them; `/API/...` must not reach an `/api/...` handler.
+    app.set("case sensitive routing", true);
     app.use(localOnly(() => boundPort));
     const smallJson = express.json({ limit: "1mb" });
     const otlpJson = express.json({ limit: "8mb" });

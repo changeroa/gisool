@@ -48,6 +48,35 @@ test("missing or wrong bearer on /mcp, /ingest, and /api is 401", async () => {
   assert.equal((await http(s.port, { path: "/api/stats" })).status, 401);
 });
 
+test("case and percent-encoding variants of protected paths never reach a handler without auth", async () => {
+  const json = { "Content-Type": "application/json" };
+  const variants = [
+    { method: "GET", path: "/API/sessions" },
+    { method: "GET", path: "/Api/stats" },
+    { method: "POST", path: "/INGEST/hook/codex", headers: json, body: JSON.stringify({ prompt: "INJECTED-BY-NOAUTH" }) },
+    { method: "POST", path: "/Ingest/otlp/v1/logs", headers: json, body: "{}" },
+    { method: "GET", path: "/%61pi/sessions" },
+    { method: "GET", path: "/%41PI/stats" },
+    { method: "POST", path: "/%69ngest/hook/codex", headers: json, body: "{}" },
+    { method: "POST", path: "/MCP", headers: json, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) },
+  ];
+  for (const v of variants) {
+    const res = await http(s.port, v);
+    assert.ok([401, 404].includes(res.status), `${v.method} ${v.path} -> ${res.status}`);
+  }
+  assert.equal((await http(s.port, { path: "/api/%E0%A4%A" })).status, 400);
+  const sessions = (await http(s.port, { path: "/api/sessions", headers: bearer(s.token) })).json;
+  assert.ok(!JSON.stringify(sessions).includes("INJECTED-BY-NOAUTH"));
+});
+
+test("routing is case-sensitive; lowercase protected paths behave unchanged", async () => {
+  assert.equal((await http(s.port, { path: "/API/sessions", headers: bearer(s.token) })).status, 404);
+  assert.equal((await http(s.port, { path: "/api/sessions", headers: bearer(s.token) })).status, 200);
+  assert.equal((await http(s.port, { path: "/api/stats", headers: bearer(s.token) })).status, 200);
+  assert.equal((await http(s.port, { path: "/api/sessions" })).status, 401);
+  assert.equal((await http(s.port, { method: "POST", path: "/ingest/hook/codex", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 401);
+});
+
 test("GET /?token= sets an HttpOnly SameSite=Strict cookie that works for /api only", async () => {
   const wrong = await http(s.port, { path: "/?token=nope" });
   assert.equal(wrong.status, 401);
