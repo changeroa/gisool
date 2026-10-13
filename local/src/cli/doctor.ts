@@ -70,7 +70,7 @@ async function healthCheck(port: number): Promise<DoctorCheck> {
     if (body.version !== mine) return { name: "daemon", status: "warn", code: "version_mismatch", detail: `daemon ${body.version}, CLI ${mine}` };
     return { name: "daemon", status: "ok", detail: `gisool ${body.version} on 127.0.0.1:${port}` };
   } catch (error) {
-    return { name: "daemon", status: "fail", code: "daemon_down", detail: `no response from http://127.0.0.1:${port}/healthz (${(error as Error).message})` };
+    return { name: "daemon", status: "fail", code: "daemon_unreachable", detail: `no response from http://127.0.0.1:${port}/healthz (${(error as Error).message})` };
   }
 }
 

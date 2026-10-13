@@ -49,7 +49,7 @@ function assertSchema(report) {
   }
 }
 
-test("doctor --json with the daemon down exits 1 and reports daemon_down", async (t) => {
+test("doctor --json with the daemon down exits 1 and reports daemon_unreachable", async (t) => {
   const sb = cliSandbox({ runtimes: [] });
   t.after(sb.cleanup);
   prepareHome(sb, await freePort());
@@ -58,7 +58,7 @@ test("doctor --json with the daemon down exits 1 and reports daemon_down", async
   const report = JSON.parse(r.stdout);
   assertSchema(report);
   assert.equal(report.ok, false);
-  assert.equal(check(report, "daemon").code, "daemon_down");
+  assert.equal(check(report, "daemon").code, "daemon_unreachable");
   assert.equal(check(report, "service").status, "skip");
 });
 

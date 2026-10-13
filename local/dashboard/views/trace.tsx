@@ -94,8 +94,17 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** First SHORT_DIGEST_CHARS hex chars; catalog digests carry a `sha256:` prefix that is not part of the hash. */
 export function shortDigest(digest: string): string {
-  return digest ? digest.slice(0, SHORT_DIGEST_CHARS) : "";
+  return digest ? digest.replace(/^sha256[:-]/, "").slice(0, SHORT_DIGEST_CHARS) : "";
+}
+
+/** Search latency as the timeline shows it: sub-millisecond keeps two decimals, under 100 ms one, above that whole ms. */
+export function formatMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "-";
+  if (ms < 1) return `${ms.toFixed(2)} ms`;
+  if (ms < 100) return `${ms.toFixed(1)} ms`;
+  return `${Math.round(ms)} ms`;
 }
 
 export function resourcePath(skillUri: string, uri: string): string {
@@ -274,7 +283,7 @@ function SearchBody({ detail }: { detail: SearchDetail }) {
     <div>
       <p class="tl__meta tl__meta--row">
         <span class="tl__mode" title={`mode: ${detail.mode}`}>{MODE_LABEL[detail.mode] ?? detail.mode}</span>
-        <span>{detail.elapsedMs} ms</span>
+        <span>{formatMs(detail.elapsedMs)}</span>
         <span>{countText}</span>
         {detail.traceId && <span class="tl__id" title="trace id">{detail.traceId}</span>}
       </p>

@@ -128,7 +128,12 @@ test("prompt fold keeps 600 code points and reports whether it folded", () => {
 
 test("load, read and time formatters produce the compact labels the timeline shows", () => {
   assert.equal(trace.shortDigest("3011f937739e79c8"), "3011f937");
+  assert.equal(trace.shortDigest("sha256:faf648b56dcf0a1b"), "faf648b5", "catalog digests carry a sha256: prefix");
   assert.equal(trace.shortDigest(""), "");
+  assert.equal(trace.formatMs(3.446750000002794), "3.4 ms");
+  assert.equal(trace.formatMs(0.0131), "0.01 ms");
+  assert.equal(trace.formatMs(245.6), "246 ms");
+  assert.equal(trace.formatMs(-1), "-");
   assert.equal(trace.resourcePath("skill://local/agents/db-migration/SKILL.md", "skill://local/agents/db-migration/references/rollback.md"), "references/rollback.md");
   assert.equal(trace.resourcePath("skill://local/agents/db-migration/SKILL.md", "skill://local/other/x.md"), "skill://local/other/x.md");
   assert.equal(trace.resourcePath("", "skill://local/other/x.md"), "skill://local/other/x.md");
