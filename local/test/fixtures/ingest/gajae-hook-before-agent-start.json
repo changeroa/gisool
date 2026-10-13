@@ -1,0 +1,7 @@
+{
+  "event": "before_agent_start",
+  "prompt": null,
+  "promptUnavailable": true,
+  "sessionId": "gjc-sess-1",
+  "cwd": "/work/gjc"
+}

@@ -1,0 +1,7 @@
+{
+  "session_id": "codex-sess-1",
+  "turn_id": "turn-7",
+  "cwd": "/work/api",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Add pagination to the users endpoint"
+}

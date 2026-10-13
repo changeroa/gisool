@@ -1,0 +1,6 @@
+{
+  "event": "before_agent_run",
+  "prompt": "Summarize my inbox",
+  "sessionKey": "agent:main:main",
+  "sessionId": "oc-sess-1"
+}

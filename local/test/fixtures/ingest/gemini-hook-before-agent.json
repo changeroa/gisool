@@ -1,0 +1,8 @@
+{
+  "session_id": "gemini-sess-1",
+  "transcript_path": "/t.json",
+  "cwd": "/work/web",
+  "hook_event_name": "BeforeAgent",
+  "timestamp": "2026-10-13T01:00:00Z",
+  "prompt": "Explain the build pipeline"
+}

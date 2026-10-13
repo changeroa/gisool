@@ -1,0 +1,14 @@
+{
+  "session_id": "s1",
+  "cwd": "/work/app",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__gisool__search_skills",
+  "tool_input": {
+    "query": "commit"
+  },
+  "tool_response": {},
+  "tool_use_id": "tu1",
+  "mcp_server": {
+    "name": "gisool"
+  }
+}

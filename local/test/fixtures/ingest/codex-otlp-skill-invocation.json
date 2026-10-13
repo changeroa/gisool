@@ -1,0 +1,60 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "codex_cli_rs"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "codex_otel"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1760320000000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.skill_invocation"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "codex-conv-1"
+                  }
+                },
+                {
+                  "key": "skill.name",
+                  "value": {
+                    "stringValue": "db-query"
+                  }
+                },
+                {
+                  "key": "skill.scope",
+                  "value": {
+                    "stringValue": "user"
+                  }
+                },
+                {
+                  "key": "skill.invocation_type",
+                  "value": {
+                    "stringValue": "implicit"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "session_id": "claude-sess-1",
+  "cwd": "/work/app",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/x/.agents/skills/db-query/SKILL.md"
+  },
+  "tool_response": {
+    "type": "text"
+  },
+  "tool_use_id": "toolu_read_9"
+}

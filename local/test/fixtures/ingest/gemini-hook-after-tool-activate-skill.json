@@ -1,0 +1,12 @@
+{
+  "session_id": "gemini-sess-1",
+  "cwd": "/work/web",
+  "hook_event_name": "AfterTool",
+  "tool_name": "activate_skill",
+  "tool_input": {
+    "name": "ci-debug"
+  },
+  "tool_response": {
+    "llmContent": "..."
+  }
+}

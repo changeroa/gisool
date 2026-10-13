@@ -1,0 +1,12 @@
+{
+  "session_id": "claude-sess-1",
+  "transcript_path": "/t.jsonl",
+  "cwd": "/work/app",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptExpansion",
+  "expansion_type": "slash_command",
+  "command_name": "example-skill",
+  "command_args": "arg1 arg2",
+  "command_source": "plugin",
+  "prompt": "/example-skill arg1 arg2"
+}

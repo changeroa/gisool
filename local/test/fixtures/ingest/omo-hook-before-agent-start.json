@@ -1,0 +1,6 @@
+{
+  "event": "before_agent_start",
+  "prompt": "Draft release notes",
+  "sessionId": "omo-sess-1",
+  "cwd": "/work/omo"
+}

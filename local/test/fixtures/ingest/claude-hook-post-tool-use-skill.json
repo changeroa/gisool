@@ -1,0 +1,14 @@
+{
+  "session_id": "claude-sess-1",
+  "cwd": "/work/app",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Skill",
+  "tool_input": {
+    "skill": "commit-helper"
+  },
+  "tool_response": {
+    "success": true
+  },
+  "tool_use_id": "toolu_skill_1",
+  "duration_ms": 3
+}

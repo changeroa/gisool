@@ -1,0 +1,10 @@
+{
+  "session_id": "codex-sess-1",
+  "turn_id": "turn-7",
+  "cwd": "/work/api",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed -n '1,80p' /Users/u/.codex/skills/api-pagination/SKILL.md"
+  }
+}

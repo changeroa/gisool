@@ -1,0 +1,11 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "generation_id": "gen-3",
+  "hook_event_name": "beforeSubmitPrompt",
+  "workspace_roots": [
+    "/work/site"
+  ],
+  "cursor_version": "2.1.0",
+  "prompt": "Make the header sticky",
+  "attachments": []
+}

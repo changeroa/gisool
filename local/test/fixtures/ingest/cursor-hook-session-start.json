@@ -1,0 +1,7 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "hook_event_name": "sessionStart",
+  "workspace_roots": [
+    "/work/site"
+  ]
+}
