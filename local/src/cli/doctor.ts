@@ -60,7 +60,7 @@ function hookTimeoutCheck(home: string, env: NodeJS.ProcessEnv): DoctorCheck {
     : { name: "hook_timeouts", status: "ok", detail: `all gisool hook timeouts <= ${HOOK_LIMIT_S}s` };
 }
 
-async function healthCheck(port: number): Promise<DoctorCheck> {
+async function healthCheck(port: number, gisoolHome: string): Promise<DoctorCheck> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1500) });
     const body = (await res.json().catch(() => undefined)) as { ok?: unknown; version?: unknown } | undefined;
@@ -69,6 +69,16 @@ async function healthCheck(port: number): Promise<DoctorCheck> {
     }
     const mine = packageVersion();
     if (body.version !== mine) return { name: "daemon", status: "warn", code: "version_mismatch", detail: `daemon ${body.version}, CLI ${mine}` };
+    const tokenPath = join(gisoolHome, "token");
+    if (existsSync(tokenPath)) {
+      const stats = await fetch(`http://127.0.0.1:${port}/api/stats`, {
+        headers: { authorization: `Bearer ${readFileSync(tokenPath, "utf8").trim()}` },
+        signal: AbortSignal.timeout(1500),
+      });
+      if (stats.status === 401) {
+        return { name: "daemon", status: "fail", code: "token_mismatch", detail: `gisool ${body.version} on 127.0.0.1:${port} rejected this install's token: the port is held by another gisool instance, or the token was rotated; restart the daemon` };
+      }
+    }
     return { name: "daemon", status: "ok", detail: `gisool ${body.version} on 127.0.0.1:${port}` };
   } catch (error) {
     return { name: "daemon", status: "fail", code: "daemon_unreachable", detail: `no response from http://127.0.0.1:${port}/healthz (${(error as Error).message})` };
@@ -152,7 +162,7 @@ export async function collectDoctor(env: NodeJS.ProcessEnv): Promise<DoctorRepor
   const home = resolveHome(env);
   const gisoolHome = resolveGisoolHome(env);
   const config = loadConfig(env);
-  const checks: DoctorCheck[] = [serviceCheck(home, env), await healthCheck(config.port)];
+  const checks: DoctorCheck[] = [serviceCheck(home, env), await healthCheck(config.port, gisoolHome)];
 
   const remote: string[] = [];
   const packChecks: DoctorCheck[] = [];

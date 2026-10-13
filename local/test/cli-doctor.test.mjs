@@ -16,7 +16,7 @@ async function listen(handler) {
 }
 
 const fakeGisool = () => listen((req, res) => {
-  res.writeHead(req.url === "/healthz" ? 200 : 404, { "content-type": "application/json" });
+  res.writeHead(req.url === "/healthz" || req.url === "/api/stats" ? 200 : 404, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, version: VERSION }));
 });
 
@@ -146,4 +146,42 @@ test("a remote gisul registration is a warning, not a failure", async (t) => {
   assert.equal(remote.code, "remote_gisul_registered");
   assert.match(remote.detail, /gemini/);
   assert.notEqual(check(report, "last_backup").detail, "none");
+});
+
+test("doctor fails with token_mismatch when /api/stats rejects this install's token", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const seen = [];
+  const foreign = await listen((req, res) => {
+    seen.push(req.url);
+    const healthy = req.url === "/healthz";
+    res.writeHead(healthy ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(healthy ? { ok: true, version: VERSION } : { error: "unauthorized" }));
+  });
+  t.after(async () => { await foreign.close(); sb.cleanup(); });
+  prepareHome(sb, foreign.port);
+  const r = await runCli(["doctor", "--json"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  const c = check(JSON.parse(r.stdout), "daemon");
+  assert.equal(c.status, "fail");
+  assert.equal(c.code, "token_mismatch");
+  assert.match(c.detail, /another gisool instance|rotated/);
+  assert.deepEqual(seen, ["/healthz", "/api/stats"]);
+});
+
+test("doctor sends this install's bearer token to /api/stats and reports ok on 200", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  let auth;
+  const daemon = await listen((req, res) => {
+    if (req.url === "/api/stats") auth = req.headers.authorization;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, version: VERSION }));
+  });
+  t.after(async () => { await daemon.close(); sb.cleanup(); });
+  prepareHome(sb, daemon.port);
+  const r = await runCli(["doctor", "--json"], sb.env);
+  assert.equal(r.code, 0, r.output);
+  assert.equal(check(JSON.parse(r.stdout), "daemon").status, "ok");
+  const token = readFileSync(join(sb.env.GISOOL_HOME, "token"), "utf8").trim();
+  assert.ok(token.length > 0);
+  assert.equal(auth, "Bearer " + token);
 });
