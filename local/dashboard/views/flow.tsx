@@ -86,6 +86,7 @@ const FLOW_CSS = `
 .flow__dot.is-exposed_only { background: var(--warn); }
 .flow__dot.is-no_match { background: var(--bad); }
 .flow__chart { padding: var(--s-4); }
+.flow__paths { overflow-x: auto; }
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: var(--r-sm); overflow: hidden; }
 .seg__btn { height: 30px; padding: 0 var(--s-3); border: 0; background: transparent; color: var(--ink-2); font-size: var(--fs-sm); font-weight: 500; cursor: pointer; transition: background-color var(--t-micro), color var(--t-micro); }
 .seg__btn + .seg__btn { border-left: 1px solid var(--line-2); }
@@ -107,6 +108,11 @@ const FLOW_CSS = `
 .paths__skill--dim { color: var(--ink-3); font-weight: 400; }
 .paths .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .paths__share { display: inline-block; min-width: 4.5rem; padding: 2px var(--s-2); border-radius: var(--r-sm); background: linear-gradient(to right, var(--wash-2) var(--share, 0%), transparent 0); }
+@media (max-width: 639.98px) {
+  .paths__hint { display: none; }
+  .paths th:first-child { white-space: normal; }
+  .paths__share { display: block; min-width: 0; }
+}
 `;
 
 installStyles("flow", FLOW_CSS);
@@ -148,7 +154,7 @@ function isInteractive(target: EventTarget | null): boolean {
 function TopPathsTable({ dto, route, navigate, resolve }: { dto: FlowDto; route: Route; navigate: ViewProps["navigate"]; resolve: SkillResolver }) {
   const rows = topPaths(dto);
   return (
-    <div class="card">
+    <div class="card flow__paths">
       <table class="paths">
         <thead>
           <tr>
