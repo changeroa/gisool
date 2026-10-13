@@ -206,3 +206,49 @@ test("the scoped stylesheet only uses design tokens for color, spacing, and radi
   }
   assert.ok(/\.hm__cell--l4 \{ background: var\(--hm-l4\); \}/.test(HEATMAP_CSS));
 });
+
+const NARROW_BLOCK = "@media (max-width: 639.98px) {";
+const wideCss = HEATMAP_CSS.slice(0, HEATMAP_CSS.indexOf(NARROW_BLOCK));
+const narrowCss = HEATMAP_CSS.slice(HEATMAP_CSS.indexOf(NARROW_BLOCK));
+
+/** Declarations of the `selector { ... }` rule in a stylesheet slice, as a property -> value map. */
+function declarations(css, selector) {
+  const pattern = new RegExp(`^\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{([^}]*)\\}`, "m");
+  const match = pattern.exec(css);
+  assert.ok(match, `rule for ${selector}`);
+  return Object.fromEntries(match[1].split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+    const colon = d.indexOf(":");
+    return [d.slice(0, colon).trim(), d.slice(colon + 1).trim()];
+  }));
+}
+
+test("narrow widths give each skill name its own full-width wrapping line; desktop keeps the ellipsised label column", () => {
+  assert.ok(wideCss.length > 0 && narrowCss.length > 0, "the narrow media block exists");
+  const wideSkill = declarations(wideCss, ".hm__skill");
+  assert.equal(wideSkill["white-space"], "nowrap");
+  assert.equal(wideSkill["text-overflow"], "ellipsis");
+  assert.equal(declarations(wideCss, ".hm__d--skill")["max-width"], "18ch");
+  assert.equal(declarations(wideCss, ".hm")["grid-template-columns"], "max-content repeat(var(--hm-cols), minmax(0, 1fr)) max-content");
+  assert.equal(declarations(narrowCss, ".hm--skills")["grid-template-columns"], "repeat(var(--hm-cols), minmax(0, 1fr)) max-content", "no label column on phones");
+  const narrowLabel = declarations(narrowCss, ".hm--skills .hm__d");
+  assert.equal(narrowLabel["grid-column"], "1 / -1", "the row header spans the whole grid row");
+  assert.equal(narrowLabel["max-width"], "none");
+  assert.equal(narrowLabel["white-space"], "normal");
+  const narrowSkill = declarations(narrowCss, ".hm--skills .hm__skill");
+  assert.equal(narrowSkill["white-space"], "normal");
+  assert.equal(narrowSkill["overflow"], "visible");
+  assert.equal(narrowSkill["text-overflow"], "clip");
+  assert.equal(narrowSkill["max-width"], "none");
+  assert.ok(!/max-width: \d+ch/.test(narrowCss), "no character cap on phone labels");
+  const corner = declarations(narrowCss, ".hm--skills .hm__corner");
+  assert.equal(corner.position, "absolute", "the Skill column header leaves the grid flow but stays in the accessibility tree");
+  assert.notEqual(corner.display, "none");
+  assert.equal(declarations(wideCss, ".hm__d")["grid-column"], undefined, "desktop row headers keep their column");
+});
+
+test("legend swatches carry a hairline ring so the level-0 tile is visible on the card in both schemes", () => {
+  const swatch = declarations(HEATMAP_CSS, ".hm__sw");
+  assert.equal(swatch["box-shadow"], "inset 0 0 0 1px var(--line-2)");
+  assert.equal(swatch.width, "var(--s-3)");
+  assert.equal(declarations(HEATMAP_CSS, ".hm-stack")["--hm-l0"], "var(--wash)", "the swatch keeps the same fill as an empty cell");
+});

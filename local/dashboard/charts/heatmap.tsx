@@ -498,7 +498,7 @@ export const HEATMAP_CSS = `
 .hm__grand { align-self: end; padding-inline-start: var(--s-2); color: var(--ink); font-size: var(--fs-cap); font-weight: 600; text-align: right; }
 
 .hm__legend { display: inline-flex; align-items: center; gap: var(--s-1); }
-.hm__sw { display: inline-block; width: var(--s-3); height: var(--s-3); border-radius: var(--hm-r); }
+.hm__sw { display: inline-block; width: var(--s-3); height: var(--s-3); border-radius: var(--hm-r); box-shadow: inset 0 0 0 1px var(--line-2); }
 .hm__sel { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin-top: var(--s-4); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink); font-size: var(--fs-sm); }
 .hm__sel strong { font-weight: 600; }
 .hm__sel__actions { display: inline-flex; gap: var(--s-2); margin-inline-start: auto; }
@@ -510,7 +510,12 @@ export const HEATMAP_CSS = `
   .hm--cols-24 .hm__rt { min-width: 0; padding-inline-start: var(--s-1); }
   .hm__rt { gap: var(--s-1); min-width: calc(var(--s-6) + var(--s-5)); padding-inline-start: var(--s-1); }
   .hm__rbar { width: calc(var(--v) * var(--s-6)); }
-  .hm__d--skill { max-width: 10ch; }
+  /* Skill x week: the label column goes away; each skill name sits on its own full-width line above its cells, wrapping instead of truncating. */
+  .hm--skills { grid-template-columns: repeat(var(--hm-cols), minmax(0, 1fr)) max-content; }
+  .hm--skills .hm__corner { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .hm--skills .hm__d { grid-column: 1 / -1; max-width: none; margin-top: var(--s-2); padding-inline-end: 0; white-space: normal; }
+  .hm--skills .hm__d--total { padding-inline-start: var(--s-2); }
+  .hm--skills .hm__skill { width: 100%; max-width: none; height: auto; min-height: var(--s-6); padding: var(--s-1) var(--s-2); overflow: visible; text-overflow: clip; white-space: normal; }
   .hm__wk small, .hm__wk__w { display: none; }
   .seg { margin-inline-start: 0; }
 }
