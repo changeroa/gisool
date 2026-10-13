@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 export const marker = "<gisool-discovery>";
 export const guidance = `${marker}
+gisool = local skills on this machine; gisul = remote team skills.
 Before substantive work on a new actionable task, use the gisool search_skills tool
 (MCP server "gisool") with 2-5 subject/outcome terms. Search is not activation:
 check relevance and invocation, then load only a relevant result's exact URI and

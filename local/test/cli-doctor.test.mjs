@@ -82,6 +82,25 @@ test("doctor --json with the daemon up exits 0; no backups reports last_backup: 
   assert.match(text.stdout, /last_backup: none/);
 });
 
+test("doctor lists sibling skill families in text and --json", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const daemon = await fakeGisool();
+  t.after(async () => { await daemon.close(); sb.cleanup(); });
+  prepareHome(sb, daemon.port);
+  const skills = join(sb.home, "skills");
+  for (const name of ["re0", "re0-loop", "re0-work", "solo"]) {
+    mkdirSync(join(skills, name), { recursive: true });
+    writeFileSync(join(skills, name, "SKILL.md"), `---\nname: ${name}\ndescription: test skill ${name}\n---\nbody\n`);
+  }
+  writeFileSync(join(sb.env.GISOOL_HOME, "config.json"), JSON.stringify({ port: daemon.port, roots: [{ id: "t", path: skills }] }) + "\n");
+  const r = await runCli(["doctor", "--json"], sb.env);
+  const report = JSON.parse(r.stdout);
+  assert.deepEqual(report.families, [{ id: "re0", members: ["re0", "re0-loop", "re0-work"] }]);
+  assert.equal(check(report, "skill_families").detail, "re0: re0, re0-loop, re0-work");
+  const text = await runCli(["doctor"], sb.env);
+  assert.match(text.stdout, /skill_families: re0: re0, re0-loop, re0-work/);
+});
+
 test("doctor reports a listener that is not gisool", async (t) => {
   const sb = cliSandbox({ runtimes: [] });
   const other = await listen((req, res) => { res.writeHead(200); res.end("hello"); });

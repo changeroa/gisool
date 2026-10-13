@@ -11,7 +11,8 @@ import { type Io, currentServicePlatform, dbPath, packageVersion, serviceLoaded,
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
 export type DoctorCheck = { name: string; status: CheckStatus; code?: string; detail: string };
-export type DoctorReport = { ok: boolean; version: string; checks: DoctorCheck[] };
+export type SkillFamily = { id: string; members: string[] };
+export type DoctorReport = { ok: boolean; version: string; checks: DoctorCheck[]; families: SkillFamily[] };
 
 const HOOK_LIMIT_S = 5;
 type Obj = Record<string, unknown>;
@@ -102,22 +103,25 @@ function ftsCheck(): DoctorCheck {
   }
 }
 
-async function catalogChecks(config: GisoolConfig, gisoolHome: string): Promise<DoctorCheck[]> {
+async function catalogChecks(config: GisoolConfig, gisoolHome: string): Promise<{ checks: DoctorCheck[]; families: SkillFamily[] }> {
   const catalog = createCatalog({ roots: config.roots, log: () => undefined });
   try {
     await catalog.refresh();
     const report = catalog.report();
     const unreadable = report.roots.filter((r) => !r.readable);
+    const nameByUri = new Map(catalog.list().map((e) => [e.uri, e.name]));
+    const families: SkillFamily[] = report.families.map((f) => ({ id: f.id, members: [...new Set(f.uris.map((u) => nameByUri.get(u) ?? u))].sort() }));
     const checks: DoctorCheck[] = [
       unreadable.length
         ? { name: "roots", status: "warn", code: "root_unreadable", detail: `unreadable or missing: ${unreadable.map((r) => r.path).join(", ")}` }
         : { name: "roots", status: "ok", detail: `${report.roots.length} root(s) readable` },
       { name: "duplicates", status: report.duplicates.length ? "warn" : "ok", detail: `${report.duplicates.length} duplicate skill name(s)${report.duplicates.length ? `: ${report.duplicates.map((d) => d.name).join(", ")}` : ""}` },
+      { name: "skill_families", status: "ok", detail: families.length ? families.map((f) => `${f.id}: ${f.members.join(", ")}`).join("; ") : "none" },
     ];
     const path = dbPath(gisoolHome);
     if (!existsSync(path)) {
       checks.push({ name: "index_freshness", status: "warn", code: "index_missing", detail: `${path} not created yet; start the daemon` });
-      return checks;
+      return { checks, families };
     }
     const db = new DatabaseSync(path, { readOnly: true });
     try {
@@ -131,7 +135,7 @@ async function catalogChecks(config: GisoolConfig, gisoolHome: string): Promise<
     } finally {
       db.close();
     }
-    return checks;
+    return { checks, families };
   } finally {
     catalog.close();
   }
@@ -163,8 +167,9 @@ export async function collectDoctor(env: NodeJS.ProcessEnv): Promise<DoctorRepor
   checks.push(remote.length
     ? { name: "remote_gisul", status: "warn", code: "remote_gisul_registered", detail: `remote gisul is also registered in: ${remote.join(", ")} (gisool init --disable-remote turns it off)` }
     : { name: "remote_gisul", status: "ok", detail: "no remote gisul registration found" });
-  checks.push(tokenCheck(gisoolHome), ftsCheck(), ...(await catalogChecks(config, gisoolHome)), ...packChecks, hookTimeoutCheck(home, env), lastBackupCheck(gisoolHome, Date.now()));
-  return { ok: checks.every((c) => c.status !== "fail"), version: packageVersion(), checks };
+  const catalogResult = await catalogChecks(config, gisoolHome);
+  checks.push(tokenCheck(gisoolHome), ftsCheck(), ...catalogResult.checks, ...packChecks, hookTimeoutCheck(home, env), lastBackupCheck(gisoolHome, Date.now()));
+  return { ok: checks.every((c) => c.status !== "fail"), version: packageVersion(), checks, families: catalogResult.families };
 }
 
 export async function runDoctor(opts: { json?: boolean }, env: NodeJS.ProcessEnv, io: Io): Promise<number> {

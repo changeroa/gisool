@@ -33,7 +33,7 @@ function fill(node: unknown, vars: Record<string, unknown>): unknown {
 }
 
 /** Tolerant read of an openclaw.json (JSON5-ish): strips comments and trailing commas, falls back to null. */
-function parseConfig(text: string): any {
+function parseConfig(text: string): unknown {
   const stripped = text.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, s) => s ?? "").replace(/,(\s*[}\]])/g, "$1");
   try {
     return JSON.parse(stripped);
@@ -42,9 +42,13 @@ function parseConfig(text: string): any {
   }
 }
 
+type Rec = Record<string, any>;
+const isRecord = (v: unknown): v is Rec => v !== null && typeof v === "object" && !Array.isArray(v);
+const pluginEntries = (cfg: Rec): Rec | undefined => (isRecord(cfg.plugins) && isRecord(cfg.plugins.entries) ? cfg.plugins.entries : undefined);
+
 function hasConversationAccess(text: string): boolean {
   const cfg = parseConfig(text);
-  if (cfg) return cfg?.plugins?.entries?.gisool?.hooks?.allowConversationAccess === true;
+  if (isRecord(cfg)) return pluginEntries(cfg)?.gisool?.hooks?.allowConversationAccess === true;
   return /allowConversationAccess["']?\s*:\s*true/.test(text);
 }
 
@@ -63,7 +67,8 @@ export const openclawPack: RuntimePack = {
     const remote = [join(state, "gisul"), join(state, "plugins", "gisul"), join(state, "extensions", "gisul")].find(existsSync);
     const cfgText = readOrNull(openclawConfigPath(env, home));
     const cfg = cfgText ? parseConfig(cfgText) : null;
-    const remoteGisulRegistered = Boolean(remote) || Boolean(cfg?.plugins?.entries?.gisul || cfg?.plugins?.entries?.["gisul-openclaw"]);
+    const entries = isRecord(cfg) ? pluginEntries(cfg) : undefined;
+    const remoteGisulRegistered = Boolean(remote) || Boolean(entries?.gisul || entries?.["gisul-openclaw"]);
     if (remote) evidence.push(remote);
     return { installed: evidence.length > 0, evidence, remoteGisulRegistered };
   },
