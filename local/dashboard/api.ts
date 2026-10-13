@@ -15,7 +15,8 @@ export type Api = {
   flow(filter: Filter, opts?: { unit?: FlowDto["unit"]; top?: number }): Promise<FlowDto>;
   heatmap(filter: Filter, opts?: { tz?: string; weekStart?: 0 | 1; bucket?: 1 | 2 | 4 }): Promise<HeatmapDto>;
   skillWeek(filter: Filter): Promise<SkillWeekDto>;
-  stats(): Promise<Stats>;
+  /** The filter limits only the unattributed counts (time range and runtime); the other figures stay global. */
+  stats(filter?: Filter): Promise<Stats>;
   skills(): Promise<SkillEntry[]>;
   addEvalCase(input: EvalCaseInput): Promise<void>;
   health(): Promise<{ ok: boolean; version: string }>;
@@ -63,7 +64,7 @@ const httpApi: Api = {
   flow: (filter, opts = {}) => request(withQuery("/api/flow", filter, { unit: opts.unit, top: opts.top })),
   heatmap: (filter, opts = {}) => request(withQuery("/api/heatmap", filter, { tz: opts.tz, weekStart: opts.weekStart, bucket: opts.bucket })),
   skillWeek: (filter) => request(withQuery("/api/skill-week", filter)),
-  stats: () => request("/api/stats"),
+  stats: (filter = {}) => request(withQuery("/api/stats", filter)),
   skills: () => request("/api/skills"),
   addEvalCase: (input) => request("/api/eval-cases", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
   health: () => request("/healthz"),
@@ -98,6 +99,9 @@ type FixtureData = {
   skillWeek12: SkillWeekDto;
 };
 
+/** Usage figures (unattributed counts, null attribution rates) live in their own lazily loaded file and override `stats`. */
+type UsageFixtureData = { stats: Partial<Stats>; statsEmpty: Partial<Stats> };
+
 export type FixtureVariant = "full" | "twelve" | "empty";
 
 export function fixtureVariant(search: string = typeof location === "undefined" ? "" : location.search): FixtureVariant | undefined {
@@ -113,6 +117,8 @@ function fixtureApi(variant: FixtureVariant): Api {
   let loaded: Promise<FixtureData> | undefined;
   const load = (): Promise<FixtureData> => (loaded ??= import("./dev-fixtures.json").then((m) => m.default as unknown as FixtureData));
   const settle = async <T>(compute: (data: FixtureData) => T): Promise<T> => compute(await load());
+  let usage: Promise<UsageFixtureData> | undefined;
+  const loadUsage = (): Promise<UsageFixtureData> => (usage ??= import("./dev-fixtures-usage.json").then((m) => m.default as unknown as UsageFixtureData));
   const rowsOf = (data: FixtureData): SessionListRow[] => {
     const twelve = new Set(data.sessions12);
     return variant === "empty" ? [] : variant === "twelve" ? data.sessions.filter((row) => twelve.has(row.id)) : data.sessions;
@@ -132,7 +138,10 @@ function fixtureApi(variant: FixtureVariant): Api {
         return variant === "empty" ? { ...dto, cells: [], rowTotals: dto.rowTotals.map(() => 0), colTotals: dto.colTotals.map(() => 0) } : dto;
       }),
     skillWeek: () => settle((data) => (variant === "empty" ? { ...data.skillWeek, rows: [] } : variant === "twelve" ? data.skillWeek12 : data.skillWeek)),
-    stats: () => settle((data) => (variant === "empty" ? data.statsEmpty : data.stats)),
+    stats: async () => {
+      const [data, extra] = await Promise.all([load(), loadUsage()]);
+      return variant === "empty" ? { ...data.statsEmpty, ...extra.statsEmpty } : { ...data.stats, ...extra.stats };
+    },
     skills: () => settle((data) => data.skills),
     addEvalCase: () => Promise.resolve(),
     health: () => Promise.resolve({ ok: true, version: "fixtures" }),

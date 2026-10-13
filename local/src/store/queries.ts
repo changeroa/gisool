@@ -400,11 +400,18 @@ export function createQueries(ctx: StoreCtx): Queries {
       return { weeks: starts.map(isoWeekLabel), rows: out };
     },
 
-    stats() {
-      const attributionRate = Object.fromEntries(RUNTIMES.map((r) => [r, 0])) as Record<RuntimeId, number>;
+    stats(f: Filter = {}) {
+      const attributionRate = Object.fromEntries(RUNTIMES.map((r) => [r, null])) as Record<RuntimeId, number | null>;
       const mcp = db.prepare(`SELECT runtime, COUNT(*) AS total, SUM(CASE WHEN session_id != 'unattributed' THEN 1 ELSE 0 END) AS attributed
         FROM events WHERE source = 'mcp' GROUP BY runtime`).all() as { runtime: RuntimeId; total: number; attributed: number }[];
-      for (const r of mcp) attributionRate[r.runtime] = r.total > 0 ? r.attributed / r.total : 0;
+      for (const r of mcp) attributionRate[r.runtime] = r.total > 0 ? r.attributed / r.total : null;
+      const where = ["source = 'mcp'", "session_id = 'unattributed'", "kind IN ('search', 'load')"];
+      const params: (string | number)[] = [];
+      if (f.from !== undefined) { where.push("ts >= ?"); params.push(f.from); }
+      if (f.to !== undefined) { where.push("ts < ?"); params.push(f.to); }
+      if (f.runtime && f.runtime.length > 0) { where.push(`runtime IN (${f.runtime.map(() => "?").join(",")})`); params.push(...f.runtime); }
+      const orphan = db.prepare(`SELECT kind, COUNT(*) AS n FROM events WHERE ${where.join(" AND ")} GROUP BY kind`).all(...params) as { kind: EventKind; n: number }[];
+      const unattributed = { searches: orphan.find((o) => o.kind === "search")?.n ?? 0, loads: orphan.find((o) => o.kind === "load")?.n ?? 0 };
       const searches = db.prepare("SELECT data_json FROM events WHERE kind = 'search'").all() as { data_json: string }[];
       const abstained = searches.filter((s) => parseJson<Record<string, unknown>>(s.data_json, {}).abstained).length;
       const cutoff = ctx.now() - 56 * DAY_MS;
@@ -419,6 +426,7 @@ export function createQueries(ctx: StoreCtx): Queries {
         ...(last.ts !== null ? { lastEventTs: last.ts } : {}),
         lastEventByRuntime: Object.fromEntries(byRuntime.map((r) => [r.runtime, r.ts])) as Partial<Record<RuntimeId, number>>,
         ingest: readIngestCounters(db),
+        unattributed,
       };
     },
   };

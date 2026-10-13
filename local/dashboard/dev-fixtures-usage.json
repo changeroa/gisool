@@ -1,0 +1,29 @@
+{
+  "stats": {
+    "attributionRate": {
+      "claude-code": 1,
+      "codex": 0.95,
+      "gemini": null,
+      "cursor": null,
+      "omo": null,
+      "gajae": 1,
+      "openclaw": null,
+      "unknown": null
+    },
+    "lastEventByRuntime": { "codex": 1791803932125, "gajae": 1791780277431, "claude-code": 1791187883789, "gemini": 1791790000000 },
+    "unattributed": { "searches": 3, "loads": 1 }
+  },
+  "statsEmpty": {
+    "attributionRate": {
+      "claude-code": null,
+      "codex": null,
+      "gemini": null,
+      "cursor": null,
+      "omo": null,
+      "gajae": null,
+      "openclaw": null,
+      "unknown": null
+    },
+    "unattributed": { "searches": 0, "loads": 0 }
+  }
+}

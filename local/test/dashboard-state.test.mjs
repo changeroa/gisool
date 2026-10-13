@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { PACKAGE_ROOT } from "./_helpers.mjs";
@@ -20,6 +21,21 @@ async function loadState() {
 }
 
 const state = await loadState();
+
+async function loadSessionsView() {
+  const result = await build({
+    entryPoints: [fileURLToPath(new URL("dashboard/views/sessions.tsx", PACKAGE_ROOT))],
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "preact",
+    logLevel: "silent",
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
+}
 const { parseFilter, serializeFilter, parseHash, buildHash, withoutFilterKey, isEmptyFilter, matchesFilter, skillName, FILTER_KEYS } = state;
 
 const SKILL_A = "skill://local/agents/pr-review-ko/SKILL.md";
@@ -143,4 +159,31 @@ test("matchesFilter applies every field client-side", () => {
   assert.equal(matchesFilter(row, { q: "상태 컬럼" }), true);
   assert.equal(matchesFilter(row, { q: "pr-review" }), true, "skill names are searchable");
   assert.equal(matchesFilter(row, { q: "terraform" }), false);
+});
+
+test("sessions usage line: unattributed counts and per-runtime attribution with - for no data", async () => {
+  const { formatRate, unattributedText, attributionRates } = await loadSessionsView();
+  assert.equal(formatRate(null), "-");
+  assert.equal(formatRate(undefined), "-");
+  assert.equal(formatRate(0), "0%");
+  assert.equal(formatRate(0.954), "95%");
+  assert.equal(unattributedText(undefined), undefined);
+  assert.equal(unattributedText({ searches: 0, loads: 0 }), undefined);
+  assert.equal(unattributedText({ searches: 3, loads: 1 }), "3 unattributed searches, 1 load (no session could be matched)");
+  assert.equal(unattributedText({ searches: 1, loads: 0 }), "1 unattributed search, 0 loads (no session could be matched)");
+  const rates = attributionRates({
+    attributionRate: { "claude-code": 1, codex: 0, gemini: null, cursor: null, omo: null, gajae: null, openclaw: 0.5, unknown: null },
+    lastEventByRuntime: { gemini: 1, codex: 2 },
+  });
+  assert.deepEqual(rates.map((r) => [r.runtime, r.text, r.known]), [["claude-code", "100%", true], ["codex", "0%", true], ["gemini", "-", false], ["openclaw", "50%", true]]);
+});
+
+test("usage fixtures carry null rates and unattributed counts for both stats variants", () => {
+  const usage = JSON.parse(readFileSync(new URL("dashboard/dev-fixtures-usage.json", PACKAGE_ROOT), "utf8"));
+  for (const key of ["stats", "statsEmpty"]) {
+    assert.equal(typeof usage[key].unattributed.searches, "number", key);
+    assert.equal(typeof usage[key].unattributed.loads, "number", key);
+    assert.ok(Object.values(usage[key].attributionRate).some((v) => v === null), key);
+  }
+  assert.deepEqual(usage.statsEmpty.unattributed, { searches: 0, loads: 0 });
 });

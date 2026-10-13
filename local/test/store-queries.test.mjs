@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CATALOG, EXPECTED_STATES, HOUR, NOW, RUNTIMES, event, openStore, seedForty, seedSession, skillEntry, uri } from "./helpers/store.mjs";
+import { CATALOG, DAY, EXPECTED_STATES, HOUR, NOW, RUNTIMES, event, openStore, seedForty, seedSession, skillEntry, uri } from "./helpers/store.mjs";
 
 function seeded() {
   const { store } = openStore();
@@ -110,13 +110,32 @@ test("stats: attribution per runtime, abstain rate, unused skills, last event", 
   const s = store.stats();
   assert.equal(s.attributionRate["claude-code"], 1);
   assert.ok(s.attributionRate.codex < 1 && s.attributionRate.codex > 0);
-  assert.equal(s.attributionRate.gemini, 0);
+  assert.equal(s.attributionRate.gemini, null, "no MCP events is no data, not 0%");
+  assert.deepEqual(s.unattributed, { searches: 0, loads: 0 }, "the seeded unattributed read_file is neither a search nor a load");
   assert.equal(s.abstainRate, 5 / 37);
   assert.ok(s.unusedSkills.includes(uri("never-used")));
   assert.ok(!s.unusedSkills.includes(uri("pr-review-ko")));
   assert.equal(s.lastEventTs, NOW + 3000);
   assert.ok(s.lastEventByRuntime.codex > 0);
   assert.deepEqual(s.ingest, { accepted: 1, rejected: 1, dropped: 0, lastError: { ts: NOW, code: "payload_too_large" } });
+});
+
+test("stats: unattributed MCP searches and loads honour the time range and runtime filter; 0% differs from no data", () => {
+  const { store } = seeded();
+  const none = { sessionId: "unattributed", method: "none", reason: "no_session" };
+  store.append(event("search", NOW - 2 * HOUR, { runtime: "openclaw", clientName: "openclaw" }, { data: { candidates: [] } }), none);
+  store.append(event("search", NOW - 30 * DAY, { runtime: "openclaw" }, { data: { candidates: [] } }), none);
+  store.append(event("load", NOW - HOUR, { runtime: "openclaw" }, { skillUri: uri("pr-review-ko") }), none);
+  store.append(event("load", NOW - HOUR, { runtime: "codex" }, { skillUri: uri("pr-review-ko") }), none);
+  store.append(event("search", NOW - HOUR, { runtime: "gemini" }, { source: "hook", data: { candidates: [] } }), none);
+  assert.deepEqual(store.stats().unattributed, { searches: 2, loads: 2 }, "hook-sourced events are not MCP activity");
+  assert.deepEqual(store.stats({ from: NOW - DAY, to: NOW }).unattributed, { searches: 1, loads: 2 });
+  assert.deepEqual(store.stats({ from: NOW - DAY, runtime: ["openclaw"] }).unattributed, { searches: 1, loads: 1 });
+  assert.deepEqual(store.stats({ to: NOW - 40 * DAY }).unattributed, { searches: 0, loads: 0 });
+  const rate = store.stats().attributionRate;
+  assert.equal(rate.openclaw, 0, "MCP events with none attributed is 0%");
+  assert.equal(rate.gemini, null, "hook-only runtime has no MCP data");
+  assert.equal(rate.cursor, null);
 });
 
 test("trace: ordered steps with prompt, search candidates (chosen), load digest, error", () => {

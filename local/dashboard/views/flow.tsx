@@ -209,6 +209,7 @@ export function FlowView({ route, navigate, live }: ViewProps) {
   const [mode, setMode] = useState<FlowMode | "auto">("auto");
   const [dto, setDto] = useState<FlowDto>();
   const [skills, setSkills] = useState<SkillEntry[]>([]);
+  const [orphanLoads, setOrphanLoads] = useState(0);
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
 
@@ -220,15 +221,16 @@ export function FlowView({ route, navigate, live }: ViewProps) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([api.flow(route.filter, { unit, top }), api.skills()]).then(([flowResult, skillsResult]) => {
+    Promise.allSettled([api.flow(route.filter, { unit, top }), api.skills(), api.stats(route.filter)]).then(([flowResult, skillsResult, statsResult]) => {
       if (cancelled) return;
-      const failed = flowResult.status === "rejected" ? flowResult.reason : skillsResult.status === "rejected" ? skillsResult.reason : undefined;
+      const failed = [flowResult, skillsResult, statsResult].find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason;
       if (failed !== undefined) {
         setError(failed instanceof Error ? failed.message : String(failed));
         return;
       }
       setDto((flowResult as PromiseFulfilledResult<FlowDto>).value);
       setSkills((skillsResult as PromiseFulfilledResult<SkillEntry[]>).value);
+      setOrphanLoads((statsResult as PromiseFulfilledResult<Awaited<ReturnType<typeof api.stats>>>).value.unattributed?.loads ?? 0);
       setError(undefined);
     });
     return () => { cancelled = true; };
@@ -259,7 +261,10 @@ export function FlowView({ route, navigate, live }: ViewProps) {
           {top !== DEFAULT_TOP && (
             <button type="button" class="btn" onClick={() => setTop(DEFAULT_TOP)}>Top {DEFAULT_TOP} per column</button>
           )}
-          <span class="toolbar__count">{dto.sessionCount} {dto.sessionCount === 1 ? "session" : "sessions"}</span>
+          <span class="toolbar__count">
+            {dto.sessionCount} {dto.sessionCount === 1 ? "session" : "sessions"}
+            {orphanLoads > 0 && <span title="MCP loads no session could be matched to; they are stored but not drawn in the flow">{` \u00b7 ${orphanLoads} unattributed ${orphanLoads === 1 ? "load" : "loads"} not shown`}</span>}
+          </span>
         </div>
         <Legend unit={unit} withKey={shown === "chart"} />
         {shown === "chart"

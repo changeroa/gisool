@@ -146,8 +146,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json(store.skillWeek(parseFilter(req.query)));
   }));
 
-  app.get("/api/stats", handle(log, (_req, res) => {
-    res.json(store.stats());
+  app.get("/api/stats", handle(log, (req, res) => {
+    res.json(store.stats(parseFilter(req.query)));
   }));
 
   app.get("/api/skills", handle(log, (_req, res) => {

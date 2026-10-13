@@ -105,6 +105,25 @@ test("read endpoints return their DTOs and validate parameters", async () => {
   assert.equal((await get("/api/nope")).status, 404);
 });
 
+test("/api/stats counts unattributed MCP activity in the filter range and reports no-data runtimes as null", async () => {
+  const t0 = Date.now();
+  const client = new Client({ name: "openclaw", version: "1.0.0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${s.port}/mcp`), { requestInit: { headers: bearer(s.token) } }));
+  try {
+    await client.callTool({ name: "search_skills", arguments: { query: "review pull request code" } });
+  } finally {
+    await client.close();
+  }
+  const stats = await get(`/api/stats?from=${t0}&runtime=openclaw`);
+  assert.equal(stats.status, 200);
+  assert.deepEqual(stats.json.unattributed, { searches: 1, loads: 0 });
+  assert.equal(stats.json.attributionRate.openclaw, 0);
+  assert.equal(stats.json.attributionRate.cursor, null);
+  const past = await get(`/api/stats?to=${t0 - 86_400_000}`);
+  assert.deepEqual(past.json.unattributed, { searches: 0, loads: 0 });
+  assert.equal((await get("/api/stats?runtime=bogus")).status, 400);
+});
+
 test("POST /api/eval-cases stores a case and validates the body", async () => {
   assert.equal((await post("/api/eval-cases", { query: "review my PR", expectedUri: "skill://local/agents/pr-review/SKILL.md" })).status, 201);
   assert.equal((await post("/api/eval-cases", { expectedUri: "x" })).status, 400);

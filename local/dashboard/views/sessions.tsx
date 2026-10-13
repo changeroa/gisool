@@ -1,10 +1,69 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AdoptionState, Filter, RuntimeId } from "../../src/types.js";
 import { api, type SessionListRow, type Stats } from "../api";
+import { installStyles } from "../charts/sankey";
 import {
   ADOPTION_STATES, ATTRIBUTION_LABEL, RUNTIME_IDS, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
   buildHash, isEmptyFilter, serializeFilter, skillName, type Route, type ViewProps,
 } from "../state";
+
+const USAGE_CSS = `
+.usage { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-4); margin: 0 0 var(--s-3); color: var(--ink-2); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
+.usage__item { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); }
+.usage__key { color: var(--ink-3); }
+.usage__why { color: var(--ink-3); text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+.usage__why[data-tip]::after { width: min(44ch, calc(100vw - 2 * var(--s-4))); white-space: normal; }
+.usage__rate { white-space: nowrap; }
+.usage__rate--none { color: var(--ink-3); }
+`;
+
+installStyles("sessions-usage", USAGE_CSS);
+
+export const ATTRIBUTION_EXPLAINER =
+  "gisool links each MCP search and load to a runtime session by the runtime's session id, vendor metadata, the search trace handle, or a recent-activity window. These matched no session, so they are stored but appear in no session row.";
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** "-" when the runtime sent no MCP events (no data), otherwise a whole percent (0% means events arrived and none were attributed). */
+export function formatRate(rate: number | null | undefined): string {
+  return rate === null || rate === undefined ? "-" : `${Math.round(rate * 100)}%`;
+}
+
+export function unattributedText(counts: Stats["unattributed"]): string | undefined {
+  if (!counts || counts.searches + counts.loads === 0) return undefined;
+  return `${counts.searches} unattributed ${plural(counts.searches, "search", "searches")}, ${counts.loads} ${plural(counts.loads, "load", "loads")} (no session could be matched)`;
+}
+
+/** Runtimes that sent anything or have MCP data, in the canonical runtime order. */
+export function attributionRates(stats: Pick<Stats, "attributionRate" | "lastEventByRuntime">): { runtime: RuntimeId; text: string; known: boolean }[] {
+  return RUNTIME_IDS
+    .filter((id) => (stats.attributionRate[id] ?? null) !== null || stats.lastEventByRuntime[id] !== undefined)
+    .map((id) => ({ runtime: id, text: formatRate(stats.attributionRate[id]), known: (stats.attributionRate[id] ?? null) !== null }));
+}
+
+function UsageNote({ stats }: { stats: Stats }) {
+  const orphan = unattributedText(stats.unattributed);
+  const rates = attributionRates(stats);
+  if (!orphan && rates.length === 0) return null;
+  return (
+    <p class="usage">
+      {orphan && (
+        <span class="usage__item" data-usage="unattributed">
+          <span>{orphan}</span>
+          <span class="usage__why" tabIndex={0} data-tip={ATTRIBUTION_EXPLAINER} aria-label={ATTRIBUTION_EXPLAINER}>How attribution works</span>
+        </span>
+      )}
+      {rates.length > 0 && (
+        <span class="usage__item" data-usage="rates" title="Share of each runtime's MCP events matched to a session; - means the runtime sent no MCP events">
+          <span class="usage__key">MCP attribution</span>
+          {rates.map((r) => (
+            <span key={r.runtime} class={r.known ? "usage__rate" : "usage__rate usage__rate--none"}>{RUNTIME_LABEL[r.runtime]} {r.text}</span>
+          ))}
+        </span>
+      )}
+    </p>
+  );
+}
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
@@ -195,7 +254,7 @@ export function SessionsView({ route, navigate, live }: ViewProps) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.sessions(route.filter), api.stats()])
+    Promise.all([api.sessions(route.filter), api.stats(route.filter)])
       .then(([nextRows, nextStats]) => {
         if (cancelled) return;
         setRows(nextRows);
@@ -251,6 +310,7 @@ export function SessionsView({ route, navigate, live }: ViewProps) {
     <section aria-busy={rows === undefined}>
       <Toolbar route={route} navigate={navigate} count={rows?.length} />
       {error && <p class="notice" role="alert">Could not load sessions: {error}</p>}
+      {rows !== undefined && stats && <UsageNote stats={stats} />}
       {body}
     </section>
   );

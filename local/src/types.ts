@@ -62,8 +62,11 @@ export interface Store {
   upsertSkills(entries: SkillEntry[]): void; markRemoved(uris: SkillUri[]): void;
   sessions(f: Filter): SessionRow[]; trace(sessionId: string): TraceStep[];
   flow(f: Filter, unit: "first_load" | "all_loads", top?: number): FlowDto; heatmap(f: Filter, tz: string, weekStart: 0 | 1, bucketHours: 1 | 2 | 4): HeatmapDto; skillWeek(f: Filter): SkillWeekDto;
-  stats(): { attributionRate: Record<RuntimeId, number>; abstainRate: number; unusedSkills: SkillUri[]; lastEventTs?: number;
-    lastEventByRuntime: Partial<Record<RuntimeId, number>>; ingest: { accepted: number; rejected: number; dropped: number; lastError?: { ts: number; code: string } } };
+  // attributionRate is null for a runtime with no MCP events (no data), distinct from 0 (MCP events, none attributed).
+  // unattributed counts MCP search/load events with no matched session, limited by f.from/f.to/f.runtime.
+  stats(f?: Filter): { attributionRate: Record<RuntimeId, number | null>; abstainRate: number; unusedSkills: SkillUri[]; lastEventTs?: number;
+    lastEventByRuntime: Partial<Record<RuntimeId, number>>; ingest: { accepted: number; rejected: number; dropped: number; lastError?: { ts: number; code: string } };
+    unattributed?: { searches: number; loads: number } };
   countIngest(kind: "accepted" | "rejected" | "dropped", code?: string): void;
   addEvalCase(c: { query: string; expectedUri?: SkillUri; fromTraceId?: string }): void; evalCases(): { query: string; expectedUri?: SkillUri }[];
   exportTo(dir: string, opts: { withHistory: boolean }): void; importFrom(dir: string, opts: { merge: boolean }): { added: number; skipped: number };
