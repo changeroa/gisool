@@ -1,5 +1,5 @@
-import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
-import { join, delimiter } from "node:path";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, delimiter, resolve } from "node:path";
 import type { PackCtx, PackPlan, RuntimePack } from "../types.js";
 
 type Env = NodeJS.ProcessEnv;
@@ -20,6 +20,10 @@ const codexDir = (c: { home: string; env: Env }) => c.env.CODEX_HOME || join(c.h
 const configPath = (c: { home: string; env: Env }) => join(codexDir(c), "config.toml");
 function readText(p: string): string | null {
   try { return readFileSync(p, "utf8"); } catch { return null; }
+}
+
+function realOrResolved(p: string): string {
+  try { return realpathSync(p); } catch { return resolve(p); }
 }
 
 /** Splits text into the managed block (if any) and the rest. */
@@ -114,11 +118,15 @@ export const codexPack: RuntimePack = {
     const managed = text === null ? null : splitManaged(text);
     const inner = managed && text ? text.slice(managed.start, managed.end) : "";
     const endpoint = `http://127.0.0.1:${ctx.port}/ingest/otlp/v1/logs`;
-    const local = readText(join(process.cwd(), ".codex", "config.toml"));
+    // A project-local .codex/config.toml counts only when it is a different file from the user-level config (doctor run
+    // from $HOME reads the same file), and gisool's own managed block there is not a conflict.
+    const localPath = join(process.cwd(), ".codex", "config.toml");
+    const local = realOrResolved(localPath) === realOrResolved(path) ? null : readText(localPath);
+    const localOutside = local === null ? null : (splitManaged(local)?.outside ?? local);
     return [
       { name: "codex OTel block present", ok: inner.includes("[otel]") && inner.includes(endpoint), detail: managed ? path : `no managed block in ${path}` },
       { name: "codex MCP entry present", ok: inner.includes("[mcp_servers.gisool]") && inner.includes(`http://127.0.0.1:${ctx.port}/mcp`), detail: path },
-      { name: "codex [otel] not in project-local config", ok: local === null || !OTEL_RE.test(local),
+      { name: "codex [otel] not in project-local config", ok: localOutside === null || !OTEL_RE.test(localOutside),
         detail: local === null ? "no project-local config" : "project-local .codex/config.toml defines otel" },
     ];
   },

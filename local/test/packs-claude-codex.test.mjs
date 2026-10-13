@@ -130,6 +130,28 @@ test("codex detect, plan block, idempotent, preserves content", async () => {
   } finally { sb.cleanup(); }
 });
 
+test("codex doctor: project-local otel check ignores the user config read via cwd and the managed block", async () => {
+  const sb = makeSandbox();
+  const cwd = process.cwd();
+  try {
+    const ctx = mkCtx(sb);
+    const p = join(sb.home, ".codex", "config.toml");
+    put(p, (await codexPack.plan(ctx)).files[0].after);
+    const check = async () => (await codexPack.doctorChecks({ home: sb.home, env: ctx.env, port: 47123 })).find(c => c.name === "codex [otel] not in project-local config");
+    process.chdir(sb.home);
+    assert.deepEqual(await check(), { name: "codex [otel] not in project-local config", ok: true, detail: "no project-local config" });
+    const project = join(sb.home, "project");
+    put(join(project, ".codex", "config.toml"), readFileSync(p, "utf8"));
+    process.chdir(project);
+    assert.equal((await check()).ok, true, "gisool's own managed block in a project-local config is not a conflict");
+    put(join(project, ".codex", "config.toml"), '[otel]\nlog_user_prompt = false\n');
+    assert.deepEqual(await check(), { name: "codex [otel] not in project-local config", ok: false, detail: "project-local .codex/config.toml defines otel" });
+  } finally {
+    process.chdir(cwd);
+    sb.cleanup();
+  }
+});
+
 test("codex respects CODEX_HOME; unmanaged otel forms are conflicts with no file change", async () => {
   const sb = makeSandbox();
   try {

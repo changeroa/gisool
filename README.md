@@ -4,6 +4,8 @@ For ARKPOINT team distribution, see [the native HTTPS Codex plugin](docs/arkpoin
 
 `gisul` is a personal MCP skill registry for serving Git-managed `SKILL.md` instruction bundles on demand.
 
+For skills that live only on this machine, `local/` contains gisool, a local skill router: one localhost daemon serves your existing skill folders to Claude Code, Codex, Gemini CLI, Cursor, OmO, Gajae Code, and OpenClaw over MCP, records which skills each session searched, loaded, and read, and shows the result in a local dashboard. Nothing leaves the machine. See [local/README.md](local/README.md) to install it and [docs/gisool.md](docs/gisool.md) for the architecture.
+
 The name comes from 기술, Korean for "skill", "craft", or "technique".
 
 This repo contains two small packages:
