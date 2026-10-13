@@ -1,0 +1,2073 @@
+{
+ "$comment": "Deterministic fixtures for `?fixtures=1` (40 sessions), `?fixtures=12` (12 sessions), `?fixtures=empty` (no events). Generated for visual work; not real data.",
+ "stats": {
+  "attributionRate": {
+   "claude-code": 1,
+   "codex": 0.95,
+   "gemini": 0,
+   "cursor": 0,
+   "omo": 0,
+   "gajae": 1,
+   "openclaw": 0,
+   "unknown": 0
+  },
+  "abstainRate": 0.16,
+  "unusedSkills": [
+   "skill://local/agents/calendar-brief/SKILL.md"
+  ],
+  "lastEventTs": 1791803932125,
+  "lastEventByRuntime": {
+   "codex": 1791803932125,
+   "gajae": 1791780277431,
+   "claude-code": 1791187883789
+  },
+  "ingest": {
+   "accepted": 412,
+   "rejected": 3,
+   "dropped": 1,
+   "lastError": {
+    "ts": 1791796732125,
+    "code": "payload_too_large"
+   }
+  }
+ },
+ "statsEmpty": {
+  "attributionRate": {
+   "claude-code": 0,
+   "codex": 0,
+   "gemini": 0,
+   "cursor": 0,
+   "omo": 0,
+   "gajae": 0,
+   "openclaw": 0,
+   "unknown": 0
+  },
+  "abstainRate": 0,
+  "unusedSkills": [
+   "skill://local/agents/pr-review-ko/SKILL.md",
+   "skill://local/agents/api-contract/SKILL.md",
+   "skill://local/agents/db-migration/SKILL.md",
+   "skill://local/agents/status-brief/SKILL.md",
+   "skill://local/agents/meeting-notes/SKILL.md",
+   "skill://local/agents/terraform-r2/SKILL.md",
+   "skill://local/agents/deploy-checklist/SKILL.md",
+   "skill://local/agents/calendar-brief/SKILL.md"
+  ],
+  "lastEventByRuntime": {},
+  "ingest": {
+   "accepted": 0,
+   "rejected": 2,
+   "dropped": 0,
+   "lastError": {
+    "ts": 1791860040000,
+    "code": "unauthorized"
+   }
+  }
+ },
+ "skills": [
+  {
+   "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+   "rootId": "agents",
+   "dir": "pr-review-ko",
+   "name": "pr-review-ko",
+   "description": "Reviews a pull request and writes Korean review comments with risk notes.",
+   "tags": [
+    "review",
+    "git"
+   ],
+   "whenToUse": "Use when the task is review-related.",
+   "examples": [
+    "이 PR 리뷰해줘",
+    "review this diff"
+   ],
+   "aliasesKo": [
+    "PR 리뷰",
+    "코드리뷰"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# pr-review-ko\n\nReviews a pull request and writes Korean review comments with risk notes.",
+   "digest": "662e711c4c69252f",
+   "manifestDigest": "0ecb449f581a71ca",
+   "resources": [
+    {
+     "uri": "skill://local/agents/pr-review-ko/references/checklist.md",
+     "digest": "81fa30f437f17957",
+     "size": 900
+    }
+   ],
+   "mtimeMs": 1791774000000
+  },
+  {
+   "uri": "skill://local/agents/api-contract/SKILL.md",
+   "rootId": "agents",
+   "dir": "api-contract",
+   "name": "api-contract",
+   "description": "Keeps HTTP API request/response contracts in sync with handlers and docs.",
+   "tags": [
+    "api",
+    "backend"
+   ],
+   "whenToUse": "Use when the task is api-related.",
+   "examples": [
+    "API 응답에 필드 추가"
+   ],
+   "aliasesKo": [
+    "API 계약",
+    "응답 스키마"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# api-contract\n\nKeeps HTTP API request/response contracts in sync with handlers and docs.",
+   "digest": "91a04d47661b90ac",
+   "manifestDigest": "9b130c1b727a7795",
+   "resources": [],
+   "mtimeMs": 1791687600000
+  },
+  {
+   "uri": "skill://local/agents/db-migration/SKILL.md",
+   "rootId": "agents",
+   "dir": "db-migration",
+   "name": "db-migration",
+   "description": "Writes reversible SQL migrations with backfill and rollback steps.",
+   "tags": [
+    "db",
+    "sql"
+   ],
+   "whenToUse": "Use when the task is db-related.",
+   "examples": [
+    "테이블에 컬럼 추가"
+   ],
+   "aliasesKo": [
+    "마이그레이션",
+    "컬럼 추가"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# db-migration\n\nWrites reversible SQL migrations with backfill and rollback steps.",
+   "digest": "f74ca9c53a224b53",
+   "manifestDigest": "e69fd1dae449ae8b",
+   "resources": [
+    {
+     "uri": "skill://local/agents/db-migration/references/checklist.md",
+     "digest": "d10528720a401b33",
+     "size": 974
+    }
+   ],
+   "mtimeMs": 1791601200000
+  },
+  {
+   "uri": "skill://local/agents/status-brief/SKILL.md",
+   "rootId": "agents",
+   "dir": "status-brief",
+   "name": "status-brief",
+   "description": "Turns recent work into a short status briefing for a team channel.",
+   "tags": [
+    "docs",
+    "writing"
+   ],
+   "whenToUse": "Use when the task is docs-related.",
+   "examples": [
+    "이번 주 진행 상황 요약"
+   ],
+   "aliasesKo": [
+    "상황 공유",
+    "진행 상황"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# status-brief\n\nTurns recent work into a short status briefing for a team channel.",
+   "digest": "949e2fd10a565ef4",
+   "manifestDigest": "a85242479b3e3a17",
+   "resources": [],
+   "mtimeMs": 1791514800000
+  },
+  {
+   "uri": "skill://local/agents/meeting-notes/SKILL.md",
+   "rootId": "agents",
+   "dir": "meeting-notes",
+   "name": "meeting-notes",
+   "description": "Drafts meeting prep and follow-up notes from a short agenda.",
+   "tags": [
+    "docs",
+    "meeting"
+   ],
+   "whenToUse": "Use when the task is docs-related.",
+   "examples": [
+    "미팅 정리해서 공유"
+   ],
+   "aliasesKo": [
+    "회의록",
+    "미팅 정리"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# meeting-notes\n\nDrafts meeting prep and follow-up notes from a short agenda.",
+   "digest": "ee64ca46a7a4829d",
+   "manifestDigest": "6be86d6130aca702",
+   "resources": [
+    {
+     "uri": "skill://local/agents/meeting-notes/references/checklist.md",
+     "digest": "5a0596b6a199b1b7",
+     "size": 1048
+    }
+   ],
+   "mtimeMs": 1791428400000
+  },
+  {
+   "uri": "skill://local/agents/terraform-r2/SKILL.md",
+   "rootId": "agents",
+   "dir": "terraform-r2",
+   "name": "terraform-r2",
+   "description": "Provisions Cloudflare R2 buckets and bindings with Terraform.",
+   "tags": [
+    "infra",
+    "terraform"
+   ],
+   "whenToUse": "Use when the task is infra-related.",
+   "examples": [
+    "Terraform으로 버킷 만들기"
+   ],
+   "aliasesKo": [
+    "R2 버킷",
+    "테라폼"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# terraform-r2\n\nProvisions Cloudflare R2 buckets and bindings with Terraform.",
+   "digest": "5c957d7671d13399",
+   "manifestDigest": "2fb203968f806b20",
+   "resources": [],
+   "mtimeMs": 1791342000000
+  },
+  {
+   "uri": "skill://local/agents/deploy-checklist/SKILL.md",
+   "rootId": "agents",
+   "dir": "deploy-checklist",
+   "name": "deploy-checklist",
+   "description": "Runs the staging and production deploy checklist and records receipts.",
+   "tags": [
+    "infra",
+    "deploy"
+   ],
+   "whenToUse": "Use when the task is infra-related.",
+   "examples": [
+    "배포 전 점검"
+   ],
+   "aliasesKo": [
+    "배포 체크리스트"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# deploy-checklist\n\nRuns the staging and production deploy checklist and records receipts.",
+   "digest": "f22b656ebae2411f",
+   "manifestDigest": "27bff77a3705e3f1",
+   "resources": [
+    {
+     "uri": "skill://local/agents/deploy-checklist/references/checklist.md",
+     "digest": "f272c78d9517e88c",
+     "size": 1122
+    }
+   ],
+   "mtimeMs": 1791255600000
+  },
+  {
+   "uri": "skill://local/agents/calendar-brief/SKILL.md",
+   "rootId": "agents",
+   "dir": "calendar-brief",
+   "name": "calendar-brief",
+   "description": "Summarizes tomorrow's calendar into a short brief.",
+   "tags": [
+    "docs",
+    "calendar"
+   ],
+   "whenToUse": "Use when the task is docs-related.",
+   "examples": [
+    "내일 일정 정리"
+   ],
+   "aliasesKo": [
+    "일정 브리핑"
+   ],
+   "invocation": "automatic",
+   "bodyHead": "# calendar-brief\n\nSummarizes tomorrow's calendar into a short brief.",
+   "digest": "be8fe6568563b4b5",
+   "manifestDigest": "3545f618d6599c32",
+   "resources": [],
+   "mtimeMs": 1791169200000
+  }
+ ],
+ "sessions": [
+  {
+   "id": "ses_770bad4531",
+   "runtime": "codex",
+   "startedAt": 1791802312155,
+   "endedAt": 1791803932125,
+   "firstPrompt": "Review the auth refactor diff and flag anything that changes session expiry",
+   "skills": [
+    "skill://local/agents/pr-review-ko/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_1fe658341a",
+   "runtime": "gajae",
+   "startedAt": 1791779866963,
+   "endedAt": 1791780277431,
+   "firstPrompt": "PR #212 리뷰하고 리스크 정리해줘",
+   "skills": [
+    "skill://local/agents/pr-review-ko/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_4062597243",
+   "runtime": "gajae",
+   "startedAt": 1791708135397,
+   "endedAt": 1791709398709,
+   "firstPrompt": "이번 주 진행 상황 요약해서 status 브리핑 써줘",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "unattributed",
+   "runtime": "codex",
+   "startedAt": 1791700762230,
+   "skills": [
+    "skill://local/agents/pr-review-ko/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "none",
+   "attributionReason": "ambiguous"
+  },
+  {
+   "id": "ses_50dc2cf1e4",
+   "runtime": "codex",
+   "startedAt": 1791700102230,
+   "endedAt": 1791701471616,
+   "firstPrompt": "내일 오전 미팅 정리해서 팀에 공유할 초안 만들어줘",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_0f3e334360",
+   "runtime": "gajae",
+   "startedAt": 1791547908239,
+   "endedAt": 1791549883589,
+   "firstPrompt": "https://github.com/changeroa/gisul/pull/212/files#diff-9f1a3c0b2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0 리뷰",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_24439de297",
+   "runtime": "gajae",
+   "startedAt": 1791536827555,
+   "endedAt": 1791537590507,
+   "firstPrompt": "주문 테이블에 상태 컬럼 추가하고 API 응답에도 반영",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_0673bfc400",
+   "runtime": "codex",
+   "startedAt": 1791510567915,
+   "endedAt": 1791511841798,
+   "firstPrompt": "주문 상태 컬럼을 추가하면서 기존 주문 데이터는 모두 'pending'으로 백필하고, API 응답 스키마와 OpenAPI 문서, 그리고 프론트엔드 타입 정의까지 한 번에 맞춰줘. 마이그레이션은 롤백 가능해야 하고 배포 중에도 읽기 요청이 실패하면 안 돼.",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md",
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_e6e78509e2",
+   "runtime": "codex",
+   "startedAt": 1791459036088,
+   "endedAt": 1791460927700,
+   "firstPrompt": "이 함수 리팩토링해서 테스트 추가해줘",
+   "skills": [
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_403828dea4",
+   "runtime": "gajae",
+   "startedAt": 1791440044550,
+   "endedAt": 1791441727042,
+   "skills": [],
+   "state": "aborted",
+   "attribution": "window"
+  },
+  {
+   "id": "ses_784d05179e",
+   "runtime": "gajae",
+   "startedAt": 1791365279717,
+   "endedAt": 1791365865171,
+   "firstPrompt": "staging 배포 체크리스트 돌려줘",
+   "skills": [
+    "skill://local/agents/terraform-r2/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_4cb9ff4eb1",
+   "runtime": "codex",
+   "startedAt": 1791355664429,
+   "endedAt": 1791357074941,
+   "firstPrompt": "이 PR 리뷰해줘, 한국어로 코멘트",
+   "skills": [
+    "skill://local/agents/pr-review-ko/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_b143443884",
+   "runtime": "codex",
+   "startedAt": 1791280190181,
+   "endedAt": 1791281960858,
+   "firstPrompt": "이 변경사항 코드리뷰 해줘. 테스트 누락 있는지도 봐줘",
+   "skills": [],
+   "state": "not_used",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_6b52ae4f2b",
+   "runtime": "codex",
+   "startedAt": 1791252605864,
+   "endedAt": 1791253905249,
+   "firstPrompt": "릴리즈 노트 초안 작성해줘",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md",
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_ec401655c2",
+   "runtime": "claude-code",
+   "startedAt": 1791185662397,
+   "endedAt": 1791187883789,
+   "firstPrompt": "Write a migration that adds an index on orders(status) and backfills the column",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_d7e6d472e7",
+   "runtime": "claude-code",
+   "startedAt": 1791173734458,
+   "endedAt": 1791174578523,
+   "firstPrompt": "이번 주 진행 상황 요약해서 status 브리핑 써줘",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_a4c604eb0f",
+   "runtime": "claude-code",
+   "startedAt": 1790926834981,
+   "endedAt": 1790927279548,
+   "firstPrompt": "Explain how the hook forwarder handles timeouts and retries",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_149b077f7d",
+   "runtime": "claude-code",
+   "startedAt": 1790906028007,
+   "endedAt": 1790907504361,
+   "firstPrompt": "Summarize the deployment doc and list the open risks",
+   "skills": [],
+   "state": "aborted",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_fbee7e136c",
+   "runtime": "codex",
+   "startedAt": 1790852853387,
+   "endedAt": 1790854155572,
+   "firstPrompt": "DB 조회가 너무 느려서 원인 좀 봐줘",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_5c8ae46af5",
+   "runtime": "codex",
+   "startedAt": 1790818284500,
+   "endedAt": 1790818967566,
+   "firstPrompt": "이 변경사항 코드리뷰 해줘. 테스트 누락 있는지도 봐줘",
+   "skills": [],
+   "state": "not_used",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_bb85bd8f72",
+   "runtime": "codex",
+   "startedAt": 1790757635691,
+   "endedAt": 1790759191653,
+   "firstPrompt": "Terraform으로 R2 버킷 만들어줘",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_f1cc46fbd7",
+   "runtime": "claude-code",
+   "startedAt": 1790670367214,
+   "endedAt": 1790671465842,
+   "firstPrompt": "주문 테이블에 상태 컬럼 추가하고 API 응답에도 반영",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_453285f7a8",
+   "runtime": "claude-code",
+   "startedAt": 1790652394408,
+   "endedAt": 1790655029144,
+   "firstPrompt": "PR #212 리뷰하고 리스크 정리해줘",
+   "skills": [
+    "skill://local/agents/pr-review-ko/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_13444120fd",
+   "runtime": "claude-code",
+   "startedAt": 1790644907370,
+   "endedAt": 1790645724614,
+   "firstPrompt": "릴리즈 노트 초안 작성해줘",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_6885a11728",
+   "runtime": "codex",
+   "startedAt": 1790575143468,
+   "endedAt": 1790577242922,
+   "firstPrompt": "내일 오전 미팅 정리해서 팀에 공유할 초안 만들어줘",
+   "skills": [
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_4445eb2419",
+   "runtime": "gajae",
+   "startedAt": 1790563241893,
+   "endedAt": 1790563914526,
+   "firstPrompt": "DB 조회가 너무 느려서 원인 좀 봐줘",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_161ef32fa8",
+   "runtime": "codex",
+   "startedAt": 1790427018548,
+   "endedAt": 1790427817251,
+   "firstPrompt": "Summarize the deployment doc and list the open risks",
+   "skills": [
+    "skill://local/agents/meeting-notes/SKILL.md",
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_0f5aed7e3b",
+   "runtime": "claude-code",
+   "startedAt": 1790324358656,
+   "endedAt": 1790326252436,
+   "firstPrompt": "DB 조회가 너무 느려서 원인 좀 봐줘",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_ac514fa3a9",
+   "runtime": "claude-code",
+   "startedAt": 1790240018747,
+   "endedAt": 1790242557112,
+   "firstPrompt": "Write a migration that adds an index on orders(status) and backfills the column",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md",
+    "skill://local/agents/api-contract/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_9cc9814963",
+   "runtime": "claude-code",
+   "startedAt": 1790209111983,
+   "endedAt": 1790209936487,
+   "firstPrompt": "이번 주 진행 상황 요약해서 status 브리핑 써줘",
+   "skills": [
+    "skill://local/agents/status-brief/SKILL.md"
+   ],
+   "state": "exposed_only",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_4eee4d5d2a",
+   "runtime": "codex",
+   "startedAt": 1790139736444,
+   "endedAt": 1790141882919,
+   "firstPrompt": "세션 트레이스 화면에 들어갈 데이터 구조 설계해줘",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_9c562959f6",
+   "runtime": "gajae",
+   "startedAt": 1790064715443,
+   "endedAt": 1790065692745,
+   "firstPrompt": "이 함수 리팩토링해서 테스트 추가해줘",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "window"
+  },
+  {
+   "id": "ses_e1777b641f",
+   "runtime": "codex",
+   "startedAt": 1789995822654,
+   "endedAt": 1789998102760,
+   "firstPrompt": "users API에 커서 기반 페이지네이션 추가",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_e3e1babe95",
+   "runtime": "codex",
+   "startedAt": 1789988011694,
+   "endedAt": 1789988690957,
+   "firstPrompt": "staging 배포 체크리스트 돌려줘",
+   "skills": [
+    "skill://local/agents/terraform-r2/SKILL.md",
+    "skill://local/agents/deploy-checklist/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_359f478748",
+   "runtime": "claude-code",
+   "startedAt": 1789965165028,
+   "endedAt": 1789965534845,
+   "firstPrompt": "users API에 커서 기반 페이지네이션 추가",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "runtime_id"
+  },
+  {
+   "id": "ses_5349b12304",
+   "runtime": "codex",
+   "startedAt": 1789953556927,
+   "endedAt": 1789955692000,
+   "firstPrompt": "Set up a GitHub Actions workflow that runs the test suite on pull requests",
+   "skills": [
+    "skill://local/agents/terraform-r2/SKILL.md",
+    "skill://local/agents/deploy-checklist/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_85deb86473",
+   "runtime": "claude-code",
+   "startedAt": 1789725905735,
+   "endedAt": 1789727794984,
+   "firstPrompt": "이 함수 리팩토링해서 테스트 추가해줘",
+   "skills": [],
+   "state": "no_match",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_ec34df6505",
+   "runtime": "gajae",
+   "startedAt": 1789636685863,
+   "endedAt": 1789638861315,
+   "firstPrompt": "DB 조회가 너무 느려서 원인 좀 봐줘",
+   "skills": [],
+   "state": "not_used",
+   "attribution": "trace_handle"
+  },
+  {
+   "id": "ses_c51fa4cdc4",
+   "runtime": "codex",
+   "startedAt": 1789627907572,
+   "endedAt": 1789630289429,
+   "firstPrompt": "staging 배포 체크리스트 돌려줘",
+   "skills": [
+    "skill://local/agents/terraform-r2/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  },
+  {
+   "id": "ses_cdeb057180",
+   "runtime": "codex",
+   "startedAt": 1789616991909,
+   "endedAt": 1789619151703,
+   "firstPrompt": "주문 테이블에 상태 컬럼 추가하고 API 응답에도 반영",
+   "skills": [
+    "skill://local/agents/db-migration/SKILL.md"
+   ],
+   "state": "loaded",
+   "attribution": "vendor_meta"
+  }
+ ],
+ "sessions12": [
+  "ses_770bad4531",
+  "ses_1fe658341a",
+  "ses_4062597243",
+  "unattributed",
+  "ses_50dc2cf1e4",
+  "ses_0f3e334360",
+  "ses_24439de297",
+  "ses_0673bfc400",
+  "ses_e6e78509e2",
+  "ses_403828dea4",
+  "ses_784d05179e",
+  "ses_4cb9ff4eb1"
+ ],
+ "traces": {
+  "ses_ac514fa3a9": [
+   {
+    "ts": 1790240018747,
+    "kind": "session_start",
+    "summary": "Session started",
+    "detail": {
+     "kind": "session_start"
+    }
+   },
+   {
+    "ts": 1790240020747,
+    "kind": "prompt",
+    "summary": "Write a migration that adds an index on orders(status) and backfills the column",
+    "detail": {
+     "kind": "prompt",
+     "text": "Write a migration that adds an index on orders(status) and backfills the column",
+     "textLength": 79
+    }
+   },
+   {
+    "ts": 1790240021147,
+    "kind": "search",
+    "summary": "search_skills: 3 candidates, 2 chosen",
+    "detail": {
+     "kind": "search",
+     "traceId": "tr_907d051e",
+     "chosen": [
+      "skill://local/agents/db-migration/SKILL.md",
+      "skill://local/agents/api-contract/SKILL.md"
+     ],
+     "query": "Write a migration that adds an index on orders(status) and backfills the column",
+     "mode": "automatic",
+     "candidates": [
+      {
+       "uri": "skill://local/agents/db-migration/SKILL.md",
+       "name": "db-migration",
+       "description": "Writes reversible SQL migrations with backfill and rollback steps.",
+       "score": 0.82,
+       "rank": 1,
+       "invocation": "automatic",
+       "digest": "3ded922ddd04",
+       "matched": [
+        "컬럼 추가",
+        "테이블"
+       ]
+      },
+      {
+       "uri": "skill://local/agents/api-contract/SKILL.md",
+       "name": "api-contract",
+       "description": "Keeps HTTP API request/response contracts in sync with handlers and docs.",
+       "score": 0.77,
+       "rank": 2,
+       "invocation": "automatic",
+       "digest": "5ca4fda5d5ce",
+       "matched": [
+        "API 응답"
+       ]
+      },
+      {
+       "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+       "name": "pr-review-ko",
+       "description": "Reviews a pull request and writes Korean review comments with risk notes.",
+       "score": 0.31,
+       "rank": 3,
+       "invocation": "automatic",
+       "digest": "aca459effbb0",
+       "matched": [
+        "반영"
+       ]
+      }
+     ],
+     "elapsedMs": 12,
+     "total": 3
+    }
+   },
+   {
+    "ts": 1790240023747,
+    "kind": "load",
+    "summary": "Loaded db-migration",
+    "detail": {
+     "kind": "load",
+     "uri": "skill://local/agents/db-migration/SKILL.md",
+     "loadId": "ld_45601c03",
+     "manifestDigest": "3011f937739e79c8"
+    }
+   },
+   {
+    "ts": 1790240024047,
+    "kind": "load",
+    "summary": "Loaded api-contract",
+    "detail": {
+     "kind": "load",
+     "uri": "skill://local/agents/api-contract/SKILL.md",
+     "loadId": "ld_cbd8dbca",
+     "manifestDigest": "915a16e3682db4af"
+    }
+   },
+   {
+    "ts": 1790240066747,
+    "kind": "read_file",
+    "summary": "Read references/rollback.md",
+    "detail": {
+     "kind": "read_file",
+     "skillUri": "skill://local/agents/db-migration/SKILL.md",
+     "uri": "skill://local/agents/db-migration/references/rollback.md",
+     "bytes": 2814
+    }
+   },
+   {
+    "ts": 1790240079747,
+    "kind": "read_file",
+    "summary": "Read checklist.md",
+    "detail": {
+     "kind": "read_file",
+     "skillUri": "skill://local/agents/api-contract/SKILL.md",
+     "uri": "skill://local/agents/api-contract/checklist.md",
+     "bytes": 1203
+    }
+   },
+   {
+    "ts": 1790240208747,
+    "kind": "native_skill",
+    "summary": "Native skill: commit",
+    "detail": {
+     "kind": "native_skill",
+     "name": "commit",
+     "via": "tool"
+    }
+   },
+   {
+    "ts": 1790240348747,
+    "kind": "error",
+    "summary": "read_skill_file failed: resource_not_found",
+    "detail": {
+     "kind": "error",
+     "code": "resource_not_found",
+     "message": "skill://local/agents/db-migration/references/seed.sql is not in the manifest"
+    }
+   },
+   {
+    "ts": 1790242557112,
+    "kind": "session_end",
+    "summary": "Session ended",
+    "detail": {
+     "kind": "session_end"
+    }
+   }
+  ],
+  "ses_bb85bd8f72": [
+   {
+    "ts": 1790757635691,
+    "kind": "session_start",
+    "summary": "Session started",
+    "detail": {
+     "kind": "session_start"
+    }
+   },
+   {
+    "ts": 1790757637191,
+    "kind": "prompt",
+    "summary": "Terraform으로 R2 버킷 만들어줘",
+    "detail": {
+     "kind": "prompt",
+     "text": "Terraform으로 R2 버킷 만들어줘",
+     "textLength": 22
+    }
+   },
+   {
+    "ts": 1790757637591,
+    "kind": "search",
+    "summary": "search_skills: abstained (no_overlap)",
+    "detail": {
+     "kind": "search",
+     "traceId": "tr_c03785ef",
+     "chosen": [],
+     "query": "Terraform으로 R2 버킷 만들어줘",
+     "mode": "automatic",
+     "candidates": [],
+     "abstained": {
+      "reason": "no_overlap",
+      "hint": "No skill mentions Terraform or R2; add aliases or a new skill."
+     },
+     "elapsedMs": 4,
+     "total": 0
+    }
+   },
+   {
+    "ts": 1790759191653,
+    "kind": "session_end",
+    "summary": "Session ended",
+    "detail": {
+     "kind": "session_end"
+    }
+   }
+  ],
+  "ses_e6e78509e2": [
+   {
+    "ts": 1791459036088,
+    "kind": "session_start",
+    "summary": "Session started",
+    "detail": {
+     "kind": "session_start"
+    }
+   },
+   {
+    "ts": 1791459037088,
+    "kind": "prompt",
+    "summary": "이 함수 리팩토링해서 테스트 추가해줘",
+    "detail": {
+     "kind": "prompt",
+     "text": "이 함수 리팩토링해서 테스트 추가해줘",
+     "textLength": 20
+    }
+   },
+   {
+    "ts": 1791459037388,
+    "kind": "search",
+    "summary": "search_skills: 2 candidates, none chosen",
+    "detail": {
+     "kind": "search",
+     "traceId": "tr_44e4b7aa",
+     "chosen": [],
+     "query": "이 함수 리팩토링해서 테스트 추가해줘",
+     "mode": "automatic",
+     "candidates": [
+      {
+       "uri": "skill://local/agents/status-brief/SKILL.md",
+       "name": "status-brief",
+       "description": "Turns recent work into a short status briefing for a team channel.",
+       "score": 0.44,
+       "rank": 1,
+       "invocation": "automatic",
+       "digest": "2cdafef7e4aa",
+       "matched": [
+        "공유"
+       ]
+      },
+      {
+       "uri": "skill://local/agents/meeting-notes/SKILL.md",
+       "name": "meeting-notes",
+       "description": "Drafts meeting prep and follow-up notes from a short agenda.",
+       "score": 0.22,
+       "rank": 2,
+       "invocation": "automatic",
+       "digest": "c64da30b4d65",
+       "matched": [
+        "정리"
+       ]
+      }
+     ],
+     "elapsedMs": 9,
+     "total": 2
+    }
+   },
+   {
+    "ts": 1791460927700,
+    "kind": "session_end",
+    "summary": "Session ended",
+    "detail": {
+     "kind": "session_end"
+    }
+   }
+  ],
+  "ses_b143443884": [
+   {
+    "ts": 1791280190181,
+    "kind": "session_start",
+    "summary": "Session started",
+    "detail": {
+     "kind": "session_start"
+    }
+   },
+   {
+    "ts": 1791280191181,
+    "kind": "prompt",
+    "summary": "이 변경사항 코드리뷰 해줘. 테스트 누락 있는지도 봐줘",
+    "detail": {
+     "kind": "prompt",
+     "textLength": 30
+    }
+   },
+   {
+    "ts": 1791281960858,
+    "kind": "session_end",
+    "summary": "Session ended",
+    "detail": {
+     "kind": "session_end"
+    }
+   }
+  ],
+  "ses_149b077f7d": [
+   {
+    "ts": 1790906028007,
+    "kind": "session_start",
+    "summary": "Session started",
+    "detail": {
+     "kind": "session_start"
+    }
+   },
+   {
+    "ts": 1790906029007,
+    "kind": "prompt",
+    "summary": "Summarize the deployment doc and list the open risks",
+    "detail": {
+     "kind": "prompt",
+     "text": "Summarize the deployment doc and list the open risks",
+     "textLength": 52
+    }
+   },
+   {
+    "ts": 1790906029407,
+    "kind": "search",
+    "summary": "search_skills: 1 candidate, 1 chosen",
+    "detail": {
+     "kind": "search",
+     "traceId": "tr_24584e23",
+     "chosen": [
+      "skill://local/agents/pr-review-ko/SKILL.md"
+     ],
+     "query": "Summarize the deployment doc and list the open risks",
+     "mode": "automatic",
+     "candidates": [
+      {
+       "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+       "name": "pr-review-ko",
+       "description": "Reviews a pull request and writes Korean review comments with risk notes.",
+       "score": 0.71,
+       "rank": 1,
+       "invocation": "automatic",
+       "digest": "e28d51fee54a",
+       "matched": [
+        "리뷰"
+       ]
+      }
+     ],
+     "elapsedMs": 7,
+     "total": 1
+    }
+   },
+   {
+    "ts": 1790906031007,
+    "kind": "error",
+    "summary": "load_skill aborted: client disconnected",
+    "detail": {
+     "kind": "error",
+     "code": "load_aborted",
+     "message": "client closed the MCP session before load_skill completed"
+    }
+   },
+   {
+    "ts": 1790907504361,
+    "kind": "session_end",
+    "summary": "Session ended",
+    "detail": {
+     "kind": "session_end"
+    }
+   }
+  ],
+  "unattributed": [
+   {
+    "ts": 1791700762230,
+    "kind": "search",
+    "summary": "search_skills: 1 candidate, 1 chosen (unattributed: ambiguous)",
+    "detail": {
+     "kind": "search",
+     "traceId": "tr_5e644e47",
+     "chosen": [
+      "skill://local/agents/pr-review-ko/SKILL.md"
+     ],
+     "query": "review this PR",
+     "mode": "automatic",
+     "candidates": [
+      {
+       "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+       "name": "pr-review-ko",
+       "description": "Reviews a pull request and writes Korean review comments with risk notes.",
+       "score": 0.66,
+       "rank": 1,
+       "invocation": "automatic",
+       "digest": "f7adeae404c9",
+       "matched": [
+        "review",
+        "PR"
+       ]
+      }
+     ],
+     "elapsedMs": 6,
+     "total": 1
+    }
+   },
+   {
+    "ts": 1791700764230,
+    "kind": "load",
+    "summary": "Loaded pr-review-ko",
+    "detail": {
+     "kind": "load",
+     "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+     "loadId": "ld_451552c6",
+     "manifestDigest": "7f048bb7891e12d4"
+    }
+   }
+  ]
+ },
+ "flow": {
+  "unit": "first_load",
+  "columns": [
+   "task_type",
+   "skill",
+   "state"
+  ],
+  "nodes": [
+   {
+    "id": "t:review",
+    "column": 0,
+    "label": "코드 리뷰",
+    "count": 7
+   },
+   {
+    "id": "s:pr-review-ko",
+    "column": 1,
+    "label": "pr-review-ko",
+    "count": 5
+   },
+   {
+    "id": "st:loaded",
+    "column": 2,
+    "label": "loaded",
+    "count": 23
+   },
+   {
+    "id": "t:docs",
+    "column": 0,
+    "label": "문서·공유",
+    "count": 11
+   },
+   {
+    "id": "s:meeting-notes",
+    "column": 1,
+    "label": "meeting-notes",
+    "count": 7
+   },
+   {
+    "id": "t:dbapi",
+    "column": 0,
+    "label": "DB·API 변경",
+    "count": 12
+   },
+   {
+    "id": "s:db-migration",
+    "column": 1,
+    "label": "db-migration",
+    "count": 10
+   },
+   {
+    "id": "t:other",
+    "column": 0,
+    "label": "기타",
+    "count": 5
+   },
+   {
+    "id": "s:status-brief",
+    "column": 1,
+    "label": "status-brief",
+    "count": 3
+   },
+   {
+    "id": "st:exposed_only",
+    "column": 2,
+    "label": "exposed_only",
+    "count": 6
+   },
+   {
+    "id": "s:none",
+    "column": 1,
+    "label": "(no skill)",
+    "count": 11
+   },
+   {
+    "id": "st:aborted",
+    "column": 2,
+    "label": "aborted",
+    "count": 2
+   },
+   {
+    "id": "s:terraform-r2",
+    "column": 1,
+    "label": "terraform-r2",
+    "count": 4
+   },
+   {
+    "id": "st:not_used",
+    "column": 2,
+    "label": "not_used",
+    "count": 3
+   },
+   {
+    "id": "st:no_match",
+    "column": 2,
+    "label": "no_match",
+    "count": 6
+   },
+   {
+    "id": "t:other-group",
+    "column": 0,
+    "label": "Other",
+    "count": 5,
+    "other": true
+   }
+  ],
+  "links": [
+   {
+    "source": "t:review",
+    "target": "s:pr-review-ko",
+    "count": 5,
+    "state": "loaded"
+   },
+   {
+    "source": "s:pr-review-ko",
+    "target": "st:loaded",
+    "count": 5,
+    "state": "loaded"
+   },
+   {
+    "source": "t:docs",
+    "target": "s:meeting-notes",
+    "count": 7,
+    "state": "loaded"
+   },
+   {
+    "source": "s:meeting-notes",
+    "target": "st:loaded",
+    "count": 7,
+    "state": "loaded"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:db-migration",
+    "count": 8,
+    "state": "loaded"
+   },
+   {
+    "source": "s:db-migration",
+    "target": "st:loaded",
+    "count": 8,
+    "state": "loaded"
+   },
+   {
+    "source": "t:other",
+    "target": "s:status-brief",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "s:status-brief",
+    "target": "st:exposed_only",
+    "count": 3,
+    "state": "exposed_only"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:none",
+    "count": 1,
+    "state": "aborted"
+   },
+   {
+    "source": "s:none",
+    "target": "st:aborted",
+    "count": 2,
+    "state": "aborted"
+   },
+   {
+    "source": "t:other-group",
+    "target": "s:terraform-r2",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "s:terraform-r2",
+    "target": "st:exposed_only",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "t:review",
+    "target": "s:none",
+    "count": 2,
+    "state": "not_used"
+   },
+   {
+    "source": "s:none",
+    "target": "st:not_used",
+    "count": 3,
+    "state": "not_used"
+   },
+   {
+    "source": "t:docs",
+    "target": "s:none",
+    "count": 1,
+    "state": "no_match"
+   },
+   {
+    "source": "s:none",
+    "target": "st:no_match",
+    "count": 6,
+    "state": "no_match"
+   },
+   {
+    "source": "t:other",
+    "target": "s:none",
+    "count": 4,
+    "state": "no_match"
+   },
+   {
+    "source": "t:docs",
+    "target": "s:none",
+    "count": 1,
+    "state": "aborted"
+   },
+   {
+    "source": "t:other-group",
+    "target": "s:none",
+    "count": 1,
+    "state": "no_match"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:db-migration",
+    "count": 2,
+    "state": "exposed_only"
+   },
+   {
+    "source": "s:db-migration",
+    "target": "st:exposed_only",
+    "count": 2,
+    "state": "exposed_only"
+   },
+   {
+    "source": "t:docs",
+    "target": "s:status-brief",
+    "count": 2,
+    "state": "exposed_only"
+   },
+   {
+    "source": "t:other-group",
+    "target": "s:terraform-r2",
+    "count": 3,
+    "state": "loaded"
+   },
+   {
+    "source": "s:terraform-r2",
+    "target": "st:loaded",
+    "count": 3,
+    "state": "loaded"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:none",
+    "count": 1,
+    "state": "not_used"
+   }
+  ],
+  "sessionCount": 40
+ },
+ "flow12": {
+  "unit": "first_load",
+  "columns": [
+   "task_type",
+   "skill",
+   "state"
+  ],
+  "nodes": [
+   {
+    "id": "t:review",
+    "column": 0,
+    "label": "코드 리뷰",
+    "count": 4
+   },
+   {
+    "id": "s:pr-review-ko",
+    "column": 1,
+    "label": "pr-review-ko",
+    "count": 4
+   },
+   {
+    "id": "st:loaded",
+    "column": 2,
+    "label": "loaded",
+    "count": 9
+   },
+   {
+    "id": "t:docs",
+    "column": 0,
+    "label": "문서·공유",
+    "count": 4
+   },
+   {
+    "id": "s:meeting-notes",
+    "column": 1,
+    "label": "meeting-notes",
+    "count": 4
+   },
+   {
+    "id": "t:dbapi",
+    "column": 0,
+    "label": "DB·API 변경",
+    "count": 2
+   },
+   {
+    "id": "s:db-migration",
+    "column": 1,
+    "label": "db-migration",
+    "count": 1
+   },
+   {
+    "id": "t:other",
+    "column": 0,
+    "label": "기타",
+    "count": 1
+   },
+   {
+    "id": "s:status-brief",
+    "column": 1,
+    "label": "status-brief",
+    "count": 1
+   },
+   {
+    "id": "st:exposed_only",
+    "column": 2,
+    "label": "exposed_only",
+    "count": 2
+   },
+   {
+    "id": "s:none",
+    "column": 1,
+    "label": "(no skill)",
+    "count": 1
+   },
+   {
+    "id": "st:aborted",
+    "column": 2,
+    "label": "aborted",
+    "count": 1
+   },
+   {
+    "id": "s:terraform-r2",
+    "column": 1,
+    "label": "terraform-r2",
+    "count": 1
+   },
+   {
+    "id": "t:other-group",
+    "column": 0,
+    "label": "Other",
+    "count": 1,
+    "other": true
+   }
+  ],
+  "links": [
+   {
+    "source": "t:review",
+    "target": "s:pr-review-ko",
+    "count": 4,
+    "state": "loaded"
+   },
+   {
+    "source": "s:pr-review-ko",
+    "target": "st:loaded",
+    "count": 4,
+    "state": "loaded"
+   },
+   {
+    "source": "t:docs",
+    "target": "s:meeting-notes",
+    "count": 4,
+    "state": "loaded"
+   },
+   {
+    "source": "s:meeting-notes",
+    "target": "st:loaded",
+    "count": 4,
+    "state": "loaded"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:db-migration",
+    "count": 1,
+    "state": "loaded"
+   },
+   {
+    "source": "s:db-migration",
+    "target": "st:loaded",
+    "count": 1,
+    "state": "loaded"
+   },
+   {
+    "source": "t:other",
+    "target": "s:status-brief",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "s:status-brief",
+    "target": "st:exposed_only",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "t:dbapi",
+    "target": "s:none",
+    "count": 1,
+    "state": "aborted"
+   },
+   {
+    "source": "s:none",
+    "target": "st:aborted",
+    "count": 1,
+    "state": "aborted"
+   },
+   {
+    "source": "t:other-group",
+    "target": "s:terraform-r2",
+    "count": 1,
+    "state": "exposed_only"
+   },
+   {
+    "source": "s:terraform-r2",
+    "target": "st:exposed_only",
+    "count": 1,
+    "state": "exposed_only"
+   }
+  ],
+  "sessionCount": 12
+ },
+ "heatmap": {
+  "tz": "Asia/Seoul",
+  "weekStart": 1,
+  "bucketHours": 1,
+  "cells": [
+   {
+    "dow": 0,
+    "hour": 15,
+    "count": 2
+   },
+   {
+    "dow": 0,
+    "hour": 17,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 10,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 11,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 13,
+    "count": 3
+   },
+   {
+    "dow": 1,
+    "hour": 14,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 16,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 19,
+    "count": 2
+   },
+   {
+    "dow": 1,
+    "hour": 22,
+    "count": 1
+   },
+   {
+    "dow": 2,
+    "hour": 10,
+    "count": 1
+   },
+   {
+    "dow": 2,
+    "hour": 11,
+    "count": 1
+   },
+   {
+    "dow": 2,
+    "hour": 12,
+    "count": 1
+   },
+   {
+    "dow": 2,
+    "hour": 17,
+    "count": 2
+   },
+   {
+    "dow": 2,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 14,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 15,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 17,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 9,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 10,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 12,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 15,
+    "count": 2
+   },
+   {
+    "dow": 4,
+    "hour": 17,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 20,
+    "count": 2
+   },
+   {
+    "dow": 5,
+    "hour": 10,
+    "count": 2
+   },
+   {
+    "dow": 5,
+    "hour": 16,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 17,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 19,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 21,
+    "count": 1
+   },
+   {
+    "dow": 6,
+    "hour": 21,
+    "count": 1
+   }
+  ],
+  "rowTotals": [
+   3,
+   10,
+   6,
+   4,
+   9,
+   7,
+   1
+  ],
+  "colTotals": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   5,
+   2,
+   2,
+   3,
+   2,
+   5,
+   2,
+   6,
+   4,
+   3,
+   2,
+   2,
+   1,
+   0
+  ]
+ },
+ "heatmap12": {
+  "tz": "Asia/Seoul",
+  "weekStart": 1,
+  "bucketHours": 2,
+  "cells": [
+   {
+    "dow": 0,
+    "hour": 14,
+    "count": 2
+   },
+   {
+    "dow": 0,
+    "hour": 16,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 12,
+    "count": 1
+   },
+   {
+    "dow": 1,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 14,
+    "count": 1
+   },
+   {
+    "dow": 3,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 14,
+    "count": 1
+   },
+   {
+    "dow": 4,
+    "hour": 20,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 10,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 18,
+    "count": 1
+   },
+   {
+    "dow": 5,
+    "hour": 20,
+    "count": 1
+   }
+  ],
+  "rowTotals": [
+   3,
+   2,
+   0,
+   2,
+   2,
+   3,
+   0
+  ],
+  "colTotals": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   1,
+   4,
+   1,
+   3,
+   2,
+   0
+  ]
+ },
+ "skillWeek": {
+  "weeks": [
+   "2026-W35",
+   "2026-W36",
+   "2026-W37",
+   "2026-W38",
+   "2026-W39",
+   "2026-W40",
+   "2026-W41",
+   "2026-W42"
+  ],
+  "rows": [
+   {
+    "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+    "name": "pr-review-ko",
+    "counts": [
+     5,
+     6,
+     3,
+     4,
+     1,
+     5,
+     2,
+     2
+    ]
+   },
+   {
+    "uri": "skill://local/agents/db-migration/SKILL.md",
+    "name": "db-migration",
+    "counts": [
+     2,
+     0,
+     2,
+     4,
+     6,
+     4,
+     2,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/status-brief/SKILL.md",
+    "name": "status-brief",
+    "counts": [
+     3,
+     3,
+     3,
+     1,
+     3,
+     2,
+     2,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/meeting-notes/SKILL.md",
+    "name": "meeting-notes",
+    "counts": [
+     3,
+     2,
+     1,
+     1,
+     2,
+     1,
+     5,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/terraform-r2/SKILL.md",
+    "name": "terraform-r2",
+    "counts": [
+     2,
+     0,
+     3,
+     4,
+     3,
+     2,
+     0,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/deploy-checklist/SKILL.md",
+    "name": "deploy-checklist",
+    "counts": [
+     1,
+     1,
+     2,
+     3,
+     3,
+     2,
+     0,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/api-contract/SKILL.md",
+    "name": "api-contract",
+    "counts": [
+     0,
+     0,
+     1,
+     1,
+     3,
+     3,
+     0,
+     0
+    ]
+   }
+  ]
+ },
+ "skillWeek12": {
+  "weeks": [
+   "2026-W35",
+   "2026-W36",
+   "2026-W37",
+   "2026-W38",
+   "2026-W39",
+   "2026-W40",
+   "2026-W41",
+   "2026-W42"
+  ],
+  "rows": [
+   {
+    "uri": "skill://local/agents/pr-review-ko/SKILL.md",
+    "name": "pr-review-ko",
+    "counts": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     2,
+     2
+    ]
+   },
+   {
+    "uri": "skill://local/agents/meeting-notes/SKILL.md",
+    "name": "meeting-notes",
+    "counts": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     4,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/db-migration/SKILL.md",
+    "name": "db-migration",
+    "counts": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     0
+    ]
+   },
+   {
+    "uri": "skill://local/agents/status-brief/SKILL.md",
+    "name": "status-brief",
+    "counts": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     0
+    ]
+   }
+  ]
+ }
+}
