@@ -4,6 +4,8 @@ import { distImport } from "./_helpers.mjs";
 
 const { openDb } = await distImport("store/db.js");
 const { createSearchIndex, calibrate, DEFAULT_THRESHOLD, SEARCH_TOOL_GUIDANCE } = await distImport("search/index.js");
+const { buildLexical } = await distImport("search/lexical.js");
+const { FtsIndex } = await distImport("search/fts.js");
 
 const entry = (name, extra = {}) => ({
   uri: `skill://local/test/${name}/SKILL.md`, rootId: "test", dir: name, name, description: `${name} skill`, tags: [],
@@ -113,4 +115,42 @@ test("calibrate sits just above the best negative score and DEFAULT_THRESHOLD is
   assert.equal(calibrate([0.3, 0.5]), 0.51);
   assert.equal(typeof DEFAULT_THRESHOLD, "number");
   assert.match(SEARCH_TOOL_GUIDANCE, /mode=discovery/);
+});
+
+// Weight pins: each case depends on one ranking constant, so changing it reorders or drops a hit.
+const names = (hits, entries) => hits.map((h) => entries.find((e) => e.uri === h.uri).name);
+
+test("lexical field weights order name > keyword > description for the same term", () => {
+  const entries = [
+    entry("deploy-checklist"),
+    entry("release-notes", { aliasesKo: ["deploy service"] }),
+    entry("ops-diary", { description: "Notes on how we deploy." }),
+  ];
+  assert.deepEqual(names(buildLexical(entries).search("deploy"), entries), ["deploy-checklist", "release-notes", "ops-diary"]);
+});
+
+test("lexical exact-name anchor outranks an equal-weight name match and keeps stopword-only names", () => {
+  // "deploy-tool" sorts before "deploy" by uri, so without the anchor bonus the tie would put it first.
+  const entries = [entry("deploy"), entry("deploy-tool")];
+  const hits = buildLexical(entries).search("deploy");
+  assert.deepEqual(names(hits, entries), ["deploy", "deploy-tool"]);
+  assert.equal(hits[0].anchor, 2);
+  // A name made only of stopwords has no scoring terms; the anchor alone must keep it.
+  const stop = [entry("how-to")];
+  assert.deepEqual(names(buildLexical(stop).search("how-to"), stop), ["how-to"]);
+});
+
+test("FTS ranks an aliases_ko match above the same phrase in body_head", () => {
+  const db = openDb(":memory:");
+  try {
+    const fts = new FtsIndex(db);
+    const entries = [
+      entry("notes-a", { bodyHead: "배포 롤백 절차 메모" }),
+      entry("notes-b", { aliasesKo: ["배포 롤백 절차"] }),
+    ];
+    fts.upsert(entries);
+    assert.deepEqual(names(fts.search("롤백 절차"), entries), ["notes-b", "notes-a"]);
+  } finally {
+    db.close();
+  }
 });

@@ -20,20 +20,36 @@ async function loadExt(runtime, sb, port) {
   return handlers;
 }
 
-function listener(respond = true) {
+/** Bounded await: rejects if the signal does not arrive within ms. */
+function within(promise, ms, what) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Real HTTP listener; nth(i) resolves when the i-th request (0-based) has been fully received. */
+function listener() {
   const received = [];
-  let resolveFirst;
-  const first = new Promise(r => { resolveFirst = r; });
+  const waiters = [];
+  const nth = i => received[i] ? Promise.resolve(received[i]) : new Promise(r => { (waiters[i] ??= []).push(r); });
   const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", c => (body += c));
     req.on("end", () => {
-      received.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
-      resolveFirst();
-      if (respond) res.end("{}");
+      const i = received.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) }) - 1;
+      for (const r of waiters[i] ?? []) r(received[i]);
+      res.end("{}");
     });
   });
-  return new Promise(r => server.listen(0, "127.0.0.1", () => r({ server, received, first, port: server.address().port })));
+  return new Promise(r => server.listen(0, "127.0.0.1", () => r({ server, received, nth, port: server.address().port })));
+}
+
+/** Replaces globalThis.fetch; the forwarder calls fetch synchronously, so calls are observable right after the handler returns. */
+function stubFetch(impl) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = (...args) => { calls.push(args); return impl(...args); };
+  return { calls, restore: () => { globalThis.fetch = original; } };
 }
 
 for (const runtime of ["omo", "gajae"]) {
@@ -52,18 +68,17 @@ for (const runtime of ["omo", "gajae"]) {
       assert.ok(out.systemPrompt.startsWith("base"));
       assert.ok(out.systemPrompt.trimEnd().endsWith("</gisool-discovery>"));
       assert.match(out.systemPrompt, /search_skills/);
-      await l.first;
-      assert.equal(l.received.length, 1);
-      assert.equal(l.received[0].url, `/ingest/hook/${runtime}`);
-      assert.equal(l.received[0].auth, `Bearer ${TOKEN}`);
-      assert.deepEqual(l.received[0].body, { event: "before_agent_start", prompt: "hello", sessionId: "s1", cwd: "/w" });
+      const first = await within(l.nth(0), 5000, "first POST");
+      assert.equal(first.url, `/ingest/hook/${runtime}`);
+      assert.equal(first.auth, `Bearer ${TOKEN}`);
+      assert.deepEqual(first.body, { event: "before_agent_start", prompt: "hello", sessionId: "s1", cwd: "/w" });
       // non-string prompt
       const e2 = { prompt: undefined, systemPrompt: "x" };
       handlers[0][1](e2, ctx);
-      await new Promise(r => setTimeout(r, 0));
-      for (let i = 0; i < 100 && l.received.length < 2; i++) await new Promise(r => setImmediate(r));
-      assert.equal(l.received[1].body.prompt, null);
-      assert.equal(l.received[1].body.promptUnavailable, true);
+      const second = await within(l.nth(1), 5000, "second POST");
+      assert.equal(second.body.prompt, null);
+      assert.equal(second.body.promptUnavailable, true);
+      assert.equal(l.received.length, 2);
     } finally {
       l.server.closeAllConnections(); l.server.close(); sb.cleanup();
     }
@@ -71,40 +86,51 @@ for (const runtime of ["omo", "gajae"]) {
 
   test(`${runtime}: preview event posts nothing and leaves systemPrompt unchanged`, async () => {
     const sb = makeSandbox();
-    const l = await listener();
+    const handlers = await loadExt(runtime, sb, 1);
+    const stub = stubFetch(() => Promise.resolve(new Response("{}")));
     try {
-      const handlers = await loadExt(runtime, sb, l.port);
       const event = { prompt: "p", systemPrompt: "base", preview: true };
       assert.equal(handlers[0][1](event, {}), event);
       assert.equal(event.systemPrompt, "base");
-      await new Promise(r => setTimeout(r, 100));
-      assert.equal(l.received.length, 0);
+      assert.equal(stub.calls.length, 0);
+      // Control: the same stub does observe a non-preview event synchronously.
+      handlers[0][1]({ prompt: "p", systemPrompt: "base" }, {});
+      assert.equal(stub.calls.length, 1);
     } finally {
-      l.server.closeAllConnections(); l.server.close(); sb.cleanup();
+      stub.restore(); sb.cleanup();
     }
   });
 
-  test(`${runtime}: hanging or absent listener never blocks or throws`, async () => {
+  test(`${runtime}: hanging, failing, or throwing fetch never blocks or throws`, async () => {
     const sb = makeSandbox();
-    const hang = await listener(false);
-    const rejections = [];
-    const onRej = e => rejections.push(e);
-    process.on("unhandledRejection", onRej);
+    const handlers = await loadExt(runtime, sb, 1);
+    let next;
+    const stub = stubFetch(() => next());
     try {
-      const handlers = await loadExt(runtime, sb, hang.port);
-      let t = performance.now();
-      handlers[0][1]({ prompt: "p", systemPrompt: "s" }, {});
-      assert.ok(performance.now() - t < 50);
-      await hang.first;
-      hang.server.closeAllConnections(); hang.server.close();
-      // absent: port now closed
-      t = performance.now();
-      handlers[0][1]({ prompt: "p", systemPrompt: "s" }, {});
-      assert.ok(performance.now() - t < 50);
-      await new Promise(r => setTimeout(r, 100));
-      assert.deepEqual(rejections, []);
+      // Hanging listener: fetch never settles; the handler returns the event, not a promise, with a bounded abort signal.
+      next = () => new Promise(() => {});
+      const hangEvent = { prompt: "p", systemPrompt: "s" };
+      assert.equal(handlers[0][1](hangEvent, {}), hangEvent);
+      assert.ok(stub.calls[0][1].signal instanceof AbortSignal);
+      // Absent listener: fetch rejects; the forwarder must attach a rejection handler before returning.
+      let handled = false;
+      next = () => {
+        const p = Promise.reject(new TypeError("fetch failed"));
+        const ownCatch = p.catch.bind(p);
+        p.catch = fn => { handled = true; return ownCatch(fn); };
+        return p;
+      };
+      const absentEvent = { prompt: "p", systemPrompt: "s" };
+      assert.equal(handlers[0][1](absentEvent, {}), absentEvent);
+      assert.equal(stub.calls.length, 2);
+      assert.equal(handled, true);
+      // fetch throwing synchronously is swallowed too.
+      next = () => { throw new TypeError("bad url"); };
+      const throwEvent = { prompt: "p", systemPrompt: "s" };
+      assert.equal(handlers[0][1](throwEvent, {}), throwEvent);
+      assert.equal(stub.calls.length, 3);
     } finally {
-      process.off("unhandledRejection", onRej); sb.cleanup();
+      stub.restore(); sb.cleanup();
     }
   });
 }
