@@ -1,0 +1,11 @@
+# >>> gisool managed
+# Managed by gisool; edit via `gisool init`, not by hand.
+[mcp_servers.gisool]
+url = "http://127.0.0.1:{{PORT}}/mcp"
+http_headers = { Authorization = "Bearer {{TOKEN}}" }
+
+[otel]
+log_user_prompt = true
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:{{PORT}}/ingest/otlp/v1/logs", protocol = "json", headers = { Authorization = "Bearer {{TOKEN}}" } } }
+metrics_exporter = "none"
+# <<< gisool managed

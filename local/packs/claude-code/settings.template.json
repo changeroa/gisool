@@ -1,0 +1,24 @@
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:{{PORT}}/ingest/otlp/v1/logs",
+    "OTEL_EXPORTER_OTLP_LOGS_HEADERS": "Authorization=Bearer {{TOKEN}}",
+    "OTEL_LOG_USER_PROMPTS": "1",
+    "OTEL_LOG_TOOL_DETAILS": "1"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Skill|mcp__gisool__.*",
+        "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]
+      }
+    ]
+  }
+}
