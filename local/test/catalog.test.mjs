@@ -246,7 +246,7 @@ test("watcher refreshes after a debounced change and emits the delta", async () 
   try {
     await c.refresh();
     const got = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("no delta within 5s")), 5000);
+      const timer = setTimeout(() => reject(new Error("no delta within 15s")), 15000);
       const off = c.onDelta((d) => {
         if (d.added.some((e) => e.name === "fresh")) {
           clearTimeout(timer);

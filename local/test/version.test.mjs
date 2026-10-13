@@ -18,12 +18,15 @@ test("assertPlatform rejects win32 only", () => {
   assert.throws(() => assertPlatform("win32"), code("unsupported_platform"));
 });
 
-test("stubs throw not_implemented", async () => {
-  const { startServer } = await distImport("server.js");
-  const { runStdioProxy } = await distImport("mcp/stdio-proxy.js");
-  const { runEval } = await distImport("cli/eval.js");
-  const { runExport, runImport } = await distImport("cli/export-import.js");
-  for (const p of [startServer({}), runStdioProxy({ port: 1, token: "" }), runEval({}, {}), runExport("x", { withHistory: false }, {}), runImport("x", { dryRun: true }, {})]) {
-    await assert.rejects(p, code("not_implemented"));
+test("contracted entry modules exist in dist and export their functions", async () => {
+  const contracts = [
+    ["server.js", ["startServer"]],
+    ["mcp/stdio-proxy.js", ["runStdioProxy"]],
+    ["cli/export-import.js", ["runExport", "runImport"]],
+    ["cli/eval.js", ["runEval"]],
+  ];
+  for (const [path, names] of contracts) {
+    const mod = await distImport(path);
+    for (const name of names) assert.equal(typeof mod[name], "function", `${path} exports ${name}`);
   }
 });
