@@ -53,7 +53,10 @@ Light and dark values swap under `prefers-color-scheme: dark`. Washes are derive
 Rules
 - Accent never marks state on a border. Selected / active / hover are `--wash` / `--wash-2`
   backgrounds plus ink; `:focus-visible` rings (`--accent`) are the only colored edge.
-- Status colors appear only in state badges, the ingest error count, and the live dot.
+- Status colors appear only in state badges, the ingest error count, the live dot, and timeline
+  step dots (kind colors, see TimelineStep): prompt `--ink`, search `--accent`, load / read_file
+  `--ok` (read_file hollow), native_skill `--warn` (hollow), error `--bad`, session_start / end
+  `--neutral`. Candidate score bars use `--ok` when the candidate was loaded, otherwise ink at 35%.
 - Never introduce a color outside this table; extend the table first.
 
 ## 3. Typography
@@ -163,7 +166,56 @@ Layout
 
 ### GhostButton
 - `button.btn`: transparent bg, `--line-2` border, radius `--r-sm`, 32px height; hover `--wash`;
-  active `--wash-2` + `translateY(1px)`; `focus-visible` ring.
+  active `--wash-2` + `translateY(1px)`; `focus-visible` ring. `[disabled]` keeps the border, text
+  `--ink-2`, default cursor; the saved eval-case variant (`data-save-eval="saved"`) is `--ok` text
+  plus a check glyph.
+
+### TraceHeader (`views/trace.tsx`)
+- Structure: `header.trace__head.card` > `a.trace__back` (chevron + "Sessions", keeps the list
+  filter) > `h1.trace__title` (first prompt; dim italic "(no prompt captured)") > `dl.trace__meta`
+  (Runtime / Started / Duration / Attribution / State / Session) > `p.trace__counts`.
+- Duration states: ended (`42m`), live and open (`in progress · 3m so far`), open without a live
+  stream (`3m (no end recorded)`). Attribution `none` renders `unattributed · <reason>` in `--ink-3`.
+- Spacing: card padding `--s-4` x `--s-5` (mobile `--s-4`); meta gaps `--s-3` x `--s-6`.
+
+### Timeline / TimelineStep (`views/trace.tsx`)
+- Structure: `div.card.tl__card` > `ol.tl` > `li.tl__step.tl__step--<kind>` > `span.tl__dot` +
+  `div.tl__head` (`span.tl__kind` label, optional `span.tl__tag` "native" / "abstained",
+  `time.tl__time` = HH:MM:SS + `+offset` from session start) + `div.tl__body`.
+- Rail: a 2px `--line-2` segment per step, starting at the first dot and ending at the last dot;
+  dots are 8px (`--s-2`) with a 2px `--surface` ring so the rail never crosses them; hollow dots
+  (read_file, native_skill) are an inset 2px ring of the kind color.
+- Bodies: prompt = `p.tl__text` (pre-wrap) with a `button.foldbtn` fold over 600 chars; search =
+  mode / elapsed ms / count / trace id row + `blockquote.tl__query` (`--wash`) + CandidatesPanel
+  or AbstainBlock; load = name + mono URI + `@<8-char manifest digest>`; read_file = mono
+  resource path relative to the skill dir + bytes + `from <skill>`; native_skill = name + `via`;
+  error = mono code in `--bad` + message; session_end = `after <duration>`.
+- Empty states: `section.empty` "Session not found" (stale id) and `div.callout` "This session
+  never consulted gisool" above the timeline when no search step exists.
+- Motion: none; live updates refetch the trace and keyed steps keep their DOM nodes.
+
+### CandidatesPanel (`components/candidates.tsx`)
+- Structure: `ol.cands` > `li.cand[.cand--chosen]` grid with areas
+  `rank name inv bar score pick` / `rank desc` (mobile: `rank name inv score pick` / `rank bar` /
+  `rank desc`). Rows are ordered by score descending, ties by rank.
+- Parts: `cand__rank` (`--ink-3`, tabular), `cand__name` (ink, 500), `cand__inv` tag (`auto` /
+  `explicit`, mono micro on `--surface-2`), `cand__bar` 6px track `--wash-2` with `cand__fill`
+  width = score, `cand__score` (2 decimals), `cand__pick` = Lucide check in `--ok` only on loaded
+  candidates, `cand__desc` (description `·` matched terms, `--ink-3`).
+- States: chosen row = `--wash` background + `--ok` fill + check; nothing else is colored.
+
+### AbstainBlock (`views/trace.tsx`)
+- Structure: `div.tl__abstain` (hairline `--line`, radius `--r-sm`) > StateBadge
+  `badge--no_match` "abstained · <reason>" > `p.tl__hint` > GhostButton "Save as eval case"
+  (POSTs `{query, fromTraceId}`; states idle / saving / saved / error with a `role="alert"` line).
+
+### Callout
+- `div.callout`: hairline card (`--line`, `--r-md`, `--surface`) with a bold `--ink` title and
+  `--ink-2` copy; used for the never-consulted empty state. No status color.
+
+### TextFold
+- `button.foldbtn`: text-only accent button (`--fs-cap`, 500) toggling the prompt body between the
+  600-char head and the full text; `aria-expanded` reflects the state.
 
 ## 6. Motion & Interaction
 
@@ -199,3 +251,5 @@ Constraints: WCAG 2.2 AA; body contrast >= 4.5:1 in both schemes (`--ink-2` on `
 |------|----------|--------------|--------------|
 | Trace / Flow / Heatmap views render "Coming soon" | `views/{trace,flow,heatmap}.tsx` | Stubs owned by todos 15-17 | Replaced in Wave 2 |
 | Attribution reason tooltip depends on an optional `attributionReason` field the API may omit | `views/sessions.tsx` | `SessionRow` is frozen without a reason field; the dashboard tolerates its absence ("reason not reported") | Todo 5/12 may add the field; no contract change needed here |
+| Trace view CSS ships as a `<style id="gisool-trace-style">` injected by `views/trace.tsx` instead of living in `styles.css` | `views/trace.tsx` | `styles.css` is owned by todo 6 in this wave; the block uses only tokens from this file | Fold into `styles.css` once the ledger allows (todo 18/19 cleanup) |
+| Trace header fetches `/api/sessions` unfiltered and picks the row client-side | `views/trace.tsx` | The HTTP surface has no `GET /api/sessions/:id`; the list is local and small | Add a by-id endpoint if the list grows past retention defaults |
