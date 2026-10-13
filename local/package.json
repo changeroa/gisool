@@ -2,6 +2,21 @@
   "name": "gisool",
   "version": "0.1.0",
   "private": false,
+  "description": "Local skill router for coding agents: search your skills, trace how agents use them, and see the flow.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/changeroa/gisool.git",
+    "directory": "local"
+  },
+  "homepage": "https://github.com/changeroa/gisool/tree/main/local#readme",
+  "files": [
+    "dist",
+    "packs",
+    "src/store/schema.sql",
+    "src/store/task-types.json",
+    "README.md"
+  ],
   "type": "module",
   "bin": {
     "gisool": "dist/cli/main.js"
