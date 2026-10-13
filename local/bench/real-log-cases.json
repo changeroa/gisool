@@ -1,0 +1,32 @@
+[
+  {
+    "id": "real-log-1",
+    "query": "Slack 메시지 QA 해석",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  },
+  {
+    "id": "real-log-2",
+    "query": "메시지 해석",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  },
+  {
+    "id": "real-log-3",
+    "query": "계정 식별 비밀번호 재설정",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  },
+  {
+    "id": "real-log-4",
+    "query": "browser account",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  },
+  {
+    "id": "real-log-5",
+    "query": "project suggestions connected apps",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  },
+  {
+    "id": "real-log-6",
+    "query": "인터뷰",
+    "source": "research V6, Codex event logs 2026-09-18..25"
+  }
+]

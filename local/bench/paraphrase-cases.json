@@ -1,0 +1,58 @@
+[
+  {
+    "id": "paraphrase-1-database-query",
+    "query": "DB 조회가 너무 느려서 원인 좀 봐줘",
+    "expected": [
+      "database-query"
+    ]
+  },
+  {
+    "id": "paraphrase-2-database-query",
+    "query": "the dashboard takes forever to load the orders table",
+    "expected": [
+      "database-query"
+    ]
+  },
+  {
+    "id": "paraphrase-3-accessibility-check",
+    "query": "시각장애인도 이 설정 화면을 쓸 수 있을까?",
+    "expected": [
+      "accessibility-check"
+    ]
+  },
+  {
+    "id": "paraphrase-4-release-plan",
+    "query": "내일 배포하는데 문제 생기면 되돌릴 방법까지 정리해줘",
+    "expected": [
+      "release-plan"
+    ]
+  },
+  {
+    "id": "paraphrase-5-log-inspection",
+    "query": "어제 밤에 결제 API가 500을 뱉었는데 왜 그런지 찾아줘",
+    "expected": [
+      "log-inspection"
+    ]
+  },
+  {
+    "id": "paraphrase-6-dependency-check",
+    "query": "react 19로 올리면 뭐가 깨질까",
+    "expected": [
+      "dependency-check"
+    ]
+  },
+  {
+    "id": "paraphrase-7-status-brief",
+    "query": "팀장한테 이번 주 진행 상황 공유할 글 써줘",
+    "expected": [
+      "status-brief"
+    ]
+  },
+  {
+    "id": "paraphrase-8-translation-check",
+    "query": "일본어 버전 문구가 영어랑 어긋나는지 봐줘",
+    "expected": [
+      "translation-check"
+    ]
+  }
+]

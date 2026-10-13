@@ -1,0 +1,210 @@
+[
+  {
+    "id": "form-transitions-ko",
+    "query": "이메일 인증 링크가 만료되면 화면에서 어떤 선택을 제공해야 할지 검토해줘",
+    "expected": [
+      "form-transitions"
+    ]
+  },
+  {
+    "id": "form-transitions-en",
+    "query": "review email verification expiration after a user refreshes the page",
+    "expected": [
+      "form-transitions"
+    ]
+  },
+  {
+    "id": "status-brief-ko",
+    "query": "개발 진행 상황과 일정 의존성을 공유문에 담아줘",
+    "expected": [
+      "status-brief"
+    ]
+  },
+  {
+    "id": "status-brief-en",
+    "query": "write a progress report explaining blocked work and delivery evidence",
+    "expected": [
+      "status-brief"
+    ]
+  },
+  {
+    "id": "api-contract-ko",
+    "query": "요청 필드와 응답 스키마 변경의 호환성을 확인해줘",
+    "expected": [
+      "api-contract"
+    ]
+  },
+  {
+    "id": "api-contract-en",
+    "query": "check compatibility of endpoint request fields after the schema changes",
+    "expected": [
+      "api-contract"
+    ]
+  },
+  {
+    "id": "database-query-ko",
+    "query": "데이터베이스에서 느린 쿼리 실행 계획을 검토해줘",
+    "expected": [
+      "database-query"
+    ]
+  },
+  {
+    "id": "database-query-en",
+    "query": "inspect SQL query plans and suggest a database index",
+    "expected": [
+      "database-query"
+    ]
+  },
+  {
+    "id": "accessibility-check-ko",
+    "query": "키보드 탐색과 초점 순서를 접근성 관점에서 검토해줘",
+    "expected": [
+      "accessibility-check"
+    ]
+  },
+  {
+    "id": "accessibility-check-en",
+    "query": "check screen reader labels and keyboard navigation on a settings page",
+    "expected": [
+      "accessibility-check"
+    ]
+  },
+  {
+    "id": "translation-check-ko",
+    "query": "번역 용어와 언어 일관성을 점검해줘",
+    "expected": [
+      "translation-check"
+    ]
+  },
+  {
+    "id": "translation-check-en",
+    "query": "review translation terminology across different locale files",
+    "expected": [
+      "translation-check"
+    ]
+  },
+  {
+    "id": "dependency-check-ko",
+    "query": "의존성 업그레이드 전에 패키지 변경 사항을 점검해줘",
+    "expected": [
+      "dependency-check"
+    ]
+  },
+  {
+    "id": "dependency-check-en",
+    "query": "review breaking changes before a dependency upgrade",
+    "expected": [
+      "dependency-check"
+    ]
+  },
+  {
+    "id": "unit-design-ko",
+    "query": "입력 경계와 실패 사례를 단위 테스트로 검증해줘",
+    "expected": [
+      "unit-design"
+    ]
+  },
+  {
+    "id": "unit-design-en",
+    "query": "design unit tests for boundary cases in a parser",
+    "expected": [
+      "unit-design"
+    ]
+  },
+  {
+    "id": "log-inspection-ko",
+    "query": "서비스 로그에서 오류 패턴과 요청 실패를 찾아줘",
+    "expected": [
+      "log-inspection"
+    ]
+  },
+  {
+    "id": "log-inspection-en",
+    "query": "inspect service logs for repeated error patterns and failed requests",
+    "expected": [
+      "log-inspection"
+    ]
+  },
+  {
+    "id": "diagram-sketch-ko",
+    "query": "구성 요소 사이 데이터 흐름을 시스템 도식으로 그려줘",
+    "expected": [
+      "diagram-sketch"
+    ]
+  },
+  {
+    "id": "diagram-sketch-en",
+    "query": "draw a system diagram explaining data flow between components",
+    "expected": [
+      "diagram-sketch"
+    ]
+  },
+  {
+    "id": "release-plan-ko",
+    "query": "출시 계획에 롤백 조건과 배포 증거를 포함해줘",
+    "expected": [
+      "release-plan"
+    ]
+  },
+  {
+    "id": "release-plan-en",
+    "query": "write a release plan with rollback gates and deployment evidence",
+    "expected": [
+      "release-plan"
+    ]
+  },
+  {
+    "id": "evaluation-audit-ko",
+    "query": "평가 누출과 정답 독립성을 감사해줘",
+    "expected": [
+      "evaluation-audit"
+    ]
+  },
+  {
+    "id": "evaluation-audit-en",
+    "query": "audit evaluation leakage in the reference answers",
+    "expected": [
+      "evaluation-audit"
+    ]
+  },
+  {
+    "id": "no-match-food",
+    "query": "토마토 파스타 레시피 알려줘",
+    "expected": []
+  },
+  {
+    "id": "no-match-weather",
+    "query": "내일 서울 날씨와 강수확률",
+    "expected": []
+  },
+  {
+    "id": "no-match-math",
+    "query": "17 곱하기 23은 얼마야",
+    "expected": []
+  },
+  {
+    "id": "no-match-unknown",
+    "query": "zzqxv991 unrelatedblorb",
+    "expected": []
+  },
+  {
+    "id": "no-match-greeting",
+    "query": "안녕 고마워 잘 지냈어",
+    "expected": []
+  },
+  {
+    "id": "no-match-recipe",
+    "query": "banana smoothie recipe ingredients",
+    "expected": []
+  },
+  {
+    "id": "no-match-medical",
+    "query": "치통 원인과 치료 방법",
+    "expected": []
+  },
+  {
+    "id": "no-match-travel",
+    "query": "도쿄 호텔 가격 예약 추천",
+    "expected": []
+  }
+]
