@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "gisool": {
+      "httpUrl": "http://127.0.0.1:8799/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  },
+  "hooks": {
+    "BeforeAgent": [
+      { "hooks": [{ "type": "command", "name": "gisool-capture", "command": "\"<nodePath>\" \"<packageRoot>/packs/hook-post.mjs\" gemini", "timeout": 5000 }] }
+    ],
+    "AfterTool": [
+      { "matcher": "activate_skill", "hooks": [{ "type": "command", "name": "gisool-capture", "command": "\"<nodePath>\" \"<packageRoot>/packs/hook-post.mjs\" gemini", "timeout": 5000 }] }
+    ]
+  }
+}

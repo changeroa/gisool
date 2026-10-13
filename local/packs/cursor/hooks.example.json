@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{ "command": "\"<nodePath>\" \"<packageRoot>/packs/hook-post.mjs\" cursor" }],
+    "sessionStart": [{ "command": "\"<nodePath>\" \"<packageRoot>/packs/hook-post.mjs\" cursor" }],
+    "sessionEnd": [{ "command": "\"<nodePath>\" \"<packageRoot>/packs/hook-post.mjs\" cursor" }]
+  }
+}
