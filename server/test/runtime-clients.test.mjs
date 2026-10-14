@@ -6,7 +6,18 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { install as installOmo } from "../../clients/oh-my-openagent/install.mjs";
 import { install as installGajae } from "../../clients/gajae-code/install.mjs";
-import { applyFiles, gajaeTransport, omoTransport, planMcp, resolveAgentDir } from "../../clients/runtime-install.mjs";
+import { applyFiles, endpoint, gajaeTransport, omoTransport, planMcp, resolveAgentDir } from "../../clients/runtime-install.mjs";
+
+const configuredEndpoint = "https://fixture.example/mcp";
+process.env.GISUL_MCP_URL = configuredEndpoint;
+
+test("runtime clients require a configured HTTPS endpoint", () => {
+  assert.throws(() => endpoint({}), /GISUL_MCP_URL/);
+  for (const value of ["http://fixture.example/mcp", "https://user:pass@fixture.example/mcp", "https://fixture.example/other"]) {
+    assert.throws(() => endpoint({ GISUL_MCP_URL: value }));
+  }
+  assert.equal(endpoint({ GISUL_MCP_URL: configuredEndpoint }), configuredEndpoint);
+});
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "gisul-runtime-"));

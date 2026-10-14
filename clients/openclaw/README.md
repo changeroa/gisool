@@ -7,18 +7,19 @@ read-only OAuth MCP bridge. Team workflow skills remain on Gisul.
 From the repository root, for the default profile:
 
 ```sh
-openclaw plugins install ./clients/openclaw/plugin
+node clients/openclaw/prepare-oauth.mjs --output /absolute/new/gisul-team --endpoint https://your-host.example/mcp
+openclaw plugins install /absolute/new/gisul-team
 node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 ```
 
 Use the same profile for installation, login and the Gateway. No existing user
 configuration changes merely by checking out this client.
 
-To use another OAuth deployment, prepare a full bundle with its endpoint:
+For any OAuth deployment, prepare a full bundle with its endpoint:
 
 ```sh
-node clients/openclaw/prepare-oauth.mjs --output /absolute/new/gisul-iyen --endpoint https://gisul.iyendev.com/mcp
-openclaw plugins install /absolute/new/gisul-iyen
+node clients/openclaw/prepare-oauth.mjs --output /absolute/new/gisul-other --endpoint https://other-host.example/mcp
+openclaw plugins install /absolute/new/gisul-other
 node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 ```
 

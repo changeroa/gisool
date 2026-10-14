@@ -1,1 +1,0 @@
-{"start": 1790559814.459626, "end": 1790559864.559158, "stdout": "", "stderr": "{\"error\":{\"code\":\"timeout\",\"message\":\"timed out waiting for agent status\"},\"id\":\"cli:agent:prompt\"}\n", "exit": 1}

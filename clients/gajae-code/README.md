@@ -4,6 +4,8 @@ Gisul extends GJC's existing workflow: remote skills inform the deep interview's
 
 ## Install and connect
 
+Run `export GISUL_MCP_URL=https://your-host.example/mcp` in your shell before the installer or login command. Replace the host with your deployment and use the same value for both.
+
 With Node 24+, npm/npx, and a GJC version supporting native plugin bundles installed, run from this checkout:
 
 ```sh
@@ -13,7 +15,7 @@ node clients/gajae-code/login.mjs
 gjc --mcp-config "$HOME/.gjc/agent/mcp.json"
 ```
 
-The login command opens OAuth for your Ark-Point GitHub account and checks the MCP connection. Complete it before starting the GJC session so browser interaction does not compete with its MCP startup deadline. The connection requests `skills:read` and stores its credentials privately under this profile's `gisul/auth`; no token is copied from Codex or embedded in configuration. The first login/start downloads the pinned `mcp-remote@0.14.3` package through npx.
+The login command opens OAuth for a GitHub account allowed by the configured deployment and checks the MCP connection. Complete it before starting the GJC session so browser interaction does not compete with its MCP startup deadline. The connection requests `skills:read` and stores its credentials privately under this profile's `gisul/auth`; no token is copied from Codex or embedded in configuration. The first login/start downloads the pinned `mcp-remote@0.14.3` package through npx.
 
 The default destination is `~/.gjc/agent`. Both commands accept `--agent-dir PATH` and respect `GJC_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`, as well as the home-relative `GJC_CONFIG_DIR` / `PI_CONFIG_DIR` default. Launch GJC with the same profile, for example `GJC_CODING_AGENT_DIR=/absolute/profile gjc`. An installer override does not change your shell's runtime profile.
 

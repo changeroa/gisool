@@ -27,7 +27,7 @@ async function release(bucket, letter, registration, manual = false) {
 
 async function fixture(t, overrides = {}) {
   const state = { member: true, unavailable: false, revoked: false, identity: 42, repositoryForbidden: false, githubToken: "github-user-token", tokenExpiry: 28800, refreshes: 0, writes: [], calls: [] };
-  const env = Object.fromEntries(Object.entries({ GISUL_PUBLIC_URL: origin, GISUL_GITHUB_ORG: "Ark-Point", GITHUB_CLIENT_ID: "github-client", GITHUB_CLIENT_SECRET: "github-secret", GISUL_SKILLS_REPOSITORY: "Ark-Point/gisul-skills", GISUL_PUBLISH_WORKFLOW: "publish.yml", GISUL_BEARER_TOKEN: "legacy-reader", GISUL_PUBLISH_TOKEN: "publisher", GISUL_SERVER_VERSION: "team-fixture", ...overrides }).map(([name, value]) => [name, { type: "text", value }]));
+  const env = Object.fromEntries(Object.entries({ GISUL_PUBLIC_URL: origin, GISUL_GITHUB_ORG: "example-org", GITHUB_CLIENT_ID: "github-client", GITHUB_CLIENT_SECRET: "github-secret", GISUL_SKILLS_REPOSITORY: "example-org/gisul-skills", GISUL_PUBLISH_WORKFLOW: "publish.yml", GISUL_BEARER_TOKEN: "legacy-reader", GISUL_PUBLISH_TOKEN: "publisher", GISUL_SERVER_VERSION: "team-fixture", ...overrides }).map(([name, value]) => [name, { type: "text", value }]));
   const runtime = new Miniflare({ telemetry: { enabled: false }, logRequests: false, workers: [{ config: { type: "worker", name: "team", compatibilityDate: "2026-09-03", compatibilityFlags: ["global_fetch_strictly_public"], manifest: { mainModule: "index.js", modules: { "index.js": { type: "esm", contents: (await bundle).outputFiles[0].text } } }, env: { ...env, SKILLS_BUCKET: { type: "r2", name: "skills" }, OAUTH_KV: { type: "kv", id: "oauth" } }, exports: {} }, dev: { outboundService: { type: "fetcher", handler: async request => {
     const url = new URL(request.url); state.calls.push({ host: url.host, path: url.pathname });
     if (url.href === "https://github.com/login/oauth/access_token") {
@@ -41,16 +41,16 @@ async function fixture(t, overrides = {}) {
       assert.ok(body.get("code_verifier"));
       return Response.json({ access_token: state.githubToken, refresh_token: "github-refresh", expires_in: state.tokenExpiry, token_type: "bearer", scope: "" });
     }
-    if (url.href === "https://api.github.com/user/memberships/orgs/Ark-Point") {
+    if (url.href === "https://api.github.com/user/memberships/orgs/example-org") {
       assert.equal(request.headers.get("authorization"), `Bearer ${state.githubToken}`);
       if (state.unavailable) return Response.json({}, { status: 503 });
       if (state.revoked) return Response.json({}, { status: 401 });
       if (!state.member) return Response.json({}, { status: 404 });
-      return Response.json({ state: "active", role: "member", organization: { login: "Ark-Point" }, user: { id: state.identity, login: "teammate" } });
+      return Response.json({ state: "active", role: "member", organization: { login: "example-org" }, user: { id: state.identity, login: "teammate" } });
     }
-    if (url.origin === "https://api.github.com" && url.pathname.startsWith("/repos/Ark-Point/gisul-skills")) {
+    if (url.origin === "https://api.github.com" && url.pathname.startsWith("/repos/example-org/gisul-skills")) {
       assert.equal(request.headers.get("authorization"), `Bearer ${state.githubToken}`, "Writes must use the current member token, never a shared server token");
-      const path = url.pathname.slice("/repos/Ark-Point/gisul-skills".length);
+      const path = url.pathname.slice("/repos/example-org/gisul-skills".length);
       assert.notEqual(path, "", "Do not rederive saved consent from GitHub repository roles");
       if (state.repositoryForbidden) return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
       if (request.method !== "GET") { state.writes.push({ path, body: await request.json() }); }
@@ -61,7 +61,7 @@ async function fixture(t, overrides = {}) {
       if (path === "/git/commits") return Response.json({ sha: "d".repeat(40) });
       if (path === "/git/refs/heads/main") return Response.json({ object: { sha: "d".repeat(40) } });
       if (path.startsWith("/compare/")) return Response.json({ status: "diverged" });
-      if (path === "/actions/workflows/publish.yml/runs") return Response.json({ workflow_runs: [{ status: "in_progress", html_url: "https://github.com/Ark-Point/gisul-skills/actions/runs/1" }] });
+      if (path === "/actions/workflows/publish.yml/runs") return Response.json({ workflow_runs: [{ status: "in_progress", html_url: "https://github.com/example-org/gisul-skills/actions/runs/1" }] });
     }
     throw new Error(`Unexpected outbound request to ${url.host}${url.pathname}`);
   } } } }] });
@@ -276,7 +276,7 @@ test("approved write consent persists through refresh without a server allowlist
   const pending = await f.tool(token.access_token, "get_skill_write_status", { commit: written.commit });
   assert.equal(pending.status, "pending");
   assert.equal(pending.workflow_status, "in_progress");
-  assert.equal(f.state.calls.filter(call => call.path === "/repos/Ark-Point/gisul-skills").length, 0);
+  assert.equal(f.state.calls.filter(call => call.path === "/repos/example-org/gisul-skills").length, 0);
   f.state.repositoryForbidden = true;
   const denied = await f.rpc(token.access_token, "tools/call", { name: "create_skill", arguments: { name: "another", markdown: "---\nname: another\ndescription: Another skill\n---\nHello\n" } });
   assert.equal(denied.status, 200);

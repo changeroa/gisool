@@ -2,7 +2,7 @@
   "mcpServers": {
     "gisul": {
       "type": "http",
-      "url": "https://gisul.arkpoint.dev/mcp",
+      "url": "https://gisul.example.invalid/mcp",
       "scopes": [
         "skills:read",
         "skills:write"

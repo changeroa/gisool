@@ -66,7 +66,7 @@ flowchart LR
 
 | 사용 환경 | 설치·연결 안내 |
 | --- | --- |
-| Codex | [개인용 플러그인](clients/codex/README.md) · [ARKPOINT 팀용 HTTPS 플러그인](docs/arkpoint-plugin.md) |
+| Codex | [개인용 플러그인](clients/codex/README.md) · [팀 자체 호스팅 HTTPS 플러그인](docs/team-plugin.md) |
 | OpenClaw | [번들·로더·OAuth 연결](clients/openclaw/README.md) |
 | oh-my-openagent / OmO 5 | [설치기와 로더](clients/oh-my-openagent/README.md) |
 | Gajae Code | [인터뷰·계획·실행 연결](clients/gajae-code/README.md) |
@@ -75,7 +75,7 @@ flowchart LR
 
 > Gisul에서 이 작업에 맞는 스킬을 찾아 읽고 적용해줘. 무엇을 확인했고 무엇은 아직 확인하지 못했는지 구분해줘.
 
-ARKPOINT 팀용 배포는 별도의 조직 인증을 사용한다. 개인 카탈로그가 자동으로 팀에 공개되지는 않는다.
+팀 배포는 설정한 GitHub 조직으로 인증한다. 개인 카탈로그가 자동으로 팀에 공개되지는 않는다.
 
 <details>
 <summary><strong>직접 서버를 실행하고 싶다면</strong></summary>

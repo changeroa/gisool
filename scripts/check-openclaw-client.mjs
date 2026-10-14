@@ -12,7 +12,7 @@ if (args.length !== 2 || args[0] !== "--openclaw-root") throw new Error("Usage: 
 const runtime = resolve(args[1]);
 const bundle = fileURLToPath(new URL("../clients/openclaw/plugin/", import.meta.url));
 const root = await realpath(await mkdtemp(join(tmpdir(), "gisul-openclaw-native-")));
-const keys = ["OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"];
+const keys = ["OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "GISUL_MCP_URL"];
 const prior = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 // STATE_DIR alone can trigger legacy approval migration from the real home.
 Object.assign(process.env, { OPENCLAW_HOME: join(root, "home"), OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: join(root, "openclaw.json") });
@@ -38,6 +38,7 @@ try {
   await writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
     agents: { defaults: { workspace } }, hooks: { internal: { enabled: true } },
   }));
+  process.env.GISUL_MCP_URL = "https://fixture.example/mcp";
   cli(["plugins", "install", bundle]);
   const inspected = json(["plugins", "inspect", "gisul-openclaw"]);
   assert.equal(inspected.plugin.bundleFormat, "codex");

@@ -1,6 +1,6 @@
 # Deployment
 
-For the ARKPOINT native plugin, use [GitHub Actions deployment](arkpoint-plugin.md#provision-and-deploy-no-mac-mini). `worker/src/team.ts` serves native MCP tools and OAuth directly from Cloudflare. Mac mini clients use the same HTTPS connection as any other machine. The Mac mini instructions below are retained only for the older personal deployment and rollback; they are not team deployment prerequisites.
+For a self-hosted team OAuth Worker, see [team plugin setup](team-plugin.md). `worker/src/team.ts` serves native MCP tools and OAuth directly from Cloudflare. The Mac mini instructions below cover the personal deployment.
 
 ## Worker and private R2
 

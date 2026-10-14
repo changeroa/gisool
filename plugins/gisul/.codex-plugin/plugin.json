@@ -1,17 +1,17 @@
 {
   "name": "gisul",
   "version": "0.5.0",
-  "description": "Search and maintain ARKPOINT team skills and native packs directly through Cloudflare Workers.",
+  "description": "Search and maintain skills and native packs through a configured team Gisul Worker",
   "author": {
-    "name": "ARKPOINT",
-    "url": "https://github.com/Ark-Point"
+    "name": "Gisul contributors",
+    "url": "https://github.com/changeroa/gisul"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Gisul",
-    "shortDescription": "ARKPOINT 팀 스킬을 찾아 적용합니다.",
+    "shortDescription": "팀 스킬을 찾아 적용합니다.",
     "longDescription": "GitHub 조직 계정으로 연결하고 팀 스킬을 검색·사용하세요. 편집 권한이 있으면 스킬을 생성하고 수정할 수 있습니다.",
-    "developerName": "ARKPOINT",
+    "developerName": "Gisul contributors",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": [
@@ -19,6 +19,6 @@
     ]
   },
   "mcpServers": "./.mcp.json",
-  "repository": "https://github.com/Ark-Point/gisul",
+  "repository": "https://github.com/changeroa/gisul",
   "license": "MIT"
 }

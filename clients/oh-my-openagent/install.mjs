@@ -14,7 +14,7 @@ export async function install(options = {}) {
     ["extensions/gisul/discovery.md", "extension/discovery.md"],
   ]) files.push(await planFile(join(agentDir, target), join(here, source)));
   const summary = planSummary("oh-my-openagent", agentDir, files, {
-    authentication: "Run node clients/oh-my-openagent/login.mjs with this agent directory before starting OmO. Sign in with your Ark-Point GitHub account.",
+    authentication: "Run node clients/oh-my-openagent/login.mjs with this agent directory before starting OmO. Sign in with a GitHub account allowed by the configured deployment.",
     dryRun: !!options.dryRun,
   });
   if (!options.dryRun) summary.backups = await applyFiles(files);

@@ -1,6 +1,6 @@
 # Native skill packs
 
-Packs are independent JSON resources in `Ark-Point/gisul-skills/packs/<name>.json`. They reference canonical skills without embedding instructions. The team HTTPS Worker exposes `search_packs`, `load_pack`, `create_pack`, `update_pack`, and `get_pack_write_status` to Codex; OAuth read/write scopes and organization checks are shared with skills. The legacy local Node registry does not serve packs.
+Packs are independent JSON resources in the configured `GISUL_SKILLS_REPOSITORY` at `packs/<name>.json`. They reference canonical skills without embedding instructions. The team HTTPS Worker exposes `search_packs`, `load_pack`, `create_pack`, `update_pack`, and `get_pack_write_status` to Codex; OAuth read/write scopes and organization checks are shared with skills. The legacy local Node registry does not serve packs.
 
 ## Definition and composition
 

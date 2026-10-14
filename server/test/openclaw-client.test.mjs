@@ -75,8 +75,9 @@ test("bundle declares only its loader, bootstrap hook and read-only OAuth bridge
   assert.equal(manifest.hooks, "./hooks/");
   assert.deepEqual(Object.keys(mcp.mcpServers), ["gisul"]);
   assert.deepEqual(mcp.mcpServers.gisul.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs"]);
-  const normal = bridgePlan({ stateDir: "/profile with spaces" }, {});
-  const login = bridgePlan({ stateDir: "/profile with spaces", login: true }, {});
+  assert.throws(() => bridgePlan({ stateDir: "/profile with spaces" }, {}), /Configure a Gisul endpoint/);
+  const normal = bridgePlan({ stateDir: "/profile with spaces" }, { GISUL_MCP_URL: "https://fixture.example/mcp" });
+  const login = bridgePlan({ stateDir: "/profile with spaces", login: true }, { GISUL_MCP_URL: "https://fixture.example/mcp" });
   assert.equal(normal.env.MCP_REMOTE_CONFIG_DIR, "/profile with spaces/gisul/auth");
   assert.deepEqual(normal.env, login.env);
   assert.deepEqual(normal.args.slice(2), login.args.slice(3));
@@ -119,7 +120,7 @@ test("bootstrap preserves existing instructions and cached objects without dupli
 test("dry run creates no auth state; subprocess keeps stdout protocol-clean and failure status", async t => {
   const root = await fixture(t);
   const state = join(root, "state");
-  const dry = await execute(["--state-dir", state, "--dry-run"], {});
+  const dry = await execute(["--state-dir", state, "--dry-run"], { GISUL_MCP_URL: "https://fixture.example/mcp" });
   assert.equal(dry.code, 0);
   assert.equal(JSON.parse(dry.stdout).env.MCP_REMOTE_CONFIG_DIR, join(state, "gisul/auth"));
   await assert.rejects(access(state), { code: "ENOENT" });
@@ -129,7 +130,7 @@ test("dry run creates no auth state; subprocess keeps stdout protocol-clean and 
   await writeFile(npx, `#!${process.execPath}\nprocess.stderr.write('fixture bridge diagnostic\\n');\nprocess.stdin.pipe(process.stdout);\nprocess.stdin.on('end', () => { process.exitCode = Number(process.env.GISUL_TEST_EXIT || 0); });\n`);
   await chmod(npx, 0o700);
   const input = '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n';
-  const result = await execute(["--state-dir", state], { PATH: bin + delimiter + process.env.PATH, GISUL_TEST_EXIT: "7" }, input);
+  const result = await execute(["--state-dir", state], { PATH: bin + delimiter + process.env.PATH, GISUL_TEST_EXIT: "7", GISUL_MCP_URL: "https://fixture.example/mcp" }, input);
   assert.equal(result.code, 7);
   assert.equal(result.stdout, input);
   assert.match(result.stderr, /fixture bridge diagnostic/);
