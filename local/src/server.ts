@@ -86,6 +86,10 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const search = createSearchIndex(db);
     search.rebuild(catalog.list());
     ownStore.upsertSkills(catalog.list());
+    // Skills deleted while the daemon was down, or from a root removed from the config, never produce a delta.
+    const present = new Set(catalog.list().map((s) => s.uri));
+    const stale = (db.prepare("SELECT uri FROM skills WHERE removed_at IS NULL").all() as { uri: string }[]).map((r) => r.uri).filter((u) => !present.has(u));
+    if (stale.length) ownStore.markRemoved(stale);
     catalog.onDelta((delta) => {
       try {
         search.apply(delta);
