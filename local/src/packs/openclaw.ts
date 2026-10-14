@@ -98,7 +98,8 @@ export const openclawPack: RuntimePack = {
       "Restart the OpenClaw Gateway after installing so the plugin and its hooks load.",
     ];
     const commands: PackPlan["commands"] = [];
-    const install = ["openclaw", "plugins", "install", dest];
+    // gisool writes this bundle itself, so the local-path trust prompt ("rerun with --force") is expected and answered here.
+    const install = ["openclaw", "plugins", "install", "--force", dest];
     const uninstall = ["openclaw", "plugins", "uninstall", "gisool"];
     if (ctx.env.GISOOL_NO_CLI) notes.push(`GISOOL_NO_CLI set: run manually: ${install.join(" ")} (undo: ${uninstall.join(" ")})`);
     else commands.push({ argv: install, description: "Install the gisool capture plugin into OpenClaw (restart the OpenClaw Gateway afterwards)", undo: { argv: uninstall, description: "Uninstall the gisool OpenClaw plugin" } });
