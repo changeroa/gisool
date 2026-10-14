@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, delimiter, resolve } from "node:path";
 import type { PackCtx, PackPlan, RuntimePack } from "../types.js";
 
@@ -59,6 +59,39 @@ function remoteRegistered(text: string | null): boolean {
   return /mcp-remote/.test(t.body);
 }
 
+// Newest applied gisool init that touched Codex, from the init manifests under $GISOOL_HOME/backups.
+function lastCodexInit(c: { home: string; env: Env }): number | undefined {
+  const backups = join(c.env.GISOOL_HOME || join(c.home, ".gisool"), "backups");
+  let newest: number | undefined;
+  let dirs: string[] = [];
+  try { dirs = readdirSync(backups); } catch { return undefined; }
+  for (const dir of dirs) {
+    const text = readText(join(backups, dir, "manifest.json"));
+    if (text === null) continue;
+    try {
+      const m = JSON.parse(text) as { status?: string; createdAt?: string; runtimes?: string[] };
+      const at = m.createdAt ? Date.parse(m.createdAt) : NaN;
+      if (m.status === "applied" && m.runtimes?.includes("codex") && Number.isFinite(at) && (newest === undefined || at > newest)) newest = at;
+    } catch { /* a manifest that does not parse belongs to no applied run */ }
+  }
+  return newest;
+}
+
+// The shared app-server daemon Codex TUIs attach to; OTel is set up once per process, so a daemon older than the
+// gisool [otel] block never exports.
+function runningDaemon(c: { home: string; env: Env }): { pid: number; startedAt: number } | undefined {
+  const text = readText(join(codexDir(c), "app-server-daemon", "app-server.pid"));
+  if (text === null) return undefined;
+  try {
+    const p = JSON.parse(text) as { pid?: number; processIdentity?: { startSeconds?: number } };
+    if (typeof p.pid !== "number" || typeof p.processIdentity?.startSeconds !== "number") return undefined;
+    process.kill(p.pid, 0);
+    return { pid: p.pid, startedAt: p.processIdentity.startSeconds * 1000 };
+  } catch {
+    return undefined;
+  }
+}
+
 function block(ctx: PackCtx): string {
   return readFileSync(join(ctx.packageRoot, "packs", "codex", "config.template.toml"), "utf8")
     .replaceAll("{{PORT}}", String(ctx.port)).replaceAll("{{TOKEN}}", tomlEsc(ctx.token));
@@ -110,6 +143,7 @@ export const codexPack: RuntimePack = {
     }
     if (after !== before) plan.files.push({ path, before, after, mode: 0o600 });
     plan.notes.push("codex exec exports OTel events only partially; no Codex hooks are installed (they require trust review)");
+    if (runningDaemon(ctx)) plan.notes.push("a Codex app-server daemon is running; restart it so attached TUIs export OTel: codex app-server daemon restart");
     return plan;
   },
   async doctorChecks(ctx) {
@@ -123,11 +157,22 @@ export const codexPack: RuntimePack = {
     const localPath = join(process.cwd(), ".codex", "config.toml");
     const local = realOrResolved(localPath) === realOrResolved(path) ? null : readText(localPath);
     const localOutside = local === null ? null : (splitManaged(local)?.outside ?? local);
+    const daemon = runningDaemon(ctx);
+    const initAt = lastCodexInit(ctx);
+    let daemonDetail = "no running Codex app-server daemon";
+    let staleDaemon = false;
+    if (daemon) {
+      staleDaemon = initAt !== undefined && daemon.startedAt < initAt;
+      daemonDetail = staleDaemon
+        ? `daemon pid ${daemon.pid} started ${new Date(daemon.startedAt).toISOString()}, before gisool init at ${new Date(initAt!).toISOString()}; TUIs attached to it send no prompts. Run: codex app-server daemon restart`
+        : `daemon pid ${daemon.pid} started after the last gisool init`;
+    }
     return [
       { name: "codex OTel block present", ok: inner.includes("[otel]") && inner.includes(endpoint), detail: managed ? path : `no managed block in ${path}` },
       { name: "codex MCP entry present", ok: inner.includes("[mcp_servers.gisool]") && inner.includes(`http://127.0.0.1:${ctx.port}/mcp`), detail: path },
       { name: "codex [otel] not in project-local config", ok: localOutside === null || !OTEL_RE.test(localOutside),
         detail: local === null ? "no project-local config" : "project-local .codex/config.toml defines otel" },
+      { name: "codex app-server daemon loaded the OTel block", ok: !staleDaemon, detail: daemonDetail },
     ];
   },
 };

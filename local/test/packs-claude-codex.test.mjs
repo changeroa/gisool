@@ -130,6 +130,25 @@ test("codex detect, plan block, idempotent, preserves content", async () => {
   } finally { sb.cleanup(); }
 });
 
+test("codex doctor: an app-server daemon started before the last gisool init fails with the restart command", async () => {
+  const sb = makeSandbox();
+  try {
+    const env = { ...mkCtx(sb).env, GISOOL_HOME: join(sb.home, ".gisool") };
+    const check = async () => (await codexPack.doctorChecks({ home: sb.home, env, port: 47123 })).find(c => c.name === "codex app-server daemon loaded the OTel block");
+    assert.deepEqual(await check(), { name: "codex app-server daemon loaded the OTel block", ok: true, detail: "no running Codex app-server daemon" });
+    const initAt = Date.parse("2026-10-13T07:38:33.279Z");
+    put(join(sb.home, ".gisool", "backups", "20261013T073833273Z", "manifest.json"), JSON.stringify({ status: "applied", createdAt: new Date(initAt).toISOString(), runtimes: ["codex"] }));
+    put(join(sb.home, ".gisool", "backups", "20261014T000000000Z", "manifest.json"), JSON.stringify({ status: "rolled_back", createdAt: "2026-10-14T00:00:00.000Z", runtimes: ["codex"] }));
+    const pidFile = join(sb.home, ".codex", "app-server-daemon", "app-server.pid");
+    put(pidFile, JSON.stringify({ pid: process.pid, processIdentity: { startSeconds: initAt / 1000 - 3 * 86400 } }));
+    const stale = await check();
+    assert.equal(stale.ok, false);
+    assert.match(stale.detail, new RegExp(`daemon pid ${process.pid} started .* before gisool init at 2026-10-13T07:38:33.279Z.*codex app-server daemon restart`));
+    put(pidFile, JSON.stringify({ pid: process.pid, processIdentity: { startSeconds: initAt / 1000 + 60 } }));
+    assert.equal((await check()).ok, true, "a daemon restarted after init is fine; the rolled-back run does not count");
+  } finally { sb.cleanup(); }
+});
+
 test("codex doctor: project-local otel check ignores the user config read via cwd and the managed block", async () => {
   const sb = makeSandbox();
   const cwd = process.cwd();
