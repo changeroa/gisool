@@ -58,6 +58,7 @@ function chipsFor(filter: Filter): Chip[] {
       }
       case "hourSpan": break;
       case "q": chips.push({ key, label: "search", value: String(value) }); break;
+      case "automated": chips.push({ key, label: "automated", value: value === "only" ? "only" : "shown" }); break;
     }
   }
   return chips;
@@ -84,6 +85,27 @@ function FilterChips({ route, navigate }: { route: Route; navigate: (next: Route
   );
 }
 
+export const AUTOMATED_EXPLAINER =
+  "Sessions whose first prompt a harness or the runtime sent, not you: Codex thread-title requests and Herdr pane recaps. Hidden from every view unless shown.";
+
+function AutomatedToggle({ route, navigate, live }: { route: Route; navigate: (next: Route) => void; live: LiveInfo }) {
+  const [hidden, setHidden] = useState(0);
+  const { automated: _shown, ...base } = route.filter;
+  const baseKey = buildHash({ view: "sessions", filter: base });
+  useEffect(() => {
+    let cancelled = false;
+    api.stats(base).then((stats) => { if (!cancelled) setHidden(stats.automatedSessions ?? 0); }, () => { if (!cancelled) setHidden(0); });
+    return () => { cancelled = true; };
+  }, [baseKey, live.seq]);
+  if (route.filter.automated !== undefined || hidden === 0) return null;
+  return (
+    <button type="button" class="btn" data-automated-toggle title={AUTOMATED_EXPLAINER}
+      onClick={() => navigate({ ...route, filter: { ...route.filter, automated: "include" } })}>
+      {`${hidden} automated ${hidden === 1 ? "session" : "sessions"} hidden \u00b7 Show`}
+    </button>
+  );
+}
+
 const TABS: { view: View; label: string }[] = [
   { view: "sessions", label: "Sessions" },
   { view: "flow", label: "Flow" },
@@ -106,6 +128,7 @@ function App() {
               {LIVE_TEXT[live.state]}
             </span>
             <FilterChips route={route} navigate={navigate} />
+            <AutomatedToggle route={route} navigate={navigate} live={live} />
           </div>
           <nav class="tabs" aria-label="Views">
             {TABS.map((tab) => (

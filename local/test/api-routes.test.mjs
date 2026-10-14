@@ -96,6 +96,9 @@ test("read endpoints return their DTOs and validate parameters", async () => {
   assert.equal((await get("/api/heatmap?tz=Not/AZone")).status, 400);
   assert.equal((await get("/api/sessions?state=bogus")).status, 400);
   assert.equal((await get("/api/sessions?dow=9")).status, 400);
+  assert.equal((await get("/api/sessions?automated=yes")).status, 400);
+  assert.equal((await get("/api/sessions?automated=include")).status, 200);
+  assert.equal((await get("/api/sessions?automated=only")).status, 200);
   const week = await get("/api/skill-week");
   assert.equal(week.status, 200);
   assert.ok(Array.isArray(week.json.weeks));

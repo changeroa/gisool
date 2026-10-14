@@ -51,10 +51,11 @@ const FULL_FILTER = {
   hour: 9,
   hourSpan: 2,
   q: "주문 테이블 & status=pending",
+  automated: "include",
 };
 
 test("FILTER_KEYS covers every Filter field exactly once", () => {
-  assert.deepEqual([...FILTER_KEYS].sort(), ["dow", "from", "hour", "hourSpan", "q", "runtime", "skill", "state", "to"]);
+  assert.deepEqual([...FILTER_KEYS].sort(), ["automated", "dow", "from", "hour", "hourSpan", "q", "runtime", "skill", "state", "to"]);
 });
 
 test("every Filter field round-trips through serialize -> parse", () => {
@@ -87,7 +88,7 @@ test("parse accepts URLSearchParams input and the same query string the server r
 });
 
 test("invalid or unknown values are dropped instead of poisoning the filter", () => {
-  assert.deepEqual(parseFilter("runtime=codex,nope&state=loaded,bogus&dow=7&hour=24&hourSpan=0&from=abc&to=-5&q=%20%20&zzz=1"), {
+  assert.deepEqual(parseFilter("runtime=codex,nope&state=loaded,bogus&dow=7&hour=24&hourSpan=0&from=abc&to=-5&q=%20%20&zzz=1&automated=yes"), {
     runtime: ["codex"],
     state: ["loaded"],
   });
@@ -159,6 +160,11 @@ test("matchesFilter applies every field client-side", () => {
   assert.equal(matchesFilter(row, { q: "상태 컬럼" }), true);
   assert.equal(matchesFilter(row, { q: "pr-review" }), true, "skill names are searchable");
   assert.equal(matchesFilter(row, { q: "terraform" }), false);
+  assert.equal(matchesFilter(row, { automated: "only" }), false, "a human session is not automated");
+  const recap = { ...row, firstPrompt: '{"previousRecap":""}', automated: "herdr_recap" };
+  assert.equal(matchesFilter(recap, {}), false, "automated sessions are hidden by default");
+  assert.equal(matchesFilter(recap, { automated: "include" }), true);
+  assert.equal(matchesFilter(recap, { automated: "only" }), true);
 });
 
 test("sessions usage line: unattributed counts and per-runtime attribution with - for no data", async () => {

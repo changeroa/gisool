@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { automationOf } from "./automation.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
 import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep } from "../types.js";
 
@@ -64,6 +65,7 @@ type EvRow = { id: string; ts: number; kind: EventKind; session_id: string; attr
 type SessionInfo = {
   id: string; runtime: RuntimeId; startedAt: number; endedAt?: number; firstPrompt?: string; events: EvRow[];
   loaded: SkillUri[]; exposed: SkillUri[]; firstTop?: SkillUri; state: AdoptionState; attribution: Attribution["method"]; texts: string[];
+  automated?: string;
 };
 
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
@@ -181,6 +183,10 @@ export function createQueries(ctx: StoreCtx): Queries {
         ...(r.first_prompt !== null ? { firstPrompt: r.first_prompt } : {}),
         ...(firstTop !== undefined ? { firstTop } : {}),
       };
+      const automated = automationOf(info.firstPrompt);
+      if (automated !== undefined) info.automated = automated;
+      if (f.automated === undefined && automated !== undefined) continue;
+      if (f.automated === "only" && automated === undefined) continue;
       if (f.state && f.state.length > 0 && !f.state.includes(info.state)) continue;
       if (f.skill && f.skill.length > 0 && !f.skill.some((u) => loaded.includes(u) || exposed.includes(u))) continue;
       if (f.q) {
@@ -213,6 +219,7 @@ export function createQueries(ctx: StoreCtx): Queries {
           id: s.id, runtime: s.runtime, startedAt: s.startedAt, skills: sessionSkills(s), state: s.state, attribution: s.attribution,
           ...(s.endedAt !== undefined ? { endedAt: s.endedAt } : {}),
           ...(s.firstPrompt !== undefined ? { firstPrompt: s.firstPrompt } : {}),
+          ...(s.automated !== undefined ? { automated: s.automated } : {}),
         }));
     },
 
@@ -412,6 +419,7 @@ export function createQueries(ctx: StoreCtx): Queries {
       if (f.runtime && f.runtime.length > 0) { where.push(`runtime IN (${f.runtime.map(() => "?").join(",")})`); params.push(...f.runtime); }
       const orphan = db.prepare(`SELECT kind, COUNT(*) AS n FROM events WHERE ${where.join(" AND ")} GROUP BY kind`).all(...params) as { kind: EventKind; n: number }[];
       const unattributed = { searches: orphan.find((o) => o.kind === "search")?.n ?? 0, loads: orphan.find((o) => o.kind === "load")?.n ?? 0 };
+      const automatedSessions = loadSessions({ ...f, automated: "only" }).length;
       const searches = db.prepare("SELECT data_json FROM events WHERE kind = 'search'").all() as { data_json: string }[];
       const abstained = searches.filter((s) => parseJson<Record<string, unknown>>(s.data_json, {}).abstained).length;
       const cutoff = ctx.now() - 56 * DAY_MS;
@@ -427,6 +435,7 @@ export function createQueries(ctx: StoreCtx): Queries {
         lastEventByRuntime: Object.fromEntries(byRuntime.map((r) => [r.runtime, r.ts])) as Partial<Record<RuntimeId, number>>,
         ingest: readIngestCounters(db),
         unattributed,
+        automatedSessions,
       };
     },
   };

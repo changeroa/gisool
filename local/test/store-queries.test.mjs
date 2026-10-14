@@ -27,6 +27,23 @@ test("sessions: 40 sessions across 3 runtimes with the adoption-state precedence
   assert.match(loadedRow.firstPrompt, /^please help with/);
 });
 
+test("automated sessions (Codex title, Herdr recap) are hidden by default, shown with include/only, and counted in stats", () => {
+  const { store } = seeded();
+  seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "not_used", key: "title",
+    prompt: "Generate a concise, single-line task title of at most 36 characters and nothing else for this request: x" });
+  seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "loaded", skill: "pr-review-ko", key: "recap",
+    prompt: '{"previousRecap":"","messages":["user: hi"]}' });
+  seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "not_used", key: "human-json", prompt: '{"note":"a person pasted JSON"}' });
+  assert.equal(store.sessions({}).length, 41);
+  const all = store.sessions({ automated: "include" });
+  assert.equal(all.length, 43);
+  assert.deepEqual(store.sessions({ automated: "only" }).map((r) => r.automated).sort(), ["codex_title", "herdr_recap"]);
+  assert.equal(all.find((r) => r.firstPrompt?.startsWith('{"note"')).automated, undefined);
+  assert.equal(store.stats().automatedSessions, 2);
+  assert.equal(store.stats({ runtime: ["gemini"] }).automatedSessions, 0);
+  assert.equal(store.flow({}, "first_load", 7).sessionCount, store.flow({ automated: "include" }, "first_load", 7).sessionCount - 2);
+});
+
 test("flow first_load: top-7 skills plus Other, min-link rule, sessionCount, >= 3 task types", () => {
   const { store } = seeded();
   const flow = store.flow({}, "first_load");

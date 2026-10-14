@@ -40,9 +40,12 @@ export type CanonicalEvent = { id: string; ts: number; kind: EventKind; source: 
 export type Attribution = { sessionId: string | "unattributed"; method: "runtime_id" | "vendor_meta" | "trace_handle" | "window" | "none";
   reason?: "no_session" | "ambiguous" | "stale" };
 export type AdoptionState = "loaded" | "exposed_only" | "no_match" | "aborted" | "not_used";
-export type Filter = { from?: number; to?: number; runtime?: RuntimeId[]; skill?: SkillUri[]; state?: AdoptionState[]; dow?: number; hour?: number; hourSpan?: number; q?: string };
+export type Filter = { from?: number; to?: number; runtime?: RuntimeId[]; skill?: SkillUri[]; state?: AdoptionState[]; dow?: number; hour?: number; hourSpan?: number; q?: string;
+  // automated sessions (first prompt sent by a harness or the runtime, see store/automation.ts) are excluded unless "include" or "only"
+  automated?: "include" | "only" };
 // dow: 0-6 with 0 = Sunday (JS getDay semantics, in the requested tz); hour: start hour 0-23; hourSpan: number of hours from `hour` (default 1; a 2 h bucket click sends hourSpan 2; shift-click ranges send the union span)
-export type SessionRow = { id: string; runtime: RuntimeId; startedAt: number; endedAt?: number; firstPrompt?: string; skills: SkillUri[]; state: AdoptionState; attribution: Attribution["method"] };
+export type SessionRow = { id: string; runtime: RuntimeId; startedAt: number; endedAt?: number; firstPrompt?: string; skills: SkillUri[]; state: AdoptionState; attribution: Attribution["method"];
+  automated?: string };
 export type TraceStep = { ts: number; kind: EventKind; summary: string; detail: Record<string, unknown> };
 export type FlowDto = { unit: "first_load" | "all_loads"; columns: ["task_type", "skill", "state"];
   nodes: { id: string; column: 0 | 1 | 2; label: string; count: number; other?: boolean }[];
@@ -66,7 +69,7 @@ export interface Store {
   // unattributed counts MCP search/load events with no matched session, limited by f.from/f.to/f.runtime.
   stats(f?: Filter): { attributionRate: Record<RuntimeId, number | null>; abstainRate: number; unusedSkills: SkillUri[]; lastEventTs?: number;
     lastEventByRuntime: Partial<Record<RuntimeId, number>>; ingest: { accepted: number; rejected: number; dropped: number; lastError?: { ts: number; code: string } };
-    unattributed?: { searches: number; loads: number } };
+    unattributed?: { searches: number; loads: number }; automatedSessions?: number };
   countIngest(kind: "accepted" | "rejected" | "dropped", code?: string): void;
   addEvalCase(c: { query: string; expectedUri?: SkillUri; fromTraceId?: string }): void; evalCases(): { query: string; expectedUri?: SkillUri }[];
   exportTo(dir: string, opts: { withHistory: boolean }): void; importFrom(dir: string, opts: { merge: boolean }): { added: number; skipped: number };

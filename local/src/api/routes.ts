@@ -48,6 +48,8 @@ export function parseFilter(q: Request["query"]): Filter & { tz?: string } {
   const hourSpan = intParam(q, "hourSpan", [1, 24]);
   const text = one(q.q)?.trim();
   const tz = one(q.tz);
+  const automated = one(q.automated);
+  if (automated !== undefined && automated !== "include" && automated !== "only") throw new BadRequest("bad_filter", "automated must be include or only");
   if (from !== undefined) f.from = from;
   if (to !== undefined) f.to = to;
   if (runtime) f.runtime = runtime;
@@ -58,6 +60,7 @@ export function parseFilter(q: Request["query"]): Filter & { tz?: string } {
   if (hourSpan !== undefined) f.hourSpan = hourSpan;
   if (text) f.q = text;
   if (tz) f.tz = tz;
+  if (automated) f.automated = automated;
   return f;
 }
 

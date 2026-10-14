@@ -11,7 +11,7 @@ import type { LiveState, SessionListRow } from "./api";
 
 export const RUNTIME_IDS: readonly RuntimeId[] = ["claude-code", "codex", "gemini", "cursor", "omo", "gajae", "openclaw", "unknown"];
 export const ADOPTION_STATES: readonly AdoptionState[] = ["loaded", "exposed_only", "no_match", "aborted", "not_used"];
-export const FILTER_KEYS = ["from", "to", "runtime", "skill", "state", "dow", "hour", "hourSpan", "q"] as const satisfies readonly (keyof Filter)[];
+export const FILTER_KEYS = ["from", "to", "runtime", "skill", "state", "dow", "hour", "hourSpan", "q", "automated"] as const satisfies readonly (keyof Filter)[];
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
 export type View = "sessions" | "trace" | "flow" | "heatmap";
@@ -114,6 +114,11 @@ export function parseFilter(input: string | URLSearchParams): Filter {
         if (q) filter.q = q;
         break;
       }
+      case "automated": {
+        const value = decode(raw).trim();
+        if (value === "include" || value === "only") filter.automated = value;
+        break;
+      }
       default: break;
     }
   }
@@ -182,6 +187,8 @@ export function skillName(uri: string): string {
 
 /** Client-side Filter predicate for one SessionRow (fixtures mode and live upserts); dow/hour use local time. */
 export function matchesFilter(row: SessionRow, filter: Filter): boolean {
+  if (row.automated !== undefined && filter.automated === undefined) return false;
+  if (filter.automated === "only" && row.automated === undefined) return false;
   if (filter.from !== undefined && row.startedAt < filter.from) return false;
   if (filter.to !== undefined && row.startedAt > filter.to) return false;
   if (filter.runtime && !filter.runtime.includes(row.runtime)) return false;
