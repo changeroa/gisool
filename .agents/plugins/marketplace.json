@@ -1,7 +1,7 @@
 {
-  "name": "arkpoint",
+  "name": "gisul",
   "interface": {
-    "displayName": "Arkpoint"
+    "displayName": "Gisul"
   },
   "plugins": [
     {

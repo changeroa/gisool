@@ -15,6 +15,8 @@ if (args.length !== 4 || args[0] !== "--gajae-source" || args[2] !== "--senpi-so
 const gjc = resolve(args[1]), senpi = resolve(args[3]);
 const root = await mkdtemp(join(tmpdir(), "gisul-native-clients-"));
 const priorAgentDir = process.env.GJC_CODING_AGENT_DIR;
+const priorEndpoint = process.env.GISUL_MCP_URL;
+process.env.GISUL_MCP_URL = "https://fixture.example/mcp";
 process.env.GJC_CODING_AGENT_DIR = join(root, "gjc");
 const from = (base, path) => import(pathToFileURL(join(base, path)).href);
 try {
@@ -60,6 +62,8 @@ try {
   const version = async path => JSON.parse(await readFile(join(path, "package.json"), "utf8")).version;
   console.log(JSON.stringify({ verified: true, gajae: await version(gjc), senpi: await version(senpi), checks: ["bundle compiler", "idempotent install", "interview advertisement and phase injection", "executor appendix", "native MCP config loaders", "OmO prompt composition"], profiles: [gajae.agentDir, omo.agentDir], cleanup: "removed in finally" }, null, 2));
 } finally {
+  if (priorEndpoint === undefined) delete process.env.GISUL_MCP_URL;
+  else process.env.GISUL_MCP_URL = priorEndpoint;
   if (priorAgentDir === undefined) delete process.env.GJC_CODING_AGENT_DIR;
   else process.env.GJC_CODING_AGENT_DIR = priorAgentDir;
   await rm(root, { recursive: true, force: true });

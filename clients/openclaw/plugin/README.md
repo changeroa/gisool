@@ -10,26 +10,21 @@ never copied into the plugin or your workspace.
 Use Node 24+, npm/npx and OpenClaw on macOS or Linux. From the Gisul checkout:
 
 ```sh
-openclaw plugins install ./clients/openclaw/plugin
+node clients/openclaw/prepare-oauth.mjs --output /new/gisul-bundle --endpoint https://your-host.example/mcp
+openclaw plugins install /new/gisul-bundle
 node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 ```
 
-The login command downloads the pinned `mcp-remote@0.14.3` package if necessary,
-opens browser OAuth for your Ark-Point GitHub account and lists the remote MCP
-tools. Complete sign-in before starting the agent. Credentials stay in
+The login command in the installed bundle downloads the pinned `mcp-remote@0.14.3` package if necessary, opens browser OAuth for a GitHub account allowed by the configured deployment, and lists the remote MCP tools. Complete sign-in before starting the agent. Credentials stay in
 `<OpenClaw state directory>/gisul/auth`, outside the replaceable plugin folder.
 No credentials are copied from Codex or embedded in the plugin.
 
-The default endpoint is `https://gisul.arkpoint.dev/mcp`. A bundle prepared for
-another deployment stores its endpoint in `gisul-client.json`; login and runtime
-both use that endpoint. For IYEN this is `https://gisul.iyendev.com/mcp`, with the
-GitHub account allowed by that deployment. `--endpoint` overrides the URL for a
-single invocation; prefer a prepared bundle for a permanent installation.
+The selected endpoint is stored in `gisul-client.json`; login and runtime both use it. `--endpoint` overrides the URL for a single invocation; prefer a prepared bundle for a permanent installation.
 
 For a named profile, keep installation, sign-in and the Gateway together:
 
 ```sh
-openclaw --profile team plugins install ./clients/openclaw/plugin
+openclaw --profile team plugins install /new/gisul-bundle
 node "$HOME/.openclaw-team/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 openclaw --profile team plugins inspect gisul-openclaw
 ```

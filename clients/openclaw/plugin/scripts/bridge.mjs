@@ -7,7 +7,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const self = fileURLToPath(import.meta.url);
-export const endpoint = "https://gisul.arkpoint.dev/mcp";
 export const remotePackage = "mcp-remote@0.14.3";
 const metadata = JSON.stringify({ client_name: "Gisul for OpenClaw", scope: "skills:read" });
 
@@ -43,7 +42,7 @@ export function bridgePlan(options = {}, env = process.env) {
   let configured;
   try { configured = JSON.parse(readFileSync(new URL("../gisul-client.json", import.meta.url), "utf8")).endpoint; }
   catch (error) { if (error.code !== "ENOENT") throw error; }
-  const target = validateEndpoint(options.endpoint ?? configured ?? endpoint);
+  const target = validateEndpoint(options.endpoint ?? configured ?? env.GISUL_MCP_URL);
   const authDir = join(resolveStateDir(options, env), "gisul", "auth");
   const prefix = options.login
     ? ["--yes", `--package=${remotePackage}`, "mcp-remote-client"]
@@ -56,6 +55,7 @@ export function bridgePlan(options = {}, env = process.env) {
 }
 
 export function validateEndpoint(value) {
+  if (!value) throw new Error("Configure a Gisul endpoint with prepare-oauth.mjs or GISUL_MCP_URL");
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/mcp") throw new Error("Expected an HTTPS /mcp endpoint without credentials, query or fragment");
   return url.href;

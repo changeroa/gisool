@@ -3,7 +3,13 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-export const endpoint = "https://gisul.arkpoint.dev/mcp";
+export function endpoint(env = process.env) {
+  const value = env.GISUL_MCP_URL;
+  if (!value) throw new Error("Set GISUL_MCP_URL to your deployment's HTTPS /mcp endpoint");
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/mcp") throw new Error("GISUL_MCP_URL must be a credential-free HTTPS /mcp URL");
+  return url.href;
+}
 export const remotePackage = "mcp-remote@0.14.3";
 export const oauthMetadata = JSON.stringify({ client_name: "Gisul for Gajae Code", scope: "skills:read" });
 export const omoOauthMetadata = JSON.stringify({ client_name: "Gisul for OmO", scope: "skills:read" });
@@ -34,20 +40,20 @@ export function resolveAgentDir(runtime, options = {}, env = process.env, home =
   return join(home, configDir, "agent");
 }
 
-export function gajaeTransport(agentDir) {
-  return oauthBridgeTransport(agentDir, oauthMetadata);
+export function gajaeTransport(agentDir, env = process.env) {
+  return oauthBridgeTransport(agentDir, oauthMetadata, env);
 }
 
-export function omoTransport(agentDir) {
-  const { timeout, ...transport } = oauthBridgeTransport(agentDir, omoOauthMetadata);
+export function omoTransport(agentDir, env = process.env) {
+  const { timeout, ...transport } = oauthBridgeTransport(agentDir, omoOauthMetadata, env);
   return { ...transport, connectTimeoutMs: timeout, requestTimeoutMs: timeout };
 }
 
-function oauthBridgeTransport(agentDir, metadata) {
+function oauthBridgeTransport(agentDir, metadata, env) {
   return {
     type: "stdio",
     command: "npx",
-    args: ["--yes", remotePackage, endpoint, "--transport", "http-only", "--static-oauth-client-metadata", metadata],
+    args: ["--yes", remotePackage, endpoint(env), "--transport", "http-only", "--static-oauth-client-metadata", metadata],
     env: { MCP_REMOTE_CONFIG_DIR: join(agentDir, "gisul", "auth") },
     // GJC's ordinary startup only keeps slow registrations connecting in the
     // background when they declare a positive timeout. Login is done beforehand.

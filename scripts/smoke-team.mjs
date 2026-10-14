@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-const origin = "https://gisul.arkpoint.dev";
+const origin = process.env.GISUL_PUBLIC_URL;
+assert.ok(origin && new URL(origin).protocol === "https:", "Set GISUL_PUBLIC_URL to the deployed HTTPS origin");
 async function get(path) {
   const response = await fetch(origin + path, { redirect: "error", signal: AbortSignal.timeout(15000) });
   assert.equal(response.status, 200, `${path} failed (${response.status})`);

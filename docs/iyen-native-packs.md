@@ -1,7 +1,5 @@
 # IYEN native skill packs
 
-Ported from Ark-Point/gisul `3f96d2bafc68d3f63ecc04aeb29f2864139d1980` and intended for the pack definitions from Ark-Point/gisul-skills `9f4edf6797336b73e80d7b44c100681b9e77bcce`.
-
 The IYEN Worker advertises search_packs and load_pack alongside the existing three skill read tools. OAuth remains restricted to skills:read and the IYEN GitHub user allowlist. Separate writer credentials can create/update packs and poll publication status. Legacy skill RPCs remain compatible with releases without packs.
 
 Pack loads resolve version-pinned definitions and member metadata. Combined loads deduplicate canonical member URIs while preserving scenario requirements; selected bodies must still be read separately. A verified staged snapshot is distinct from an active published release. Codex and OpenClaw loaders preserve explicit invocation and existing authorization.

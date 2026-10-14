@@ -11,7 +11,7 @@ export async function login(runtime, argv = process.argv.slice(2)) {
   const agentDir = resolveAgentDir(runtime, options);
   const transport = runtime === "oh-my-openagent" ? omoTransport(agentDir) : gajaeTransport(agentDir);
   const metadata = transport.args[transport.args.indexOf("--static-oauth-client-metadata") + 1];
-  const args = ["--yes", `--package=${remotePackage}`, "mcp-remote-client", endpoint, "--transport", "http-only", "--static-oauth-client-metadata", metadata];
+  const args = ["--yes", `--package=${remotePackage}`, "mcp-remote-client", endpoint(), "--transport", "http-only", "--static-oauth-client-metadata", metadata];
   if (options.dryRun) console.log(JSON.stringify({ command: ["npx", ...args], env: transport.env }, null, 2));
   else {
     await mkdir(transport.env.MCP_REMOTE_CONFIG_DIR, { recursive: true, mode: 0o700 });

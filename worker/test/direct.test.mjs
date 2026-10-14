@@ -75,7 +75,7 @@ test("native HTTP and GJC's real stdio proxy preserve discovery, load errors, an
   const a = await release(bucket, "a"), b = await release(bucket, "b");
   const authDir = await mkdtemp(join(tmpdir(), "gisul-proxy-test-"));
   t.after(() => rm(authDir, { recursive: true, force: true }));
-  const registration = gajaeTransport(authDir);
+  const registration = gajaeTransport(authDir, { GISUL_MCP_URL: "https://fixture.example/mcp" });
   const proxyPackage = JSON.parse(await readFile(new URL("../../server/node_modules/mcp-remote/package.json", import.meta.url), "utf8"));
   assert.equal(remotePackage, `mcp-remote@${proxyPackage.version}`, "test the exact proxy version shipped in registration");
   // Use the installed configuration's real flags, substituting only the local

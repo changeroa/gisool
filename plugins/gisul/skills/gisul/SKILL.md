@@ -1,11 +1,11 @@
 ---
 name: gisul
-description: Discover ARKPOINT workflow skills for a new task by searching its subject and intended outcome, then load only a relevant skill. Also discover native skill packs for requested combined workflows and create or update team skills/packs when requested. Searching does not activate a skill.
+description: Discover remote skills for a new task by searching its subject and intended outcome, then load only a relevant skill. Also discover native skill packs for requested combined workflows and create or update team skills/packs when requested. Searching does not activate a skill.
 ---
 
 Use the Gisul MCP tools directly. The plugin connects to Cloudflare Workers; it requires no local Node server, SSH, or Mac mini.
 
-If authentication is needed, direct the user to connect Gisul in Codex and sign in with their Ark-Point GitHub organization account. Never ask them to paste credentials into chat. If membership is unavailable, explain that they must accept the organization invitation and allow the OAuth app's organization access. A network failure is not evidence that they lack membership. An empty search is not an authentication error.
+If authentication is needed, direct the user to connect Gisul in Codex and sign in with an account in the configured GitHub organization. Never ask them to paste credentials into chat. If membership is unavailable, explain that they must accept the organization invitation and allow the OAuth app's organization access. A network failure is not evidence that they lack membership. An empty search is not an authentication error.
 
 Before substantive work on a new task, call `search_skills` with `mode: discovery` and 2–5 subject/outcome terms in the user's language (default five results). This includes short writing/editing/review tasks; a small task can still have a relevant skill. Do not guess a skill name from memory. Simple greetings, status replies and continuations of an unchanged task need no new search. If the user forbids external access or skill lookup, respect that restriction. A statement that external facts are unnecessary does not by itself prohibit reading workflow guidance.
 

@@ -1,6 +1,6 @@
 # Codex plugin
 
-**ARKPOINT team installation:** use the [native HTTPS plugin](../../docs/arkpoint-plugin.md). It has no local adapter, Node or SSH dependency. The instructions below describe the retained personal/legacy adapter, which is a separate deployment path.
+**Team OAuth installation:** use the [native HTTPS plugin](../../docs/team-plugin.md). It has no local adapter, Node or SSH dependency. The instructions below describe the retained personal/legacy adapter, which is a separate deployment path.
 
 Gisul's Codex adapter exposes `search_skills`, `load_skill`, `read_skill_file`,
 `create_skill`, and `update_skill`. A small local `$gisul` skill teaches Codex when and how to use

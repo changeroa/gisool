@@ -1,6 +1,6 @@
 # gisul
 
-For ARKPOINT team distribution, see [the native HTTPS Codex plugin](../docs/arkpoint-plugin.md). It connects directly to Cloudflare Workers; neither clients nor deployment require a Mac mini. The team plugin is at `plugins/gisul`, with the Git marketplace in `.agents/plugins/marketplace.json`. Production readiness and prerequisites are documented separately from local verification.
+For a self-hosted team deployment, see [the native HTTPS Codex plugin](team-plugin.md). It connects directly to Cloudflare Workers; neither clients nor deployment require a Mac mini. The team plugin is at `plugins/gisul`, with the Git marketplace in `.agents/plugins/marketplace.json`. Production readiness and prerequisites are documented separately from local verification.
 
 `gisul` is a personal MCP skill registry for serving Git-managed `SKILL.md` instruction bundles on demand.
 
@@ -23,7 +23,7 @@ Codex plugin / MCP client -> authenticated Worker -------+
 
 | Runtime | Client | Connection |
 | --- | --- | --- |
-| Codex | [ARKPOINT plugin](../docs/arkpoint-plugin.md) | Native HTTPS + OAuth |
+| Codex | [HTTPS plugin](team-plugin.md) | Native HTTPS + OAuth |
 | oh-my-openagent / OmO 5 (`omo-ai`) | [Installer and loader](../clients/oh-my-openagent/README.md) | OAuth stdio bridge, discovery extension |
 | Gajae Code (`gjc`) | [Installer and workflow integration](../clients/gajae-code/README.md) | OAuth stdio bridge, deep-interview sub-skill, executor appendix |
 | OpenClaw | [Bundle and loader](../clients/openclaw/README.md) | OAuth stdio bridge, in-memory bootstrap discovery hook |

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Discover and read remote Gisul workflow skills and native skill packs in OpenClaw.",
   "author": {
-    "name": "ARKPOINT"
+    "name": "Gisul"
   },
   "skills": "./skills/",
   "hooks": "./hooks/",

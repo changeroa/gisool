@@ -4,6 +4,8 @@ This client targets the standalone `omo` command (`omo-ai`), backed by Senpi. It
 
 ## Install and connect
 
+Run `export GISUL_MCP_URL=https://your-host.example/mcp` in your shell before the installer or login command. Replace the host with your deployment and use the same value for both.
+
 With Node 24+ and OmO installed, run from this checkout:
 
 ```sh
@@ -13,7 +15,7 @@ node clients/oh-my-openagent/login.mjs
 omo
 ```
 
-The login command opens OAuth for your Ark-Point GitHub account. Finish it before launching OmO; `/mcp status` reports the connection. Then ask:
+The login command opens OAuth for a GitHub account allowed by the configured deployment. Finish it before launching OmO; `/mcp status` reports the connection. Then ask:
 
 > Gisul에서 이 작업에 맞는 스킬을 찾아 적용해줘.
 
@@ -27,7 +29,7 @@ The default destination is `~/.omo/agent`. Both installer and login accept `--ag
 
 | File below the agent directory | Purpose |
 | --- | --- |
-| `mcp.json` → `mcpServers.gisul` | Native stdio registration of the OAuth bridge to `https://gisul.arkpoint.dev/mcp`, with read scope |
+| `mcp.json` → `mcpServers.gisul` | Native stdio registration of the OAuth bridge to the configured `GISUL_MCP_URL`, with read scope |
 | `extensions/gisul/index.js`, `discovery.md` | Append discovery guidance to the current turn prompt through `before_agent_start` |
 | `skills/gisul/SKILL.md` | Small loader explaining selection, pinned reads, errors, and task handoff |
 

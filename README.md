@@ -68,7 +68,7 @@ To connect an agent, follow the installation and authentication guide for your r
 
 | Runtime | Installation and connection |
 | --- | --- |
-| Codex | [Personal plugin](clients/codex/README.md) · [ARKPOINT team HTTPS plugin](docs/arkpoint-plugin.md) |
+| Codex | [Personal plugin](clients/codex/README.md) · [self-hosted team HTTPS plugin](docs/team-plugin.md) |
 | OpenClaw | [Bundle, loader, and OAuth connection](clients/openclaw/README.md) |
 | oh-my-openagent / OmO 5 | [Installer and loader](clients/oh-my-openagent/README.md) |
 | Gajae Code | [Interview, planning, and execution integration](clients/gajae-code/README.md) |
@@ -77,7 +77,7 @@ Once connected, ask:
 
 > Find and read the relevant skills on Gisul, then apply them to this task. Distinguish what you verified from what you haven't checked.
 
-The ARKPOINT team deployment uses separate organization authentication. Personal catalogs are not automatically exposed to the team.
+A team deployment uses its configured GitHub organization and content repository. Personal catalogs are not automatically exposed to it.
 
 <details>
 <summary><strong>Want to run the server yourself?</strong></summary>
