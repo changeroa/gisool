@@ -1,6 +1,6 @@
 ---
 name: gisul
-description: Discover and load remote  workflow skills for an OmO task, keeping the catalog and supporting files remote.
+description: Discover and load remote workflow skills for an OmO task, keeping the catalog and supporting files remote.
 ---
 
 Use the configured gisul MCP tools by their advertised names: search_skills, load_skill, read_skill_file. The runtime may prefix tool names. This file is a loader, not a local copy of the team catalog.
