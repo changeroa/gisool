@@ -275,6 +275,14 @@ test("stdio proxy forwards tools/list and tools/call with the downstream client 
     assert.deepEqual(tools, ["load_skill", "read_skill_file", "search_skills"]);
     const search = await call(client, "search_skills", { query: "pr-review pull request code changes" }, { threadId: "oc1" });
     assert.equal(search.body.candidates[0].uri, uriOf("pr-review"));
+    assert.ok(client.getServerCapabilities()?.resources);
+    assert.ok(client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]);
+    const read = await client.readResource({ uri: uriOf("pr-review", "guide.md") });
+    assert.equal(read.contents[0].text, "Review guide v1");
+    assert.ok((await client.listResources()).resources.some((r) => r.uri === uriOf("pr-review")));
+    const got = await client.request({ method: "skills/get", params: { uri: uriOf("release-plan") } }, z.object({ skill: z.any(), cacheScope: z.string() }).passthrough());
+    assert.equal(got.skill.frontmatter.license, "Apache-2.0");
+    assert.equal(got.cacheScope, "private");
   } finally {
     await client.close();
   }

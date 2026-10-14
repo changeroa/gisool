@@ -5,12 +5,12 @@ import type { Catalog, SkillEntry } from "../types.js";
 
 export const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
 
-const SkillsListRequestSchema = z.object({
+export const SkillsListRequestSchema = z.object({
   method: z.literal("skills/list"),
   params: z.object({ cursor: z.string().optional() }).passthrough().optional(),
 });
 
-const SkillsGetRequestSchema = z.object({
+export const SkillsGetRequestSchema = z.object({
   method: z.literal("skills/get"),
   params: z.object({ uri: z.string() }).passthrough(),
 });

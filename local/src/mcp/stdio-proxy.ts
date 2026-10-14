@@ -2,7 +2,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, CallToolResultSchema, ErrorCode, ListToolsRequestSchema, ListToolsResultSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { CallToolRequestSchema, CallToolResultSchema, ErrorCode, ListResourcesRequestSchema, ListResourcesResultSchema, ListToolsRequestSchema, ListToolsResultSchema, McpError, ReadResourceRequestSchema, ReadResourceResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { SKILLS_EXTENSION_ID, SkillsGetRequestSchema, SkillsListRequestSchema } from "./skills-extension.js";
 import { packageVersion, SERVER_INSTRUCTIONS } from "./tools.js";
 
 /**
@@ -11,7 +13,7 @@ import { packageVersion, SERVER_INSTRUCTIONS } from "./tools.js";
  */
 export async function runStdioProxy(opts: { port: number; token: string }): Promise<void> {
   const version = packageVersion();
-  const server = new Server({ name: "gisool", version }, { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS });
+  const server = new Server({ name: "gisool", version }, { capabilities: { tools: {}, resources: {}, extensions: { [SKILLS_EXTENSION_ID]: {} } }, instructions: SERVER_INSTRUCTIONS });
   let upstream: Promise<Client> | undefined;
 
   const connect = async (): Promise<Client> => {
@@ -37,6 +39,15 @@ export async function runStdioProxy(opts: { port: number; token: string }): Prom
     (await client()).request({ method: "tools/list", params: request.params }, ListToolsResultSchema));
   server.setRequestHandler(CallToolRequestSchema, async (request) =>
     (await client()).request({ method: "tools/call", params: request.params }, CallToolResultSchema));
+  server.setRequestHandler(ListResourcesRequestSchema, async (request) =>
+    (await client()).request({ method: "resources/list", params: request.params }, ListResourcesResultSchema.passthrough()));
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+    (await client()).request({ method: "resources/read", params: request.params }, ReadResourceResultSchema.passthrough()));
+  const anyResult = z.object({}).passthrough();
+  server.setRequestHandler(SkillsListRequestSchema, async (request) =>
+    (await client()).request({ method: "skills/list", params: request.params ?? {} }, anyResult));
+  server.setRequestHandler(SkillsGetRequestSchema, async (request) =>
+    (await client()).request({ method: "skills/get", params: request.params }, anyResult));
 
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => { transport.onclose = resolve; });
