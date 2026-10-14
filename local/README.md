@@ -1,10 +1,50 @@
 # gisool
 
 gisool is a local skill router. One daemon on `127.0.0.1` indexes the `SKILL.md` folders already on your machine,
-serves them to your coding agents over MCP (`search_skills`, `load_skill`, `read_skill_file`), records which skills
+serves them over MCP through `search_skills` and standard `resources/read`, records which skills
 each agent session searched, loaded, and read, and shows that history in a local dashboard.
 
-Supported runtimes: Claude Code, Codex, Gemini CLI, Cursor, OmO, Gajae Code, and OpenClaw.
+Capture packs cover Claude Code, Codex, Gemini CLI, Cursor, OmO, Gajae Code, and OpenClaw.
+MCP connections require **revision 2026-07-28 only** and a host resource reader. Packs configure endpoints and
+capture hooks; they do not upgrade a client's protocol implementation. Any build using the legacy `initialize`
+handshake (including clients built on `@modelcontextprotocol/sdk` 1.32.1) cannot connect.
+
+## Skills over MCP
+
+The server implements stable SEP-2640: `server/discover` advertises `tools`, `resources`, and
+`extensions["io.modelcontextprotocol/skills"]`. `search_skills` is the only tool. Use it to choose a candidate,
+then read the returned `SKILL.md` URI through the host's resource reader on this server. Relative references
+resolve against the skill root (the directory containing `SKILL.md`); supporting files are read only as needed.
+`skills/list` and `skills/get` provide verbatim frontmatter and complete per-file SHA-256/size manifests.
+The optional directory-read feature is not advertised; directories can be inferred from the manifest.
+
+Every request, including `server/discover`, carries `params._meta` with
+`io.modelcontextprotocol/protocolVersion: "2026-07-28"` and
+`io.modelcontextprotocol/clientCapabilities: {}`. Include `io.modelcontextprotocol/clientInfo`
+with `{name, version}` for runtime attribution. HTTP additionally requires `MCP-Protocol-Version`,
+`Mcp-Method`, and (for tool calls and resource reads) `Mcp-Name`, matching the body.
+Use `Accept: application/json, text/event-stream` and the bearer token.
+There is no initialization handshake or protocol session; GET and DELETE on `/mcp` return 405.
+The stdio proxy forwards this same modern protocol without translating legacy requests.
+
+All cacheable results include `resultType: "complete"`, `ttlMs: 60000`, and `cacheScope: "private"`.
+List methods use opaque `cursor`/`nextCursor` pagination. The search tool uses its own `offset`/`limit`.
+Tool schemas use JSON Schema 2020-12. Search is limited to 120 invocations per minute per daemon.
+
+The catalog rejects invalid Agent Skills names/frontmatter and skills above 512 files or 16 MiB.
+Manifests include dotfiles, dependencies, and nested skills. Skills containing symlinks or other non-regular
+entries are rejected rather than served incompletely. Duplicate names are retained at distinct URIs so
+hosts can disambiguate their configured roots.
+
+A `resources/read` of a published `SKILL.md` is recorded as a dashboard `load` observation; other files
+produce `read_file` observations. These do **not** activate skills, confer approval, or grant execution permissions.
+Hosts own origin binding, integrity verification, consent, and activation. To join reads to a search, send
+its `trace_id` as `_meta["app.gisool/traceId"]`; ordinary vendor session metadata also preserves attribution.
+No prior read or connection is required. A changed file fails closed until the catalog refreshes; the host
+refreshes `skills/get` and verifies against the new manifest before use.
+
+For Codex builds with gated modern support, enable `features.mcp_2026_07_28` for third-party HTTP servers;
+the separate hosted Apps flag does not apply to gisool. Client-wide experimental flags are not edited by the pack.
 
 **Privacy: everything stays on this machine.** The daemon listens on `127.0.0.1` only, every MCP, ingest, and API
 request needs the local bearer token, and nothing is sent to any remote service. Prompts, search queries, and skill
@@ -34,7 +74,6 @@ daemon, capture hooks) and the service it would install. Then apply it:
 ```sh
 gisool init                          # every detected runtime
 gisool init --runtime codex,claude-code
-gisool init --disable-remote         # also turn off a remote gisul registration
 gisool init --no-service             # do not install the LaunchAgent / systemd user unit
 ```
 
@@ -132,6 +171,7 @@ npm --prefix local run build
 npm --prefix local run typecheck
 npm --prefix local test              # unit tests plus test/e2e, which spawns the real daemon in a sandbox HOME
 node local/bench/search.mjs --check
+node local/bench/mcp-mutations.mjs  # each regression is injected in memory; files stay unchanged
 ```
 
 Architecture: [docs/gisool.md](../docs/gisool.md).

@@ -18,14 +18,14 @@ test("clientInfo name -> RuntimeId table", () => {
 const outcome = { traceId: "tr1", query: "write a commit message", mode: "discovery", elapsedMs: 3,
   candidates: [{ uri: "skill://local/a/commit/SKILL.md", name: "commit", description: "d", score: 0.9, rank: 1, invocation: "automatic", digest: "x", matched: ["commit"] }] };
 
-test("Codex search: threadId -> conversationId, sessionId -> runtimeSessionId, transport session in data", () => {
-  const e = searchEvent({ clientName: "codex-mcp-client", mcpSessionId: "mcp-1", meta: { threadId: "t1", sessionId: "t1", callId: "c1" } }, outcome, { total: 1 }, NOW);
+test("Codex search: per-request threadId -> conversationId and sessionId -> runtimeSessionId", () => {
+  const e = searchEvent({ clientName: "codex-mcp-client", meta: { threadId: "t1", sessionId: "t1", callId: "c1" } }, outcome, { total: 1 }, NOW);
   assert.equal(e.kind, "search");
   assert.equal(e.source, "mcp");
   assert.deepEqual(e.ref, { runtime: "codex", clientName: "codex-mcp-client", runtimeSessionId: "t1", conversationId: "t1" });
   assert.equal(e.traceId, "tr1");
   assert.equal(e.text, "write a commit message");
-  assert.equal(e.data.mcpSessionId, "mcp-1");
+  assert.equal(e.data.mcpSessionId, undefined);
   assert.equal(e.data.total, 1);
   assert.equal(e.data.candidates[0].score, 0.9);
   assert.deepEqual(e.data.chosen, []);
@@ -43,6 +43,6 @@ test("Claude toolUseId and OpenCode sessionID vendor meta", () => {
 test("read_file and error events", () => {
   const r = readFileEvent({ clientName: "gemini-cli-mcp-client" }, { skillUri: "skill://local/a/commit/SKILL.md", uri: "skill://local/a/commit/ref.md", bytes: 42, loadId: "L1" }, NOW);
   assert.deepEqual([r.kind, r.loadId, r.data.bytes, r.ref.runtime], ["read_file", "L1", 42, "gemini"]);
-  const err = errorEvent({ clientName: "gjc-coding-agent" }, { code: "skill_changed_since_load", message: "changed", tool: "read_skill_file", loadId: "L1" }, NOW);
-  assert.deepEqual([err.kind, err.data.code, err.ref.runtime], ["error", "skill_changed_since_load", "gajae"]);
+  const err = errorEvent({ clientName: "gjc-coding-agent" }, { code: "digest_mismatch", message: "changed", tool: "resources/read", loadId: "L1" }, NOW);
+  assert.deepEqual([err.kind, err.data.code, err.ref.runtime], ["error", "digest_mismatch", "gajae"]);
 });

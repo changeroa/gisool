@@ -920,7 +920,7 @@
    {
     "ts": 1790240348747,
     "kind": "error",
-    "summary": "read_skill_file failed: resource_not_found",
+    "summary": "resources/read failed: resource_not_found",
     "detail": {
      "kind": "error",
      "code": "resource_not_found",
@@ -1130,11 +1130,11 @@
    {
     "ts": 1790906031007,
     "kind": "error",
-    "summary": "load_skill aborted: client disconnected",
+    "summary": "resources/read aborted: client disconnected",
     "detail": {
      "kind": "error",
      "code": "load_aborted",
-     "message": "client closed the MCP session before load_skill completed"
+     "message": "client closed the request before resources/read completed"
     }
    },
    {

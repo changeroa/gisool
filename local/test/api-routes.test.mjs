@@ -1,8 +1,7 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { modernClient } from "./helpers/mcp.mjs";
 import { bearer, fixtureText, http, jsonHeaders, startTestServer } from "./helpers/api.mjs";
 
 let s;
@@ -110,13 +109,8 @@ test("read endpoints return their DTOs and validate parameters", async () => {
 
 test("/api/stats counts unattributed MCP activity in the filter range and reports no-data runtimes as null", async () => {
   const t0 = Date.now();
-  const client = new Client({ name: "openclaw", version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${s.port}/mcp`), { requestInit: { headers: bearer(s.token) } }));
-  try {
-    await client.callTool({ name: "search_skills", arguments: { query: "review pull request code" } });
-  } finally {
-    await client.close();
-  }
+  const client = modernClient(s.port, s.token, "openclaw");
+  await client.callTool({ name: "search_skills", arguments: { query: "review pull request code" } });
   const stats = await get(`/api/stats?from=${t0}&runtime=openclaw`);
   assert.equal(stats.status, 200);
   assert.deepEqual(stats.json.unattributed, { searches: 1, loads: 0 });
@@ -134,17 +128,10 @@ test("POST /api/eval-cases stores a case and validates the body", async () => {
 });
 
 test("Streamable HTTP MCP works through the composed daemon", async () => {
-  const client = new Client({ name: "claude-code", version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${s.port}/mcp`), {
-    requestInit: { headers: bearer(s.token) },
-  }));
-  try {
+  const client = modernClient(s.port, s.token, "claude-code");
     const tools = await client.listTools();
     assert.ok(tools.tools.some((t) => t.name === "search_skills"));
     const result = await client.callTool({ name: "search_skills", arguments: { query: "review pull request code" } });
     const body = JSON.parse(result.content[0].text);
     assert.equal(body.candidates[0].uri, "skill://local/agents/pr-review/SKILL.md");
-  } finally {
-    await client.close();
-  }
 });

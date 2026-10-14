@@ -141,6 +141,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const smallJson = express.json({ limit: "1mb" });
     const otlpJson = express.json({ limit: "8mb" });
     app.use((req: Request, res: Response, next: NextFunction) => {
+      // The MCP route owns parsing so malformed JSON receives a protocol error.
+      if (req.path === "/mcp") return next();
       const parser = req.path.startsWith("/ingest/otlp/") ? otlpJson : smallJson;
       parser(req, res, (error?: unknown) => {
         if (!error) return next();
@@ -158,8 +160,7 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     }));
 
     registerRoutes(app, { store: ownStore, catalog, ingest: ingestDeps, sse, version, log, fsHealth: () => watchdog.health() });
-    const mcp = registerMcp(app, { catalog, search, store: ownStore, ingest: ingestDeps, token });
-    cleanup.push(() => void mcp.close());
+    registerMcp(app, { catalog, search, store: ownStore, ingest: ingestDeps, token });
     registerStatic(app, { token, ...(deps.dashboardDir ? { dir: deps.dashboardDir } : {}) });
     app.use((_req: Request, res: Response) => deny(res, 404, "not_found"));
     app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
@@ -208,7 +209,6 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
           process.off("SIGTERM", onSignal);
         }
         if (retentionTimer) clearInterval(retentionTimer);
-        await mcp.close();
         sse.close();
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));

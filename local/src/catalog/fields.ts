@@ -73,7 +73,15 @@ export type SkillFields = Pick<SkillEntry, "name" | "description" | "tags" | "wh
 /** Extracts the routing fields; returns null when name or description is missing. */
 export function extractFields(frontmatter: Record<string, unknown>, body: string): SkillFields | null {
   const { name, description } = frontmatter;
-  if (typeof name !== "string" || !name || typeof description !== "string" || !description) return null;
+  if (typeof name !== "string" || [...name].length < 1 || [...name].length > 64 ||
+      name !== name.toLowerCase() || !/^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u.test(name)) return null;
+  if (typeof description !== "string" || !description.trim() || [...description].length > 1024) return null;
+  const { compatibility, metadata, license } = frontmatter;
+  if (compatibility !== undefined && (typeof compatibility !== "string" || !compatibility.trim() || [...compatibility].length > 500)) return null;
+  if (license !== undefined && typeof license !== "string") return null;
+  if (frontmatter["allowed-tools"] !== undefined && typeof frontmatter["allowed-tools"] !== "string") return null;
+  if (metadata !== undefined && (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || Object.values(metadata).some((v) => typeof v !== "string"))) return null;
+  // metadata is preserved verbatim but never interpreted, including reserved io.modelcontextprotocol/* keys.
   const whenRaw = frontmatter.when_to_use ?? frontmatter["when-to-use"];
   const fields: SkillFields = {
     name,

@@ -102,7 +102,7 @@ test("re0, re0-loop, re0-work form family re0; explicit group wins", async () =>
   }
 });
 
-test("symlinked SKILL.md and symlinked resources are skipped", async () => {
+test("symlinks reject the whole skill instead of publishing an incomplete manifest", async () => {
   const s = setup();
   try {
     mkdirSync(join(s.a, "evil"));
@@ -112,8 +112,7 @@ test("symlinked SKILL.md and symlinked resources are skipped", async () => {
     symlinkSync(join(s.a, "ok"), join(s.a, "linkdir"));
     const c = createCatalog({ roots: s.roots, log: quietLog });
     await c.refresh();
-    assert.deepEqual(c.list().map((e) => e.uri), ["skill://local/agents/ok/SKILL.md"]);
-    assert.deepEqual(c.list()[0].resources.map((r) => r.uri), ["skill://local/agents/ok/SKILL.md"]);
+    assert.deepEqual(c.list(), []);
     await assert.rejects(c.readResource("skill://local/agents/ok/hosts.md"), (e) => e.code === "symlink_refused");
     await assert.rejects(c.readResource("skill://local/agents/evil/SKILL.md"), (e) => e.code === "symlink_refused");
   } finally {

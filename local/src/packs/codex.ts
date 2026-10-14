@@ -143,6 +143,7 @@ export const codexPack: RuntimePack = {
     }
     if (after !== before) plan.files.push({ path, before, after, mode: 0o600 });
     plan.notes.push("codex exec exports OTel events only partially; no Codex hooks are installed (they require trust review)");
+    plan.notes.push("gisool requires MCP 2026-07-28; on Codex builds with the mcp_2026_07_28 feature, enable it for third-party HTTP servers. The hosted Apps flag does not apply.");
     if (runningDaemon(ctx)) plan.notes.push("a Codex app-server daemon is running; restart it so attached TUIs export OTel: codex app-server daemon restart");
     return plan;
   },

@@ -2,7 +2,7 @@ import type { CanonicalEvent, SearchEventData, SearchOutcome, SessionRef, SkillU
 import { makeEvent, str } from "./hooks.js";
 import { runtimeFromClientName } from "./runtimes.js";
 
-export type McpCallContext = { clientName?: string; mcpSessionId?: string; meta?: Record<string, unknown> };
+export type McpCallContext = { clientName?: string; meta?: Record<string, unknown> };
 type McpBase = { ref: SessionRef; toolUseId?: string; data: Record<string, unknown> };
 
 /**
@@ -18,7 +18,7 @@ export function mcpBase(ctx: McpCallContext): McpBase {
   if (runtimeSessionId) ref.runtimeSessionId = runtimeSessionId;
   if (conversationId) ref.conversationId = conversationId;
   const toolUseId = str(meta["claudecode/toolUseId"]);
-  const data: Record<string, unknown> = ctx.mcpSessionId ? { mcpSessionId: ctx.mcpSessionId } : {};
+  const data: Record<string, unknown> = {};
   return toolUseId ? { ref, toolUseId, data } : { ref, data };
 }
 
@@ -37,7 +37,7 @@ export function searchEvent(ctx: McpCallContext, outcome: SearchOutcome, opts: {
 
 export function loadEvent(ctx: McpCallContext, load: { uri: SkillUri; loadId: string; manifestDigest: string; traceId?: string }, ts: number): CanonicalEvent {
   return build("load", ctx, ts, { skillUri: load.uri, loadId: load.loadId, ...(load.traceId ? { traceId: load.traceId } : {}) },
-    { uri: load.uri, loadId: load.loadId, manifestDigest: load.manifestDigest });
+    { uri: load.uri, loadId: load.loadId, manifestDigest: load.manifestDigest, observationOnly: true });
 }
 
 export function readFileEvent(ctx: McpCallContext, read: { skillUri: SkillUri; uri: SkillUri; bytes: number; loadId?: string; traceId?: string }, ts: number): CanonicalEvent {

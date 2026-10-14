@@ -2,9 +2,10 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import type { SkillEntry } from "../types.js";
 import { extractFields, splitSkillMarkdown } from "./fields.js";
-import { skillUri } from "./uri.js";
+import { parseSkillUri, skillUri } from "./uri.js";
 
 /** SEP-2640 limits per skill. */
 export const MAX_SKILL_RESOURCE_COUNT = 512;
@@ -28,19 +29,27 @@ export function manifestDigest(resources: SkillEntry["resources"]): string {
   return sha256(JSON.stringify(sorted));
 }
 
-/** Regular files under baseDir (relative posix paths), skipping dotfiles, node_modules and symlinks. */
+/** A manifest includes every file. Reject unservable entries rather than publish an incomplete skill. */
 export async function collectSkillRelativeFiles(baseDir: string): Promise<{ relative: string; size: number }[]> {
   const output: { relative: string; size: number }[] = [];
+  let totalBytes = 0;
   async function walk(dir: string, prefix: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.name.includes("\\")) throw new CatalogError("invalid_path", `Cannot address ${relative} as a skill resource`);
       if (entry.isDirectory()) {
         await walk(path.join(dir, entry.name), relative);
       } else if (entry.isFile()) {
         const info = await lstat(path.join(dir, entry.name));
-        if (info.isFile()) output.push({ relative, size: info.size });
+        if (!info.isFile()) throw new CatalogError("non_regular_file", `Cannot include ${relative} in a complete manifest`);
+        output.push({ relative, size: info.size });
+        totalBytes += info.size;
+        if (output.length > MAX_SKILL_RESOURCE_COUNT || totalBytes > MAX_SKILL_TOTAL_BYTES) {
+          throw new CatalogError("skill_limits", "Skill exceeds 512 resources or 16 MiB");
+        }
+      } else {
+        throw new CatalogError("non_regular_file", `Cannot include ${relative} in a complete manifest`);
       }
     }
   }
@@ -54,7 +63,7 @@ export async function listSkillEntryDirs(rootDir: string): Promise<string[]> {
   async function walk(dir: string, prefix: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      if (!entry.isDirectory()) continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       try {
         const info = await stat(path.join(dir, entry.name, "SKILL.md"));
@@ -73,6 +82,11 @@ export type ScannedSkill = { entry: SkillEntry; explicitGroup?: { id: string; st
 
 /** Builds one entry; returns null (with a stderr note) for anything that must not be served. Reads but never writes. */
 export async function buildSkillEntry(rootId: string, rootDir: string, dir: string, log: (msg: string) => void = console.error): Promise<ScannedSkill | null> {
+  const uri = skillUri(rootId, dir, "SKILL.md");
+  if (!parseSkillUri(uri)) {
+    log(`Skipping skill ${rootId}/${dir}: directory cannot be addressed by a canonical skill URI`);
+    return null;
+  }
   const skillDir = path.join(rootDir, dir);
   const skillPath = path.join(skillDir, "SKILL.md");
   let mtimeMs: number;
@@ -106,9 +120,9 @@ export async function buildSkillEntry(rootId: string, rootDir: string, dir: stri
     resources.push({ uri: skillUri(rootId, dir, relative), digest, size: bytes.byteLength });
     if (relative === "SKILL.md") {
       skillDigest = digest;
-      const { frontmatter, body } = splitSkillMarkdown(bytes.toString("utf8"));
+      const { frontmatter, body } = splitSkillMarkdown(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
       fields = frontmatter ? extractFields(frontmatter, body) : null;
-      if (frontmatter) rawFrontmatter = JSON.parse(JSON.stringify(frontmatter)) as Record<string, unknown>;
+      if (frontmatter) rawFrontmatter = z.record(z.string(), z.json()).parse(frontmatter);
     }
   }
   if (resources.length > MAX_SKILL_RESOURCE_COUNT || totalBytes > MAX_SKILL_TOTAL_BYTES) {
@@ -127,7 +141,7 @@ export async function buildSkillEntry(rootId: string, rootDir: string, dir: stri
 
   const { group, ...rest } = fields;
   const entry: SkillEntry = {
-    uri: skillUri(rootId, dir, "SKILL.md"),
+    uri,
     rootId,
     dir,
     ...rest,

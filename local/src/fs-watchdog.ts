@@ -3,7 +3,7 @@ export type FsHealth = { ok: boolean; lastOkAt?: number; stalledMs?: number };
 export type FsWatchdog = { health(): FsHealth; stop(): void };
 
 // A long-running daemon was seen with every async fs request pending forever while the event loop stayed alive:
-// /healthz kept answering but the dashboard, assets, and load_skill hung. The watchdog probes the filesystem on a
+// /healthz kept answering but the dashboard, assets, and resource reads hung. The watchdog probes the filesystem on a
 // timer; a probe still pending after timeoutMs means fs is stalled, and onStall runs once so the service manager
 // can restart the process.
 export function createFsWatchdog(opts: {

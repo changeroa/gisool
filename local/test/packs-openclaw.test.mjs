@@ -24,7 +24,8 @@ test("bootstrap hook appends discovery block and keeps existing content", async 
   const content = event.context.bootstrapFiles[0].content;
   assert.ok(content.startsWith("existing rules"));
   assert.ok(content.includes(marker));
-  assert.ok(content.includes("gisool = local skills on this machine; gisul = remote team skills."));
+  const { guidance } = await bundle("hooks/gisool-discovery/handler.js");
+  assert.equal(content, `existing rules\n\n${guidance}`);
   handler(event);
   assert.equal(event.context.bootstrapFiles[0].content.split(marker).length, 2, "idempotent");
 });

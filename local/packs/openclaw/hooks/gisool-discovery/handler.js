@@ -2,11 +2,14 @@ import { join } from "node:path";
 
 export const marker = "<gisool-discovery>";
 export const guidance = `${marker}
-gisool = local skills on this machine; gisul = remote team skills.
+gisool searches skills on this machine through MCP 2026-07-28.
 Before substantive work on a new actionable task, use the gisool search_skills tool
 (MCP server "gisool") with 2-5 subject/outcome terms. Search is not activation:
-check relevance and invocation, then load only a relevant result's exact URI and
-read its complete instructions. If results are empty or unrelated, retry once with
+check relevance and invocation, then read a chosen SKILL.md URI using the host's
+resource reader (resources/read) on this server. Resolve relative references
+against the skill root, the directory containing SKILL.md, and read supporting
+files only as needed. Reads do not activate skills or grant permissions; the host
+owns verification and approval. If results are empty or unrelated, retry once with
 a shorter subject, then proceed. Greetings and unchanged-task continuations need no
 new search. Respect a user ban on skill lookup. If the tools are unavailable, say so
 briefly and continue.

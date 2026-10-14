@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { distImport, makeSandbox, PACKAGE_ROOT } from "./_helpers.mjs";
 import { bearer, fixtureText, http, jsonHeaders, startTestServer } from "./helpers/api.mjs";
+import { headersFor, metadata } from "./helpers/mcp.mjs";
 
 const { startServer, createFileLogger } = await distImport("server.js");
 const { dashCookieValue } = await distImport("api/security.js");
@@ -38,6 +39,22 @@ test("wrong Host, foreign Origin, and cross-site fetches are refused with 403", 
   assert.equal(sameOrigin.status, 200);
   const crossSite = await http(s.port, { path: "/api/stats", headers: { "Sec-Fetch-Site": "cross-site", ...bearer(s.token) } });
   assert.equal(crossSite.status, 403);
+});
+
+test("modern MCP retains Host Origin bearer and body boundaries in the composed server", async () => {
+  const body = { jsonrpc: "2.0", id: 1, method: "server/discover", params: { _meta: metadata() } };
+  const headers = { ...headersFor(body), ...bearer(s.token) };
+  for (const extra of [{ Host: "evil.example" }, { Origin: "http://evil.example" }, { "Sec-Fetch-Site": "cross-site" }]) {
+    assert.equal((await http(s.port, { method: "POST", path: "/mcp", headers: { ...headers, ...extra }, body: JSON.stringify(body) })).status, 403);
+  }
+  const valid = await http(s.port, { method: "POST", path: "/mcp", headers, body: JSON.stringify(body) });
+  assert.equal(valid.status, 200);
+  assert.equal(valid.json.result.resultType, "complete");
+  const bad = await http(s.port, { method: "POST", path: "/mcp", headers, body: "{" });
+  assert.equal(bad.json.error.code, -32700);
+  const large = await http(s.port, { method: "POST", path: "/mcp", headers, body: JSON.stringify({ ...body, padding: "x".repeat(1024 * 1024) }) });
+  assert.equal(large.status, 413);
+  assert.equal(large.json.error.code, -32600);
 });
 
 test("missing or wrong bearer on /mcp, /ingest, and /api is 401", async () => {

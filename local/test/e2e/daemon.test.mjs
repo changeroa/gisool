@@ -10,8 +10,7 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { modernClient } from "../helpers/mcp.mjs";
 import { makeSandbox, writeFixtureSkill } from "../_helpers.mjs";
 
 const MAIN = fileURLToPath(new URL("../../dist/cli/main.js", import.meta.url));
@@ -98,7 +97,7 @@ function httpReq(port, { method = "GET", path = "/", headers = {}, body } = {}) 
   });
 }
 
-/** Spawns `gisool serve`, waits for its readiness line, then polls /healthz until 200 within the same 10 s budget. */
+/** Spawns `gisool serve` and subscribes to its readiness line before checking health. */
 async function startDaemon(env, port) {
   const child = spawn(process.execPath, [MAIN, "serve", "--port", String(port)], { env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -111,17 +110,10 @@ async function startDaemon(env, port) {
     child.once("exit", (code) => reject(new Error(`daemon exited early (${code}): ${output}`)));
     child.once("error", reject);
   });
-  const deadline = Date.now() + STARTUP_MS;
   await withTimeout(ready, STARTUP_MS, `daemon readiness (${output})`);
-  for (;;) {
-    const res = await httpReq(port, { path: "/healthz" }).catch(() => undefined);
-    if (res?.status === 200) {
-      assert.equal(res.json.ok, true);
-      break;
-    }
-    if (Date.now() > deadline) throw new Error(`/healthz never returned 200: ${output}`);
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  const res = await httpReq(port, { path: "/healthz" });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.ok, true);
   return {
     child, port,
     output: () => output,
@@ -172,11 +164,7 @@ async function openStream(port, token) {
 }
 
 async function mcpClient(port, token, name) {
-  const client = new Client({ name, version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
-  }));
-  return client;
+  return modernClient(port, token, name);
 }
 
 async function call(client, name, args, meta) {
@@ -217,19 +205,26 @@ test("daemon end to end: MCP, OTLP and hook ingest, dashboard API, restart, and 
   // Codex MCP client: search -> load -> read, attributed through _meta.threadId.
   const target = CATALOG.find((e) => e.name === "database-query");
   const client = await mcpClient(port, token, "codex-mcp-client");
+  const discovery = await client.request("server/discover");
+  assert.deepEqual(discovery.supportedVersions, ["2026-07-28"]);
+  assert.deepEqual(discovery.capabilities, { tools: {}, resources: {}, extensions: { "io.modelcontextprotocol/skills": {} } });
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["search_skills"]);
   const meta = { threadId: "codex-conv-1" };
   const search = await call(client, "search_skills", { query: target.description }, meta);
   assert.equal(search.isError, false, JSON.stringify(search.body));
   const top = search.body.candidates[0];
   assert.equal(top.name, "database-query");
   assert.ok(top.score > 0);
-  const load = await call(client, "load_skill", { uri: top.uri, trace_id: search.body.trace_id }, meta);
-  assert.equal(load.isError, false, JSON.stringify(load.body));
-  assert.match(load.body.load_id, /^[0-9a-f]{64}$/);
+  const readMeta = { ...meta, "app.gisool/traceId": search.body.trace_id };
+  const entry = (await client.request("skills/get", { uri: top.uri })).skill;
+  const load = await client.readResource({ uri: top.uri, _meta: readMeta });
+  assert.equal(`sha256:${createHash("sha256").update(load.contents[0].text).digest("hex")}`, entry.resources.find((r) => r.uri === top.uri).digest);
   const guideUri = top.uri.replace(/SKILL\.md$/, "guide.md");
-  const read = await call(client, "read_skill_file", { skill_uri: top.uri, uri: guideUri, load_id: load.body.load_id }, meta);
-  assert.equal(read.body.text, "database-query guide v1\n");
-  await client.close();
+  const read = await client.readResource({ uri: guideUri, _meta: readMeta });
+  assert.equal(read.contents[0].text, "database-query guide v1\n");
+  const legacy = await post(port, token, "/mcp", JSON.stringify({ jsonrpc: "2.0", id: 99, method: "initialize", params: { protocolVersion: "2025-11-25" } }));
+  assert.equal(legacy.status, 400);
+  assert.equal(legacy.json.error.code, -32020);
 
   // Claude OTLP prompt and Gemini hook.
   let wait = stream.next((r) => r.runtime === "claude-code", "claude prompt session frame");
@@ -281,18 +276,20 @@ test("daemon end to end: MCP, OTLP and hook ingest, dashboard API, restart, and 
   assert.equal(heatmap.tz, "UTC");
   assert.equal(heatmap.cells.reduce((n, c) => n + c.count, 0), 3);
 
-  // Restart: the pre-restart load_id still pins the loaded version.
+  // Restart: standard resource reads still work without connection or load state.
   stream.close();
   await daemon.stop();
   daemon = await startDaemon(tokenEnv, port);
   const again = await mcpClient(port, token, "codex-mcp-client");
-  const reread = await call(again, "read_skill_file", { skill_uri: top.uri, uri: guideUri, load_id: load.body.load_id }, meta);
-  assert.equal(reread.isError, false, JSON.stringify(reread.body));
-  assert.equal(reread.body.text, "database-query guide v1\n");
-  await again.close();
+  const reread = await again.readResource({ uri: guideUri, _meta: readMeta });
+  assert.equal(reread.contents[0].text, "database-query guide v1\n");
 
   await daemon.stop();
   assert.equal(await portIsFree(port), true);
+  const db = new DatabaseSync(join(tokenEnv.GISOOL_HOME, "gisool.db"), { readOnly: true });
+  try {
+    assert.deepEqual(db.prepare("SELECT kind FROM events WHERE source = 'mcp' ORDER BY ts, rowid").all().map((r) => r.kind), ["search", "load", "read_file", "read_file"]);
+  } finally { db.close(); }
 
   const after = hashRealConfigs();
   for (const [p, h] of Object.entries(after)) t.diagnostic(`real-config after  ${h} ${p}`);

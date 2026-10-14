@@ -31,7 +31,6 @@
     "start": "node dist/cli/main.js serve"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
     "express": "^5.2.1",
     "yaml": "^2.9.0",
     "zod": "^4.1.11"
