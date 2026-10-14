@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
@@ -9,6 +10,7 @@ import { createSseHub } from "./api/sse.js";
 import { registerStatic } from "./api/static.js";
 import { createCatalog } from "./catalog/index.js";
 import { ensureGisoolHome, ensureToken, resolveGisoolHome, resolveHome } from "./config.js";
+import { createFsWatchdog } from "./fs-watchdog.js";
 import { createIngestDeps } from "./ingest/pipeline.js";
 import { registerMcp } from "./mcp/http.js";
 import { packageVersion } from "./mcp/tools.js";
@@ -25,6 +27,8 @@ export type ServerDeps = {
   handleSignals?: boolean;
   dashboardDir?: string;
   log?: (msg: string) => void;
+  /** Filesystem-stall watchdog; defaults probe GISOOL_HOME every 15 s and exit(70) after 30 s so launchd restarts. */
+  fsWatchdog?: { probe?: () => Promise<unknown>; intervalMs?: number; timeoutMs?: number; onStall?: (stalledMs: number) => void };
 };
 export type RunningServer = { port: number; host: "127.0.0.1"; close(): Promise<void> };
 
@@ -115,6 +119,17 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
       log: (message, error) => log(`ingest: ${message}: ${error instanceof Error ? error.message : String(error)}`),
     });
 
+    const wd = deps.fsWatchdog ?? {};
+    const watchdog = createFsWatchdog({
+      probe: wd.probe ?? (() => stat(gisoolHome)),
+      intervalMs: wd.intervalMs ?? 15_000,
+      timeoutMs: wd.timeoutMs ?? 30_000,
+      onStall: wd.onStall ?? ((stalledMs) => {
+        log(`filesystem requests stalled for ${stalledMs} ms; exiting so the service manager restarts gisool`);
+        process.exit(70);
+      }),
+    });
+
     let boundPort = config.port;
     const app = express();
     app.disable("x-powered-by");
@@ -142,7 +157,7 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
       if (req.path.startsWith("/ingest/")) ownStore.countIngest("rejected", "unsupported_media_type");
     }));
 
-    registerRoutes(app, { store: ownStore, catalog, ingest: ingestDeps, sse, version, log });
+    registerRoutes(app, { store: ownStore, catalog, ingest: ingestDeps, sse, version, log, fsHealth: () => watchdog.health() });
     const mcp = registerMcp(app, { catalog, search, store: ownStore, ingest: ingestDeps, token });
     cleanup.push(() => void mcp.close());
     registerStatic(app, { token, ...(deps.dashboardDir ? { dir: deps.dashboardDir } : {}) });
@@ -161,6 +176,7 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     boundPort = await listen(server, config.port);
 
     let retentionTimer: NodeJS.Timeout | undefined;
+    cleanup.push(() => watchdog.stop());
     if (config.retentionDays !== null) {
       const days = config.retentionDays;
       const runRetention = () => {

@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import type { FsHealth } from "../fs-watchdog.js";
 import { ingestHook, ingestOtlp, type IngestDeps } from "../ingest/pipeline.js";
 import { isRuntimeId, RUNTIME_IDS } from "../ingest/runtimes.js";
 import type { AdoptionState, Catalog, Filter, RuntimeId, Store } from "../types.js";
@@ -75,6 +76,7 @@ export type RouteDeps = {
   sse: SseHub;
   version: string;
   log: (msg: string) => void;
+  fsHealth?: () => FsHealth;
 };
 
 function handle(log: (msg: string) => void, fn: (req: Request, res: Response) => void) {
@@ -96,7 +98,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { store, catalog, log } = deps;
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, version: deps.version, name: "gisool" });
+    const fs = deps.fsHealth?.() ?? { ok: true };
+    res.status(fs.ok ? 200 : 503).json({ ok: fs.ok, version: deps.version, name: "gisool", fs });
   });
 
   app.post("/ingest/otlp/v1/logs", (req, res) => {
