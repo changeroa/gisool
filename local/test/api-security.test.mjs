@@ -88,6 +88,7 @@ test("GET /?token= sets an HttpOnly SameSite=Strict cookie that works for /api o
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Strict/);
   assert.match(setCookie, /Path=\//);
+  assert.match(setCookie, /Max-Age=34560000/, "persists across browser restarts");
   const cookie = setCookie.split(";")[0];
   assert.equal(cookie, `gisool_dash=${dashCookieValue(s.token)}`);
 

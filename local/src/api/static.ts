@@ -20,7 +20,8 @@ export function registerStatic(app: Express, opts: { token: string; dir?: string
     const presented = req.query.token;
     if (presented !== undefined) {
       if (typeof presented !== "string" || !safeEqual(presented, opts.token)) return deny(res, 401, "unauthorized");
-      res.setHeader("Set-Cookie", `${DASH_COOKIE}=${cookie}; HttpOnly; SameSite=Strict; Path=/`);
+      // Persistent (400 days, the browser maximum) so the dashboard still opens after a browser restart.
+      res.setHeader("Set-Cookie", `${DASH_COOKIE}=${cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000`);
       res.setHeader("Cache-Control", "no-store");
       return res.redirect(302, "/");
     }

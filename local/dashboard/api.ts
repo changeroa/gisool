@@ -51,6 +51,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* non-JSON error body: keep the status-based message */
     }
+    if (res.status === 401) message = "this browser is not signed in to the dashboard. Run `gisool open` in a terminal to open it with a sign-in link.";
     throw new ApiError(res.status, code, message);
   }
   if (res.status === 204) return undefined as T;
