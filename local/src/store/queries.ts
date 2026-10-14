@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { automationOf } from "./automation.js";
+import { automationOf, NO_ACTIVITY } from "./automation.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
 import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep } from "../types.js";
 
@@ -183,7 +183,10 @@ export function createQueries(ctx: StoreCtx): Queries {
         ...(r.first_prompt !== null ? { firstPrompt: r.first_prompt } : {}),
         ...(firstTop !== undefined ? { firstTop } : {}),
       };
-      const automated = automationOf(info.firstPrompt);
+      // A session with no prompt and no skill activity (e.g. a thread the Codex daemon reopened) tells nothing about usage.
+      const idle = loaded.length === 0 && exposed.length === 0
+        && !evs.some((e) => e.kind === "prompt" || e.kind === "native_skill" || e.kind === "read_file");
+      const automated = automationOf(info.firstPrompt) ?? (idle ? NO_ACTIVITY : undefined);
       if (automated !== undefined) info.automated = automated;
       if (f.automated === undefined && automated !== undefined) continue;
       if (f.automated === "only" && automated === undefined) continue;

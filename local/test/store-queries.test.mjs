@@ -34,14 +34,23 @@ test("automated sessions (Codex title, Herdr recap) are hidden by default, shown
   seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "loaded", skill: "pr-review-ko", key: "recap",
     prompt: '{"previousRecap":"","messages":["user: hi"]}' });
   seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "not_used", key: "human-json", prompt: '{"note":"a person pasted JSON"}' });
+  seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "not_used", key: "cron",
+    prompt: "[cron:163f8bb6-9643-4f7f-9bbc-09972d5c63e1 herdr-idle-orchestrator-watch-victor] Recent activity" });
+  seedSession(store, { runtime: "omo", startedAt: NOW - HOUR, kind: "not_used", key: "reflect",
+    prompt: '<file name="/Users/v/.omo/memory/agents/a/runtime/reflection/run-1.md">' });
+  seedSession(store, { runtime: "codex", startedAt: NOW - HOUR, kind: "not_used", key: "dream", prompt: "Write a dream diary entry from these memory fragments: - x" });
+  const idleRef = { runtime: "codex", runtimeSessionId: "idle" };
+  const idle = store.upsertSession(idleRef, NOW - HOUR);
+  store.append(event("session_start", NOW - HOUR, idleRef), { sessionId: idle, method: "runtime_id" });
   assert.equal(store.sessions({}).length, 41);
   const all = store.sessions({ automated: "include" });
-  assert.equal(all.length, 43);
-  assert.deepEqual(store.sessions({ automated: "only" }).map((r) => r.automated).sort(), ["codex_title", "herdr_recap"]);
+  assert.equal(all.length, 47);
+  assert.deepEqual(store.sessions({ automated: "only" }).map((r) => r.automated).sort(),
+    ["codex_title", "cron_job", "herdr_recap", "memory_dream", "memory_reflection", "no_activity"]);
   assert.equal(all.find((r) => r.firstPrompt?.startsWith('{"note"')).automated, undefined);
-  assert.equal(store.stats().automatedSessions, 2);
+  assert.equal(store.stats().automatedSessions, 6);
   assert.equal(store.stats({ runtime: ["gemini"] }).automatedSessions, 0);
-  assert.equal(store.flow({}, "first_load", 7).sessionCount, store.flow({ automated: "include" }, "first_load", 7).sessionCount - 2);
+  assert.equal(store.flow({}, "first_load", 7).sessionCount, store.flow({ automated: "include" }, "first_load", 7).sessionCount - 6);
 });
 
 test("flow first_load: top-7 skills plus Other, min-link rule, sessionCount, >= 3 task types", () => {

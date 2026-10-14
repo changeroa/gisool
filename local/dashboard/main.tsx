@@ -86,7 +86,7 @@ function FilterChips({ route, navigate }: { route: Route; navigate: (next: Route
 }
 
 export const AUTOMATED_EXPLAINER =
-  "Sessions whose first prompt a harness or the runtime sent, not you: Codex thread-title requests and Herdr pane recaps. Hidden from every view unless shown.";
+  "Sessions you did not start: Codex thread titles, Herdr pane recaps, scheduled jobs, memory reflection and dreaming runs, and sessions with no prompt or skill activity. Hidden from every view unless shown.";
 
 function AutomatedToggle({ route, navigate, live }: { route: Route; navigate: (next: Route) => void; live: LiveInfo }) {
   const [hidden, setHidden] = useState(0);
