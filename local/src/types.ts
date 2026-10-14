@@ -9,7 +9,7 @@ export type SkillEntry = { uri: SkillUri; rootId: string; dir: string; name: str
   frontmatter?: Record<string, unknown> };
 export type CatalogDelta = { added: SkillEntry[]; changed: SkillEntry[]; removed: SkillUri[] };
 export interface Catalog { list(): SkillEntry[]; get(uri: SkillUri): SkillEntry | undefined;
-  readResource(uri: SkillUri): Promise<{ text: string; digest: string; size: number }>;
+  readResource(uri: SkillUri): Promise<{ text: string; digest: string; size: number; bytes: Uint8Array }>;
   refresh(): Promise<CatalogDelta>; onDelta(cb: (d: CatalogDelta) => void): () => void;
   report(): { duplicates: { name: string; uris: SkillUri[] }[]; families: { id: string; uris: SkillUri[] }[]; roots: { id: string; path: string; readable: boolean; count: number }[] } }
 export type Candidate = { uri: SkillUri; name: string; description: string; score: number; rank: number;

@@ -109,7 +109,7 @@ export function createCatalog(config: CatalogOptions): ManagedCatalog {
       const bytes = await readFile(filePath);
       const digest = sha256(bytes);
       if (digest !== known.digest) throw new CatalogError("digest_mismatch", "resource changed since the last catalog refresh");
-      return { text: bytes.toString("utf8"), digest, size: bytes.byteLength };
+      return { text: bytes.toString("utf8"), digest, size: bytes.byteLength, bytes };
     },
     refresh,
     onDelta(cb) {

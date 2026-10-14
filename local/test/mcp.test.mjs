@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
@@ -25,6 +26,10 @@ function seedSkills(root) {
   writeFixtureSkill(root, "pr-review", {
     description: "Review pull request code changes and leave review comments",
     files: { "guide.md": "Review guide v1", "refs/checklist.md": "checklist", "refs/style.md": "style" },
+  });
+  writeFixtureSkill(root, "asset-kit", {
+    description: "Bundle of binary assets for slides",
+    files: { "assets/logo.bin": "\u0000\u0001binary\u00ff" },
   });
   writeFixtureSkill(root, "code-review-notes", { description: "Summarize code review feedback on a pull request" });
   writeFixtureSkill(root, "release-plan", {
@@ -210,7 +215,7 @@ test("SEP-2640 skills/list and skills/get serve the catalog", () => withDaemon(a
   const client = await connect(daemon, "codex-mcp-client");
   assert.ok(client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]);
   const list = await client.request({ method: "skills/list", params: {} }, z.object({ skills: z.array(z.any()) }).passthrough());
-  assert.deepEqual(list.skills.map((s) => s.frontmatter.name), ["code-review-notes", "pr-review", "release-plan"]);
+  assert.deepEqual(list.skills.map((s) => s.frontmatter.name), ["asset-kit", "code-review-notes", "pr-review", "release-plan"]);
   assert.equal(list.ttlMs, 60000);
   assert.equal(list.cacheScope, "private");
   assert.deepEqual(list.skills.find((s) => s.frontmatter.name === "release-plan").frontmatter, {
@@ -222,6 +227,25 @@ test("SEP-2640 skills/list and skills/get serve the catalog", () => withDaemon(a
   assert.equal(got.ttlMs, 60000);
   assert.equal(got.cacheScope, "private");
   await assert.rejects(client.request({ method: "skills/get", params: { uri: uriOf("nope") } }, z.object({}).passthrough()), /Not a skill/);
+  await client.close();
+}));
+
+test("SEP-2640 skill files are readable through resources/list and resources/read", () => withDaemon(async (daemon) => {
+  const client = await connect(daemon, "codex-mcp-client");
+  assert.ok(client.getServerCapabilities()?.resources, "resources capability declared");
+  const listed = await client.listResources();
+  assert.ok(listed.resources.some((r) => r.uri === uriOf("pr-review") && r.mimeType === "text/markdown" && r.name === "pr-review"));
+  const entry = (await client.request({ method: "skills/get", params: { uri: uriOf("pr-review") } }, z.object({ skill: z.any() }).passthrough())).skill;
+  for (const res of entry.resources) {
+    const read = await client.readResource({ uri: res.uri });
+    const text = read.contents[0].text;
+    assert.equal(`sha256:${createHash("sha256").update(text).digest("hex")}`, res.digest, res.uri);
+  }
+  const bin = await client.readResource({ uri: uriOf("asset-kit", "assets/logo.bin") });
+  assert.equal(Buffer.from(bin.contents[0].blob, "base64").toString("utf8"), "\u0000\u0001binary\u00ff");
+  assert.equal(bin.contents[0].mimeType, "application/octet-stream");
+  await assert.rejects(client.readResource({ uri: uriOf("pr-review", "missing.md") }), /Resource not found/);
+  await assert.rejects(client.readResource({ uri: "skill://local/agents/../etc/passwd" }), /Resource not found/);
   await client.close();
 }));
 
