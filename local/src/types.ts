@@ -4,7 +4,9 @@ export type CaptureLevel = "metadata" | "redacted" | "full";      // default "fu
 export type SkillEntry = { uri: SkillUri; rootId: string; dir: string; name: string; description: string;
   tags: string[]; whenToUse?: string; examples: string[]; aliasesKo: string[]; group?: { id: string; stage?: string };
   invocation: "automatic" | "explicit"; bodyHead: string; digest: string; manifestDigest: string;
-  resources: { uri: SkillUri; digest: string; size: number }[]; mtimeMs: number };
+  resources: { uri: SkillUri; digest: string; size: number }[]; mtimeMs: number;
+  // SKILL.md YAML frontmatter as JSON, verbatim (SEP-2640 skills/list and skills/get carry it unchanged)
+  frontmatter?: Record<string, unknown> };
 export type CatalogDelta = { added: SkillEntry[]; changed: SkillEntry[]; removed: SkillUri[] };
 export interface Catalog { list(): SkillEntry[]; get(uri: SkillUri): SkillEntry | undefined;
   readResource(uri: SkillUri): Promise<{ text: string; digest: string; size: number }>;

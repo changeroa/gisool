@@ -95,6 +95,7 @@ export async function buildSkillEntry(rootId: string, rootDir: string, dir: stri
   }
 
   let fields: ReturnType<typeof extractFields> = null;
+  let rawFrontmatter: Record<string, unknown> | undefined;
   let skillDigest: string | undefined;
   const resources: SkillEntry["resources"] = [];
   let totalBytes = 0;
@@ -107,6 +108,7 @@ export async function buildSkillEntry(rootId: string, rootDir: string, dir: stri
       skillDigest = digest;
       const { frontmatter, body } = splitSkillMarkdown(bytes.toString("utf8"));
       fields = frontmatter ? extractFields(frontmatter, body) : null;
+      if (frontmatter) rawFrontmatter = JSON.parse(JSON.stringify(frontmatter)) as Record<string, unknown>;
     }
   }
   if (resources.length > MAX_SKILL_RESOURCE_COUNT || totalBytes > MAX_SKILL_TOTAL_BYTES) {
@@ -133,6 +135,7 @@ export async function buildSkillEntry(rootId: string, rootDir: string, dir: stri
     manifestDigest: manifestDigest(resources),
     resources,
     mtimeMs,
+    ...(rawFrontmatter ? { frontmatter: rawFrontmatter } : {}),
   };
   return group ? { entry, explicitGroup: group } : { entry };
 }

@@ -15,15 +15,13 @@ const SkillsGetRequestSchema = z.object({
   params: z.object({ uri: z.string() }).passthrough(),
 });
 
+// The catalog is this user's local skills and is refreshed by a file watcher.
+export const SKILLS_CACHE = { ttlMs: 60_000, cacheScope: "private" } as const;
+
 function toWire(entry: SkillEntry) {
   return {
     uri: entry.uri,
-    frontmatter: {
-      name: entry.name,
-      description: entry.description,
-      ...(entry.invocation === "explicit" ? { "disable-model-invocation": true } : {}),
-      ...(entry.tags.length ? { keywords: entry.tags } : {}),
-    },
+    frontmatter: entry.frontmatter ?? { name: entry.name, description: entry.description },
     resources: entry.resources.map(({ uri, digest, size }) => ({ uri, digest, size })),
   };
 }
@@ -33,11 +31,12 @@ export function registerSkillsExtension(server: McpServer, catalog: Catalog): vo
 
   server.server.setRequestHandler(SkillsListRequestSchema, async () => ({
     skills: [...catalog.list()].sort((a, b) => a.name.localeCompare(b.name)).map(toWire),
+    ...SKILLS_CACHE,
   }));
 
   server.server.setRequestHandler(SkillsGetRequestSchema, async (request) => {
     const entry = catalog.get(request.params.uri);
     if (!entry) throw new McpError(ErrorCode.InvalidParams, `Not a skill served by this server: ${request.params.uri}`);
-    return { skill: toWire(entry) };
+    return { skill: toWire(entry), ...SKILLS_CACHE };
   });
 }

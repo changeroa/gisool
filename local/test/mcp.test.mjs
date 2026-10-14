@@ -27,7 +27,10 @@ function seedSkills(root) {
     files: { "guide.md": "Review guide v1", "refs/checklist.md": "checklist", "refs/style.md": "style" },
   });
   writeFixtureSkill(root, "code-review-notes", { description: "Summarize code review feedback on a pull request" });
-  writeFixtureSkill(root, "release-plan", { description: "Plan a product release with milestones" });
+  writeFixtureSkill(root, "release-plan", {
+    description: "Plan a product release with milestones",
+    frontmatter: { license: "Apache-2.0", metadata: { owner: "release-team", tier: 2 }, "allowed-tools": "Bash(git:*)" },
+  });
 }
 
 async function startDaemon(dir) {
@@ -208,8 +211,16 @@ test("SEP-2640 skills/list and skills/get serve the catalog", () => withDaemon(a
   assert.ok(client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]);
   const list = await client.request({ method: "skills/list", params: {} }, z.object({ skills: z.array(z.any()) }).passthrough());
   assert.deepEqual(list.skills.map((s) => s.frontmatter.name), ["code-review-notes", "pr-review", "release-plan"]);
+  assert.equal(list.ttlMs, 60000);
+  assert.equal(list.cacheScope, "private");
+  assert.deepEqual(list.skills.find((s) => s.frontmatter.name === "release-plan").frontmatter, {
+    name: "release-plan", description: "Plan a product release with milestones",
+    license: "Apache-2.0", metadata: { owner: "release-team", tier: 2 }, "allowed-tools": "Bash(git:*)",
+  });
   const got = await client.request({ method: "skills/get", params: { uri: uriOf("pr-review") } }, z.object({ skill: z.any() }).passthrough());
   assert.equal(got.skill.resources.length, 4);
+  assert.equal(got.ttlMs, 60000);
+  assert.equal(got.cacheScope, "private");
   await assert.rejects(client.request({ method: "skills/get", params: { uri: uriOf("nope") } }, z.object({}).passthrough()), /Not a skill/);
   await client.close();
 }));
