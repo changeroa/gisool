@@ -3,7 +3,30 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { distImport, makeTempDir, removeDir } from "./_helpers.mjs";
 
-const { openDb, selfCheck, SCHEMA_VERSION } = await distImport("store/db.js");
+const { openDb, selfCheck, mergeSplitSessions, SCHEMA_VERSION } = await distImport("store/db.js");
+
+test("mergeSplitSessions folds a Codex session split across conversation_id and runtime_session_id, idempotently", () => {
+  const db = openDb(":memory:");
+  try {
+    const addSession = db.prepare("INSERT INTO sessions (id, runtime, runtime_session_id, conversation_id, started_at, first_prompt) VALUES (?, ?, ?, ?, ?, ?)");
+    addSession.run("otel", "codex", null, "conv-1", 100, "QA prompt");
+    addSession.run("mcp", "codex", "conv-1", "conv-1", 110, null);
+    addSession.run("other-runtime", "gemini", "conv-1", null, 90, null);
+    addSession.run("unrelated", "codex", null, "conv-2", 95, null);
+    const addEvent = db.prepare("INSERT INTO events (id, ts, kind, source, session_id, attribution_method, runtime) VALUES (?, ?, ?, ?, ?, ?, 'codex')");
+    addEvent.run("e1", 100, "prompt", "otel", "otel", "runtime_id");
+    addEvent.run("e2", 111, "search", "mcp", "mcp", "vendor_meta");
+    assert.equal(mergeSplitSessions(db), 1);
+    const ids = db.prepare("SELECT id FROM sessions ORDER BY id").all().map((r) => r.id);
+    assert.deepEqual(ids, ["otel", "other-runtime", "unrelated"]);
+    assert.deepEqual(db.prepare("SELECT id, session_id FROM events ORDER BY id").all().map((r) => [r.id, r.session_id]), [["e1", "otel"], ["e2", "otel"]]);
+    const kept = db.prepare("SELECT runtime_session_id, conversation_id, first_prompt, ended_at FROM sessions WHERE id = 'otel'").get();
+    assert.deepEqual({ ...kept }, { runtime_session_id: "conv-1", conversation_id: "conv-1", first_prompt: "QA prompt", ended_at: null });
+    assert.equal(mergeSplitSessions(db), 0);
+  } finally {
+    db.close();
+  }
+});
 
 test("fresh database migrates to user_version 1 with every table", () => {
   const db = openDb(":memory:");

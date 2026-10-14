@@ -161,6 +161,10 @@ test("writes: session upsert key, openSessions, reattribute, tool_use_id lookup,
   const a = store.upsertSession({ runtime: "codex", conversationId: "thread-1" }, NOW);
   assert.equal(store.upsertSession({ runtime: "codex", conversationId: "thread-1", cwd: "/w" }, NOW - 5), a);
   assert.notEqual(store.upsertSession({ runtime: "claude-code", conversationId: "thread-1" }, NOW), a);
+  // Codex OTel knows only conversation.id; its MCP _meta carries the same id as both sessionId and threadId.
+  assert.equal(store.upsertSession({ runtime: "codex", runtimeSessionId: "thread-1", conversationId: "thread-1" }, NOW + 1), a);
+  const b = store.upsertSession({ runtime: "gemini", runtimeSessionId: "rs-2" }, NOW);
+  assert.equal(store.upsertSession({ runtime: "gemini", conversationId: "rs-2" }, NOW), b);
   const ref = { runtime: "codex", conversationId: "thread-1" };
   store.append(event("search", NOW + 10, ref, { toolUseId: "tu-1", traceId: "tr-9", data: { candidates: [] } }), { sessionId: "unattributed", method: "none", reason: "ambiguous" });
   const evId = store.findEventByToolUseId("tu-1");

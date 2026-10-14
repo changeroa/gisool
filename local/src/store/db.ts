@@ -24,7 +24,52 @@ export function openDb(path: string): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db);
+  mergeSplitSessions(db);
   return db;
+}
+
+/**
+ * Folds sessions that one runtime recorded twice under different id columns (before upsertSession matched either column,
+ * Codex OTel rows carried only conversation_id while its MCP rows carried runtime_session_id) into the earliest row.
+ * Idempotent: a database without such pairs is left unchanged.
+ */
+export function mergeSplitSessions(db: DatabaseSync): number {
+  const pairs = db.prepare(`SELECT d.id AS dup, (
+      SELECT k.id FROM sessions k WHERE k.runtime = d.runtime AND k.id <> d.id
+        AND (k.runtime_session_id IN (d.runtime_session_id, d.conversation_id) OR k.conversation_id IN (d.runtime_session_id, d.conversation_id))
+        AND (k.started_at < d.started_at OR (k.started_at = d.started_at AND k.id < d.id))
+      ORDER BY k.started_at, k.id LIMIT 1) AS keep
+    FROM sessions d WHERE COALESCE(d.runtime_session_id, d.conversation_id) IS NOT NULL`).all() as { dup: string; keep: string | null }[];
+  const merges = pairs.filter((p): p is { dup: string; keep: string } => p.keep !== null);
+  if (merges.length === 0) return 0;
+  // Resolve chains (c -> b -> a) to their root so every duplicate lands on the earliest row.
+  const parent = new Map(merges.map((m) => [m.dup, m.keep]));
+  const root = (id: string): string => (parent.has(id) ? root(parent.get(id)!) : id);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const moveEvents = db.prepare("UPDATE events SET session_id = ? WHERE session_id = ?");
+    const absorb = db.prepare(`UPDATE sessions SET
+        runtime_session_id = COALESCE(runtime_session_id, (SELECT runtime_session_id FROM sessions WHERE id = ?)),
+        conversation_id = COALESCE(conversation_id, (SELECT conversation_id FROM sessions WHERE id = ?)),
+        client_name = COALESCE(client_name, (SELECT client_name FROM sessions WHERE id = ?)),
+        cwd = COALESCE(cwd, (SELECT cwd FROM sessions WHERE id = ?)),
+        first_prompt = COALESCE(first_prompt, (SELECT first_prompt FROM sessions WHERE id = ?)),
+        ended_at = MAX(COALESCE(ended_at, 0), COALESCE((SELECT ended_at FROM sessions WHERE id = ?), 0))
+      WHERE id = ?`);
+    const drop = db.prepare("DELETE FROM sessions WHERE id = ?");
+    for (const { dup } of merges) {
+      const keep = root(dup);
+      moveEvents.run(keep, dup);
+      absorb.run(dup, dup, dup, dup, dup, dup, keep);
+      drop.run(dup);
+    }
+    db.exec("UPDATE sessions SET ended_at = NULL WHERE ended_at = 0");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return merges.length;
 }
 
 export function migrate(db: DatabaseSync): void {

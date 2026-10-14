@@ -123,10 +123,13 @@ export function createWrites(ctx: StoreCtx): Writes {
     },
 
     upsertSession(ref: SessionRef, startedAt: number): string {
-      const key = ref.runtimeSessionId ?? ref.conversationId;
-      if (key !== undefined) {
-        const column = ref.runtimeSessionId !== undefined ? "runtime_session_id" : "conversation_id";
-        const existing = db.prepare(`SELECT * FROM sessions WHERE runtime = ? AND ${column} = ? ORDER BY started_at LIMIT 1`).get(ref.runtime, key) as SessionDbRow | undefined;
+      // A runtime can name one session differently per channel (Codex OTel sends only conversation.id while its MCP _meta sends
+      // sessionId and threadId), so any key of the ref matches either id column.
+      const keys = [ref.runtimeSessionId, ref.conversationId].filter((k): k is string => k !== undefined);
+      if (keys.length > 0) {
+        const marks = keys.map(() => "?").join(", ");
+        const existing = db.prepare(`SELECT * FROM sessions WHERE runtime = ? AND (runtime_session_id IN (${marks}) OR conversation_id IN (${marks}))
+          ORDER BY started_at LIMIT 1`).get(ref.runtime, ...keys, ...keys) as SessionDbRow | undefined;
         if (existing) {
           db.prepare(`UPDATE sessions SET started_at = MIN(started_at, ?), conversation_id = COALESCE(conversation_id, ?),
             runtime_session_id = COALESCE(runtime_session_id, ?), client_name = COALESCE(client_name, ?), cwd = COALESCE(cwd, ?) WHERE id = ?`)
