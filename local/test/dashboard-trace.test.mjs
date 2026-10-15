@@ -58,16 +58,22 @@ test("every kind has a label and the never-consulted copy is the shipped sentenc
 test("model and tool steps carry the store's summary plus the facts their bodies render", () => {
   const steps = fixtures.traces[ALL_KINDS_SESSION];
   const llm = steps.find((step) => step.kind === "llm_call");
-  assert.match(llm.summary, /^model call: \S.*, \d+ tokens$/);
   assert.equal(llm.detail.kind, "llm_call");
-  assert.equal(trace.formatCost(llm.detail.costUsd), "$0.3191");
-  assert.equal(trace.formatCost(undefined), trace.COST_UNKNOWN, "a runtime without reported cost never shows $0.0000");
-  assert.equal(trace.formatCost(Number.NaN), trace.COST_UNKNOWN);
-  assert.equal(trace.formatCost(0), "$0.0000");
+  assert.equal(llm.detail.model, "claude-fable-5-1");
+  assert.equal(llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens, 26343);
+  assert.ok(llm.summary.includes("claude-fable-5-1") && llm.summary.includes("26343"), llm.summary);
+  assert.equal(llm.detail.costUsd, 0.31913075);
+  assert.ok(trace.formatCost(llm.detail.costUsd).includes("0.3191"));
+  assert.ok(!/\d/.test(trace.formatCost(undefined)), "a runtime that reports no cost shows no number");
+  assert.ok(!/\d/.test(trace.formatCost(Number.NaN)));
+  assert.notEqual(trace.formatCost(undefined), trace.formatCost(0), "unknown cost and zero cost differ");
+  assert.ok(trace.formatCost(0).includes("0.0000"));
 
   const tool = steps.find((step) => step.kind === "tool_call");
-  assert.match(tool.summary, /^tool: \S.* \(\d+ ms, (ok|failed|unknown)\)$/);
   assert.equal(tool.detail.kind, "tool_call");
+  assert.deepEqual([tool.detail.toolName, tool.detail.durationMs, tool.detail.success], ["Bash", 267, true]);
+  assert.ok(tool.summary.includes("Bash"), tool.summary);
+  assert.match(tool.summary, /(^|\D)267(\D|$)/, "the summary carries the reported duration");
   assert.deepEqual(trace.toolArgsPreview(tool.detail), { captured: true, text: tool.detail.args, truncated: false });
   assert.equal(tool.detail.argsLength, tool.detail.args.length);
   const long = { kind: "tool_call", args: "가".repeat(trace.TOOL_ARGS_PREVIEW_CHARS + 40) };

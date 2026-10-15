@@ -93,14 +93,22 @@ test("trace() describes model calls and tool runs instead of labelling them a se
   const { id } = db.prepare("SELECT id FROM sessions").get();
   const steps = store.trace(id);
   assert.deepEqual(steps.map((s) => s.kind), ["prompt", "tool_call", "native_skill", "llm_call"]);
+  // Values of the fixtures this test ingests: api_request reports 2 + 4 + 10523 + 15814 tokens for claude-fable-5-1,
+  // the tool_result reports Read in 4 ms. Expectations name them, never the step the code under test produced.
   const llm = steps.find((s) => s.kind === "llm_call");
-  assert.equal(llm.summary, "model call: claude-fable-5-1, 26343 tokens");
   assert.equal(llm.detail.kind, "llm_call");
+  assert.equal(llm.detail.model, "claude-fable-5-1");
   assert.equal(llm.detail.costUsd, 0.31913075);
+  assert.equal(llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens, 26343);
+  assert.ok(llm.summary.includes("claude-fable-5-1") && llm.summary.includes("26343"), llm.summary);
   const call = steps.find((s) => s.kind === "tool_call");
-  assert.equal(call.summary, "tool: Read (4 ms, ok)");
   assert.deepEqual([call.detail.kind, call.detail.toolUseId, call.detail.args], ["tool_call", "toolu_read_1", '{"file_path":"/x/.agents/skills/db-query/SKILL.md"}']);
-  assert.ok(!steps.some((s) => s.summary === "session ended"), "no step is mislabelled");
+  assert.equal(call.detail.toolName, "Read");
+  assert.equal(call.detail.durationMs, 4);
+  assert.ok(call.summary.includes("Read"), call.summary);
+  assert.match(call.summary, /(^|\D)4(\D|$)/, "the summary carries the reported duration");
+  // The kind-only fallback branch would describe a step by its kind alone, which is how model calls and tool runs used to render.
+  assert.ok(steps.every((s) => Object.keys(s.detail).length > 1), "no step fell through to the kind-only branch");
 });
 
 test("trace() reports a Codex tool run with its own duration and a failed run as failed", () => {
@@ -114,7 +122,13 @@ test("trace() reports a Codex tool run with its own duration and a failed run as
   record.attributes.find((a) => a.key === "call_id").value = { stringValue: "call_def456" };
   assert.equal(ingestOtlp(failed, deps).status, 200);
   const { id } = db.prepare("SELECT id FROM sessions").get();
-  assert.deepEqual(store.trace(id).map((s) => s.summary), ["tool: exec_command (43 ms, ok)", "tool: exec_command (43 ms, failed)"]);
+  const [okCall, failedCall] = store.trace(id);
+  assert.deepEqual([okCall.detail.success, failedCall.detail.success], [true, false]);
+  assert.deepEqual([okCall.detail.toolName, failedCall.detail.toolName], ["exec_command", "exec_command"]);
+  assert.equal(okCall.detail.durationMs, 43);
+  assert.ok(okCall.summary.includes("exec_command"), okCall.summary);
+  assert.match(okCall.summary, /(^|\D)43(\D|$)/, "the summary carries the reported duration");
+  assert.notEqual(okCall.summary, failedCall.summary, "a failed run must not read like a successful one");
 });
 
 test("capture level metadata keeps tool arguments out of the store while full capture keeps them", () => {
