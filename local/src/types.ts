@@ -168,12 +168,18 @@ export type FindingUsedSkill = { readonly uri: SkillUri | null; readonly name: s
   readonly rankInSearch: number | null };
 // A skill a LATER turn of the same session used while this turn searched without surfacing it.
 export type FindingMiss = { readonly uri: SkillUri | null; readonly name: string; readonly via: "load" | "native"; readonly turnId: string; readonly ts: number };
+export type FindingAbstention = { readonly reason: AbstainReason; readonly hint: string };
+// abstained is true when ANY search of the turn abstained; abstentions lists every one of them in search order, so a
+// retry that succeeds does not hide the search that surfaced nothing.
 export type TurnFinding = { readonly turnId: string; readonly searched: boolean; readonly queries: readonly string[];
   readonly candidates: readonly FindingCandidate[]; readonly loadedSkills: readonly FindingUsedSkill[];
-  readonly abstained: { readonly reason: AbstainReason; readonly hint: string } | null;
+  readonly abstained: boolean; readonly abstentions: readonly FindingAbstention[];
   readonly nativeWithoutSearch: boolean; readonly missedLater: readonly FindingMiss[]; readonly label: FindingLabel };
 // meanRank averages rankInSearch over the used skills that carry one; null when none did, which is never the same as 0.
+// abstainedSearches counts searches, abstainedTurns counts turns holding at least one of them.
 export type FindingAggregate = { readonly turns: number; readonly labels: Readonly<Record<FindingLabel, number>>;
-  readonly meanRank: number | null; readonly abstentions: number };
+  readonly meanRank: number | null; readonly abstainedSearches: number; readonly abstainedTurns: number };
 export type SessionFinding = { readonly sessionId: string; readonly turns: readonly TurnFinding[]; readonly aggregate: FindingAggregate };
 export type FlowFinding = { readonly id: string; readonly sessions: readonly SessionFinding[]; readonly aggregate: FindingAggregate };
+// Resolves the SKILL.md digest of a skill a turn used, so a load of an identical copy under another uri is recognised.
+export type SkillDigestLookup = (used: { readonly uri: SkillUri | null; readonly loadId: string | null }) => string | undefined;

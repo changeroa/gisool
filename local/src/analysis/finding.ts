@@ -1,5 +1,5 @@
-import type { AbstainReason, AssignedTreeEvent, FindingAggregate, FindingCandidate, FindingLabel, FindingMiss, FindingUsedSkill,
-  FlowFinding, SessionFinding, SessionTree, Store, TurnFinding, TurnTree } from "../types.js";
+import type { AssignedTreeEvent, FindingAbstention, FindingAggregate, FindingCandidate, FindingLabel, FindingMiss, FindingUsedSkill,
+  FlowFinding, SessionFinding, SessionTree, SkillDigestLookup, Store, TurnFinding, TurnTree } from "../types.js";
 import { flowTree, sessionTree } from "./tree.js";
 
 /** The fields of a stored search candidate this analysis reads. `digest` is the SKILL.md digest the search index
@@ -7,7 +7,9 @@ import { flowTree, sessionTree } from "./tree.js";
  * a load event carries only `manifestDigest` (a digest over the resource manifest), which is a different value. */
 type SearchCandidate = { readonly uri: string; readonly name: string; readonly rank: number; readonly digest: string };
 type CandidateGroup = { readonly rank: number; readonly members: readonly SearchCandidate[] };
-type TurnSearch = { readonly query: string; readonly abstained: { reason: AbstainReason; hint: string } | null; readonly groups: readonly CandidateGroup[] };
+type TurnSearch = { readonly query: string; readonly abstained: FindingAbstention | null; readonly groups: readonly CandidateGroup[] };
+type UsedRef = { readonly uri: string | null; readonly name: string; readonly via: "load" | "native"; readonly loadId: string | null;
+  readonly digest: string | null };
 
 const LABELS: readonly FindingLabel[] = ["found_top1", "found_lower", "loaded_outside_results", "native_without_search",
   "searched_none_used", "no_search"];
@@ -23,11 +25,11 @@ function candidateOf(value: unknown): SearchCandidate | null {
   return { uri, name: str(row.name) ?? dirOf(uri), rank: row.rank, digest: str(row.digest) ?? "" };
 }
 
-function abstainedOf(value: unknown): { reason: AbstainReason; hint: string } | null {
+function abstainedOf(value: unknown): FindingAbstention | null {
   if (typeof value !== "object" || value === null) return null;
   const row = value as Record<string, unknown>;
   const reason = str(row.reason);
-  return reason === null ? null : { reason: reason as AbstainReason, hint: str(row.hint) ?? "" };
+  return reason === null ? null : { reason: reason as FindingAbstention["reason"], hint: str(row.hint) ?? "" };
 }
 
 /** R1 of the duplicate research: candidates whose SKILL.md digest is identical are copies of one skill and share one
@@ -54,26 +56,36 @@ function searchOf(event: AssignedTreeEvent): TurnSearch {
     groups: collapse(raw.flatMap((value) => candidateOf(value) ?? [])) };
 }
 
-function usedSkillOf(event: AssignedTreeEvent): { uri: string | null; name: string; via: "load" | "native" } | null {
+function usedSkillOf(event: AssignedTreeEvent, digestOf?: SkillDigestLookup): UsedRef | null {
   if (event.kind !== "load" && event.kind !== "native_skill") return null;
   const uri = event.skillUri ?? str(event.data.uri) ?? str(event.data.skillUri);
   const name = str(event.data.name) ?? (uri === null ? "" : dirOf(uri));
-  return { uri, name, via: event.kind === "load" ? "load" : "native" };
+  const loadId = str(event.data.loadId);
+  return { uri, name, via: event.kind === "load" ? "load" : "native", loadId, digest: digestOf?.({ uri, loadId }) ?? null };
 }
 
-/** A used skill is recognised by its uri, or by its skill name when the uri is unknown (a native activation) or
- * belongs to another root (a copy of the same skill). A uri the search returned always wins over a name match. */
 const matchesUri = (candidate: SearchCandidate, used: { uri: string | null }): boolean => used.uri !== null && candidate.uri === used.uri;
 const matchesName = (candidate: SearchCandidate, used: { name: string }): boolean =>
   used.name !== "" && (candidate.name === used.name || dirOf(candidate.uri) === used.name);
+/** missedLater asks whether a search surfaced a skill at all, which todo 7 words as its uri or its name; this is
+ * deliberately looser than the identity a rank needs. */
 const matches = (candidate: SearchCandidate, used: { uri: string | null; name: string }): boolean =>
   matchesUri(candidate, used) || matchesName(candidate, used);
 
-function rankIn(search: TurnSearch | null, used: { uri: string | null; name: string }): number | null {
+/** A rank belongs to the skill the search actually returned: the same uri, or a candidate with the same SKILL.md
+ * digest, which R1 defines as a copy of that skill. A shared name is never proof of identity, so a known uri the
+ * search did not return stays unranked even when a same-named variant was a candidate. A native activation reports
+ * only a name, so it takes a rank when every candidate carrying that name is one collapsed skill. */
+function rankIn(search: TurnSearch | null, used: UsedRef): number | null {
   if (search === null) return null;
-  const group = search.groups.find((entry) => entry.members.some((member) => matchesUri(member, used)))
-    ?? search.groups.find((entry) => entry.members.some((member) => matchesName(member, used)));
-  return group?.rank ?? null;
+  const byUri = search.groups.find((group) => group.members.some((member) => matchesUri(member, used)));
+  if (byUri) return byUri.rank;
+  const byDigest = used.digest === null ? undefined
+    : search.groups.find((group) => group.members.some((member) => member.digest === used.digest));
+  if (byDigest) return byDigest.rank;
+  if (used.uri !== null) return null;
+  const named = search.groups.filter((group) => group.members.some((member) => matchesName(member, used)));
+  return named.length === 1 ? named[0].rank : null;
 }
 
 /** Label precedence: the strongest evidence of where the used skills came from wins, so a turn that used a native
@@ -89,21 +101,23 @@ function labelOf(searched: boolean, used: readonly FindingUsedSkill[], nativeWit
 /** Reads one turn in event order: a search updates what the next use can be ranked against, so a turn with several
  * searches ranks each load against the latest search before it. `later` holds the turns after this one in the session.
  */
-export function analyzeTurn(turn: TurnTree, later: readonly TurnTree[] = []): TurnFinding {
+export function analyzeTurn(turn: TurnTree, later: readonly TurnTree[] = [], digestOf?: SkillDigestLookup): TurnFinding {
   const searches: TurnSearch[] = [];
   const used: FindingUsedSkill[] = [];
+  const abstentions: FindingAbstention[] = [];
   let latest: TurnSearch | null = null;
   let nativeWithoutSearch = false;
   for (const event of turn.events) {
     if (event.kind === "search") {
       latest = searchOf(event);
       searches.push(latest);
+      if (latest.abstained !== null) abstentions.push(latest.abstained);
       continue;
     }
-    const skill = usedSkillOf(event);
+    const skill = usedSkillOf(event, digestOf);
     if (skill === null) continue;
     if (skill.via === "native" && latest === null) nativeWithoutSearch = true;
-    used.push({ ...skill, ts: event.ts, rankInSearch: rankIn(latest, skill) });
+    used.push({ uri: skill.uri, name: skill.name, via: skill.via, ts: event.ts, rankInSearch: rankIn(latest, skill) });
   }
   // One row per candidate uri; when several searches returned it, the latest search's ranks are the reported ones.
   const candidates = new Map<string, FindingCandidate>();
@@ -122,47 +136,58 @@ export function analyzeTurn(turn: TurnTree, later: readonly TurnTree[] = []): Tu
         const skill = usedSkillOf(event);
         if (skill === null || surfaced.some((candidate) => matches(candidate, skill))) continue;
         const key = skill.uri ?? skill.name;
-        if (!missedLater.has(key)) missedLater.set(key, { ...skill, turnId: next.id, ts: event.ts });
+        if (!missedLater.has(key)) missedLater.set(key, { uri: skill.uri, name: skill.name, via: skill.via, turnId: next.id, ts: event.ts });
       }
     }
   }
   return { turnId: turn.id, searched: searches.length > 0, queries: searches.map((search) => search.query),
     candidates: [...candidates.values()].sort((a, b) => a.rank - b.rank || a.rawRank - b.rawRank || a.uri.localeCompare(b.uri)),
-    loadedSkills: used, abstained: searches.at(-1)?.abstained ?? null,
+    loadedSkills: used, abstained: abstentions.length > 0, abstentions,
     nativeWithoutSearch, missedLater: [...missedLater.values()], label: labelOf(searches.length > 0, used, nativeWithoutSearch) };
 }
 
 export function aggregateFindings(turns: readonly TurnFinding[]): FindingAggregate {
   const labels = Object.fromEntries(LABELS.map((label) => [label, 0])) as Record<FindingLabel, number>;
   const ranks: number[] = [];
-  let abstentions = 0;
+  let abstainedSearches = 0;
+  let abstainedTurns = 0;
   for (const turn of turns) {
     labels[turn.label] += 1;
-    if (turn.abstained !== null) abstentions += 1;
+    abstainedSearches += turn.abstentions.length;
+    if (turn.abstained) abstainedTurns += 1;
     for (const skill of turn.loadedSkills) if (skill.rankInSearch !== null) ranks.push(skill.rankInSearch);
   }
-  return { turns: turns.length, labels, abstentions,
+  return { turns: turns.length, labels, abstainedSearches, abstainedTurns,
     meanRank: ranks.length === 0 ? null : ranks.reduce((sum, rank) => sum + rank, 0) / ranks.length };
 }
 
-export function analyzeSession(tree: SessionTree): SessionFinding {
-  const turns = tree.turns.map((turn, i) => analyzeTurn(turn, tree.turns.slice(i + 1)));
+export function analyzeSession(tree: SessionTree, digestOf?: SkillDigestLookup): SessionFinding {
+  const turns = tree.turns.map((turn, i) => analyzeTurn(turn, tree.turns.slice(i + 1), digestOf));
   return { sessionId: tree.id, turns, aggregate: aggregateFindings(turns) };
 }
 
-export function sessionFinding(store: Pick<Store, "treeSessionData">, sessionId: string): SessionFinding | undefined {
-  const tree = sessionTree(store, sessionId);
-  return tree ? analyzeSession(tree) : undefined;
+/** The SKILL.md digest of what a load actually read, taken from the resource list stored with that load. It is the
+ * same digest a candidate carries, so a load of an identical copy under another uri is recognised as that skill. */
+function loadedDigests(store: Pick<Store, "getLoad">): SkillDigestLookup {
+  return ({ uri, loadId }) => (uri === null || loadId === null
+    ? undefined
+    : store.getLoad(loadId)?.resources.find((resource) => resource.uri === uri)?.digest);
 }
 
-export function flowFinding(store: Pick<Store, "treeSessionData" | "treeFlowData">, flowOrWorkspaceId: string): FlowFinding | undefined {
+export function sessionFinding(store: Pick<Store, "treeSessionData" | "getLoad">, sessionId: string): SessionFinding | undefined {
+  const tree = sessionTree(store, sessionId);
+  return tree ? analyzeSession(tree, loadedDigests(store)) : undefined;
+}
+
+export function flowFinding(store: Pick<Store, "treeSessionData" | "treeFlowData" | "getLoad">, flowOrWorkspaceId: string): FlowFinding | undefined {
   const flow = flowTree(store, flowOrWorkspaceId);
   if (!flow) return undefined;
   const sessions = new Map<string, SessionFinding>();
+  const digestOf = loadedDigests(store);
   for (const tab of flow.tabs) {
     for (const pane of tab.panes) {
       for (const link of pane.sessions) {
-        if (link.session !== null && !sessions.has(link.session.id)) sessions.set(link.session.id, analyzeSession(link.session));
+        if (link.session !== null && !sessions.has(link.session.id)) sessions.set(link.session.id, analyzeSession(link.session, digestOf));
       }
     }
   }

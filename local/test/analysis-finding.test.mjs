@@ -30,8 +30,12 @@ const candidate = (name, rank, { rootId = "agents", digest = `sha256:${name}` } 
   invocation: "automatic", digest, matched: [],
 });
 const searchData = (query, candidates, extra = {}) => ({ query, mode: "discovery", candidates, elapsedMs: 3, total: candidates.length, ...extra });
-const load = (name, offset) => ["load", offset, { traceId: "tr", loadId: `load-${name}-${offset}`, skillUri: uri(name),
-  data: { uri: uri(name), manifestDigest: `sha256:manifest-${name}` } }];
+const abstain = (reason = "no_overlap", hint = "rephrase") => ({ abstained: { reason, hint } });
+const load = (name, offset, skillUri = uri(name)) => ["load", offset, { traceId: "tr", loadId: `load-${name}-${offset}`, skillUri,
+  data: { uri: skillUri, loadId: `load-${name}-${offset}`, manifestDigest: `sha256:manifest-${name}` } }];
+/** Registers what a load actually read, which is where the analysis finds the loaded SKILL.md digest. */
+const putLoad = (store, name, offset, skillUri, digest) => store.putLoad({ loadId: `load-${name}-${offset}`, uri: skillUri,
+  manifestDigest: `sha256:manifest-${name}`, resources: [{ uri: skillUri, digest, size: 120 }] });
 const native = (name, offset) => ["native_skill", offset, { data: { name, via: "otel" } }];
 
 /** Seeds one Claude turn (prompt p1 carries the reported turn key) and returns its finding. */
@@ -58,7 +62,8 @@ test("a turn that loads the top hit reads found_top1 with its query, candidates 
     { uri: uri("docs-writer"), name: "docs-writer", rank: 2, rawRank: 2, copies: 1 },
   ]);
   assert.deepEqual(turn.loadedSkills, [{ uri: uri("database-query"), name: "database-query", via: "load", ts: T + 2000, rankInSearch: 1 }]);
-  assert.equal(turn.abstained, null);
+  assert.equal(turn.abstained, false);
+  assert.deepEqual(turn.abstentions, []);
   assert.equal(turn.nativeWithoutSearch, false);
   assert.deepEqual(turn.missedLater, []);
 });
@@ -183,14 +188,108 @@ test("a load before the turn's only search has no rank", (t) => {
 test("an abstained search keeps its reason and the native use after it is not native_without_search", (t) => {
   // Given
   const { turn } = oneTurn(t, ({ append }) => {
-    append("search", 1000, { traceId: "tr", data: searchData("커밋 메시지 정리해줘", [], { abstained: { reason: "no_overlap", hint: "rephrase" } }) });
+    append("search", 1000, { traceId: "tr", data: searchData("커밋 메시지 정리해줘", [], abstain()) });
     append(...native("commit-helper", 2000));
   });
   // Then
-  assert.deepEqual(turn.abstained, { reason: "no_overlap", hint: "rephrase" });
+  assert.equal(turn.abstained, true);
+  assert.deepEqual(turn.abstentions, [{ reason: "no_overlap", hint: "rephrase" }]);
   assert.deepEqual(turn.candidates, []);
   assert.equal(turn.nativeWithoutSearch, false);
   assert.equal(turn.label, "loaded_outside_results");
+});
+
+test("a later successful search does not erase an earlier abstention", (t) => {
+  // Given: the gate review's E-ABSTENTION fixture - search 1 abstains, search 2 returns the skill the turn loads.
+  const ctx = seeded(t);
+  ctx.append("prompt", 0, { turnKey: "p1" });
+  ctx.append("search", 1000, { traceId: "tr1", data: searchData("unmatched", [], abstain()) });
+  ctx.append("search", 2000, { traceId: "tr2", data: searchData("database", [candidate("database-query", 1)]) });
+  ctx.append(...load("database-query", 3000));
+  // When
+  const finding = sessionFinding(ctx.store, ctx.id);
+  // Then
+  assert.equal(finding.turns[0].abstained, true);
+  assert.deepEqual(finding.turns[0].abstentions, [{ reason: "no_overlap", hint: "rephrase" }]);
+  assert.equal(finding.turns[0].label, "found_top1");
+  assert.deepEqual([finding.aggregate.abstainedSearches, finding.aggregate.abstainedTurns], [1, 1]);
+});
+
+test("two abstained searches in one turn count as two searches and one turn", (t) => {
+  // Given
+  const ctx = seeded(t);
+  ctx.append("prompt", 0, { turnKey: "p1" });
+  ctx.append("search", 1000, { traceId: "tr1", data: searchData("", [], abstain("empty_query", "say what you need")) });
+  ctx.append("search", 2000, { traceId: "tr2", data: searchData("날씨", [], abstain()) });
+  // When
+  const finding = sessionFinding(ctx.store, ctx.id);
+  // Then
+  assert.deepEqual(finding.turns[0].abstentions, [{ reason: "empty_query", hint: "say what you need" },
+    { reason: "no_overlap", hint: "rephrase" }]);
+  assert.deepEqual([finding.aggregate.abstainedSearches, finding.aggregate.abstainedTurns], [2, 1]);
+});
+
+test("a known uri the search did not return stays unranked even when a same-named candidate exists", (t) => {
+  // Given: the gate review's E-RANK fixture - only the agents copy is a candidate, the team skill is loaded.
+  const ctx = seeded(t);
+  const team = "skill://local/team/debug/SKILL.md";
+  ctx.append("prompt", 0, { turnKey: "p1" });
+  ctx.append("search", 1000, { traceId: "tr", data: searchData("debug", [
+    { uri: uri("debug"), name: "debug", description: "debug", score: 1, rank: 1, invocation: "automatic", digest: "sha256:body-agents", matched: [] },
+  ]) });
+  ctx.append(...load("debug", 2000, team));
+  // When
+  const turn = sessionFinding(ctx.store, ctx.id).turns[0];
+  // Then
+  assert.deepEqual(turn.loadedSkills, [{ uri: team, name: "debug", via: "load", ts: T + 2000, rankInSearch: null }]);
+  assert.equal(turn.label, "loaded_outside_results");
+});
+
+test("a same-named variant with a different body stays unranked while an identical copy takes the rank", (t) => {
+  // Given: two turns load the same uri; only the second one read the body the candidate carries.
+  const ctx = seeded(t);
+  const team = "skill://local/team/debug/SKILL.md";
+  const search = () => ctx.append("search", 1000, { traceId: "tr", data: searchData("debug", [
+    { uri: uri("debug"), name: "debug", description: "debug", score: 1, rank: 1, invocation: "automatic", digest: "sha256:body-agents", matched: [] },
+  ]) });
+  ctx.append("prompt", 0, { turnKey: "p1" });
+  search();
+  putLoad(ctx.store, "debug", 2000, team, "sha256:body-team");
+  ctx.append(...load("debug", 2000, team));
+  ctx.append("prompt", 3000, { turnKey: "p2" });
+  ctx.append("search", 4000, { traceId: "tr2", data: searchData("debug", [
+    { uri: uri("debug"), name: "debug", description: "debug", score: 1, rank: 1, invocation: "automatic", digest: "sha256:body-agents", matched: [] },
+  ]) });
+  putLoad(ctx.store, "debug", 5000, team, "sha256:body-agents");
+  ctx.append(...load("debug", 5000, team));
+  // When
+  const { turns } = sessionFinding(ctx.store, ctx.id);
+  // Then
+  assert.deepEqual(turns.map((turn) => [turn.loadedSkills[0].rankInSearch, turn.label]),
+    [[null, "loaded_outside_results"], [1, "found_top1"]]);
+});
+
+test("a native activation takes a rank from its name only when that name is one skill", (t) => {
+  // Given: p1 has one candidate named debug, p2 has two identical copies of it, p3 has two different bodies.
+  const ctx = seeded(t);
+  const named = (rank, rootId, digest) => ({ uri: `skill://local/${rootId}/debug/SKILL.md`, name: "debug", description: "debug",
+    score: 1, rank, invocation: "automatic", digest, matched: [] });
+  ctx.append("prompt", 0, { turnKey: "p1" });
+  ctx.append("search", 1000, { traceId: "tr1", data: searchData("debug", [named(1, "agents", "sha256:body")]) });
+  ctx.append(...native("debug", 2000));
+  ctx.append("prompt", 3000, { turnKey: "p2" });
+  ctx.append("search", 4000, { traceId: "tr2", data: searchData("debug", [candidate("docs-writer", 1),
+    named(2, "agents", "sha256:body"), named(3, "team", "sha256:body")]) });
+  ctx.append(...native("debug", 5000));
+  ctx.append("prompt", 6000, { turnKey: "p3" });
+  ctx.append("search", 7000, { traceId: "tr3", data: searchData("debug", [named(1, "agents", "sha256:body"),
+    named(2, "team", "sha256:other-body")]) });
+  ctx.append(...native("debug", 8000));
+  // When
+  const { turns } = sessionFinding(ctx.store, ctx.id);
+  // Then
+  assert.deepEqual(turns.map((turn) => [turn.loadedSkills[0].rankInSearch, turn.label]),
+    [[1, "found_top1"], [2, "found_lower"], [null, "loaded_outside_results"]]);
 });
 
 test("a skill used in a later turn that this turn's search did not surface is reported as missedLater", (t) => {
@@ -221,15 +320,15 @@ test("session aggregates count labels, average the ranks of used skills and coun
   ctx.append("search", 4000, { traceId: "tr2", data: searchData("docs database", [candidate("docs-writer", 1), candidate("database-query", 2)]) });
   ctx.append(...load("database-query", 5000));
   ctx.append("prompt", 6000, { turnKey: "p3" });
-  ctx.append("search", 7000, { traceId: "tr3", data: searchData("날씨", [], { abstained: { reason: "no_overlap", hint: "rephrase" } }) });
+  ctx.append("search", 7000, { traceId: "tr3", data: searchData("날씨", [], abstain()) });
   // When
   const finding = sessionFinding(ctx.store, ctx.id);
   // Then
   assert.deepEqual(finding.turns.map((turn) => turn.label), ["found_top1", "found_lower", "searched_none_used"]);
   assert.deepEqual(finding.aggregate, { turns: 3, labels: { ...NO_LABELS, found_top1: 1, found_lower: 1, searched_none_used: 1 },
-    meanRank: 1.5, abstentions: 1 });
+    meanRank: 1.5, abstainedSearches: 1, abstainedTurns: 1 });
   assert.equal(finding.sessionId, ctx.id);
-  assert.deepEqual(aggregateFindings([]), { turns: 0, labels: NO_LABELS, meanRank: null, abstentions: 0 });
+  assert.deepEqual(aggregateFindings([]), { turns: 0, labels: NO_LABELS, meanRank: null, abstainedSearches: 0, abstainedTurns: 0 });
 });
 
 test("a finding is recomputed from the store rather than returning the earlier state", (t) => {
@@ -268,7 +367,8 @@ test("flow findings cover every linked session and missing ids return undefined"
   const flow = flowFinding(store, "w");
   // Then
   assert.deepEqual(flow.sessions.map((s) => [s.sessionId, s.turns.map((turn) => turn.label)]), [[id, ["found_top1"]], [other, ["no_search"]]]);
-  assert.deepEqual(flow.aggregate, { turns: 2, labels: { ...NO_LABELS, found_top1: 1, no_search: 1 }, meanRank: 1, abstentions: 0 });
+  assert.deepEqual(flow.aggregate, { turns: 2, labels: { ...NO_LABELS, found_top1: 1, no_search: 1 }, meanRank: 1,
+    abstainedSearches: 0, abstainedTurns: 0 });
   assert.equal(flowFinding(store, "does-not-exist"), undefined);
   assert.equal(sessionFinding(store, "does-not-exist"), undefined);
 });
