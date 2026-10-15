@@ -5,7 +5,7 @@ import { fixture } from "./helpers/ingest.mjs";
 import { event, openStore, uri } from "./helpers/store.mjs";
 
 const { sessionTree, flowTree, outsideHerdr, assembleSession } = await distImport("analysis/tree.js");
-const { createIngestDeps, ingest, ingestOtlp } = await distImport("ingest/pipeline.js");
+const { createIngestDeps, ingest, ingestHook, ingestOtlp } = await distImport("ingest/pipeline.js");
 const { ingestOtlpTraces } = await distImport("ingest/otlp-traces.js");
 const { searchEvent, loadEvent, readFileEvent } = await distImport("ingest/mcp-recorder.js");
 const T = 1760320000000;
@@ -81,6 +81,126 @@ test("ingestion fixtures join MCP and prompts by time, Claude by reported key, a
   assert.equal(codex.unassignedEvents.length, 0);
   assert.equal(claude.unassignedEvents.length, 0);
 });
+
+for (const { first, hookOffset } of [
+  { first: "otel", hookOffset: 1 }, { first: "hook", hookOffset: 1 },
+  { first: "otel", hookOffset: -1 }, { first: "hook", hookOffset: -1 },
+]) {
+  test(`Claude mixed hook and OTLP prompts keep MCP skill usage in the reported turn (${first} first, hook ${hookOffset} ms)`, (t) => {
+    // Given: the reviewer's mixed-source ingestion, including both arrival orders and timestamp skew.
+    const { db, store } = openStore();
+    t.after(() => store.close());
+    const deps = createIngestDeps(store, { now: () => T + hookOffset });
+    const hook = () => assert.deepEqual(ingestHook("claude-code", {
+      hook_event_name: "UserPromptSubmit", session_id: "claude-sess-1", prompt: "Write a commit message please",
+    }, deps), { accepted: 1, dropped: 0 });
+    const otel = () => assert.equal(ingestOtlp(fixture("claude-otlp-user-prompt.json"), deps).status, 200);
+    if (first === "hook") { hook(); otel(); } else { otel(); hook(); }
+    const ctx = { clientName: "claude-code", meta: { sessionId: "claude-sess-1" } };
+    assert.ok(ingest(searchEvent(ctx, { traceId: "mixed-search", query: "debugging", mode: "discovery",
+      candidates: [], elapsedMs: 1 }, { total: 0 }, T + 2), deps));
+    assert.ok(ingest(loadEvent(ctx, { uri: uri("debugging"), loadId: "mixed-load", manifestDigest: "digest",
+      traceId: "mixed-search" }, T + 3), deps));
+    assert.equal(ingestOtlp(fixture("claude-otlp-api-request.json"), deps).status, 200);
+    const id = db.prepare("SELECT id FROM sessions WHERE runtime_session_id = 'claude-sess-1'").get().id;
+    // When
+    const tree = sessionTree(store, id);
+    // Then: the load and actual model usage share the runtime's turn, not just an arbitrary turn count.
+    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [["p-1", T, "reported"]]);
+    const turn = tree.turns[0];
+    for (const kind of ["search", "load"]) assert.equal(turn.events.find((e) => e.kind === kind).basis, "inferred_time");
+    const model = turn.events.find((e) => e.kind === "llm_call");
+    assert.deepEqual([model.basis, model.attribution, model.data.model, model.data.costUsd],
+      ["reported", "single", "claude-fable-5-1", 0.31913075]);
+    assert.deepEqual(model.skills, [uri("debugging")]);
+    assert.deepEqual(turn.skillSpans.map((s) => [s.uri, s.events.map((e) => e.kind)]), [[uri("debugging"), ["llm_call"]]]);
+    if (hookOffset < 0) {
+      assert.deepEqual(tree.unassignedEvents.map((e) => [e.kind, e.source]), [["prompt", "hook"]]);
+    } else {
+      assert.equal(tree.unassignedEvents.length, 0);
+      assert.equal(turn.events.find((e) => e.source === "hook").basis, "inferred_time");
+    }
+  });
+}
+
+for (const first of ["span", "prompt"]) {
+  test(`Codex prompts near turn_input spans keep one reported boundary (${first} first)`, (t) => {
+    // Given: a keyless OTLP prompt and hook have timestamps just before and after the span boundary.
+    const { db, store } = openStore();
+    t.after(() => store.close());
+    const deps = createIngestDeps(store, { now: () => T + 2 });
+    const traces = fixture("codex-otlp-traces.json");
+    const turnSpan = traces.resourceSpans[0].scopeSpans[0].spans[0];
+    turnSpan.startTimeUnixNano = "1760320000001000000";
+    const span = () => assert.equal(ingestOtlpTraces(traces, store, T).kept, 3);
+    const prompts = () => {
+      assert.equal(ingestOtlp(fixture("codex-otlp-user-prompt.json"), deps).status, 200);
+      assert.deepEqual(ingestHook("codex", { hook_event_name: "UserPromptSubmit",
+        session_id: "codex-conv-1", prompt: "로그인 버그 고쳐줘 please" }, deps), { accepted: 1, dropped: 0 });
+    };
+    if (first === "span") { span(); prompts(); } else { prompts(); span(); }
+    const ctx = { clientName: "codex-mcp-client", meta: { threadId: "codex-conv-1" } };
+    assert.ok(ingest(loadEvent(ctx, { uri: uri("debugging"), loadId: "codex-mixed", manifestDigest: "digest" }, T + 3), deps));
+    assert.equal(ingestOtlp(fixture("codex-otlp-tool-result.json"), deps).status, 200);
+    const id = db.prepare("SELECT id FROM sessions WHERE conversation_id = 'codex-conv-1'").get().id;
+    // When
+    const tree = sessionTree(store, id);
+    // Then
+    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [[CODEX_TURN, T + 1, "reported"]]);
+    assert.deepEqual(tree.unassignedEvents.map((e) => [e.kind, e.source]), [["prompt", "otel"]]);
+    const turn = tree.turns[0];
+    assert.equal(turn.events.find((e) => e.source === "hook").basis, "inferred_time");
+    assert.equal(turn.events.find((e) => e.kind === "load").basis, "inferred_time");
+    const call = turn.skillSpans[0].events[0];
+    assert.deepEqual([call.callId, call.basis, call.attribution], ["call_abc123", "span_join", "single"]);
+    assert.deepEqual(call.skills, [uri("debugging")]);
+  });
+}
+
+for (const runtime of ["claude-code", "codex"]) {
+  test(`${runtime} hook-only sessions retain separate synthetic turns without OTLP`, (t) => {
+    // Given
+    const { db, store } = openStore();
+    t.after(() => store.close());
+    let now = T;
+    const deps = createIngestDeps(store, { now: () => now });
+    const payload = { hook_event_name: "UserPromptSubmit", session_id: "hook-only", prompt: "debug" };
+    assert.equal(ingestHook(runtime, payload, deps).accepted, 1);
+    now = T + 1;
+    assert.equal(ingestHook(runtime, payload, deps).accepted, 1);
+    const id = db.prepare("SELECT id FROM sessions WHERE runtime_session_id = 'hook-only'").get().id;
+    const prompts = db.prepare("SELECT id FROM events WHERE kind = 'prompt' ORDER BY ts, rowid").all();
+    // When
+    const tree = sessionTree(store, id);
+    // Then: even close distinct hook-only prompts are preserved, not merged without a reported boundary.
+    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [
+      [`prompt:${prompts[0].id}`, T, "inferred_time"], [`prompt:${prompts[1].id}`, T + 1, "inferred_time"],
+    ]);
+    assert.deepEqual(tree.turns.map((turn) => turn.events.map((e) => e.kind)), [["prompt"], ["prompt"]]);
+    assert.equal(tree.unassignedEvents.length, 0);
+  });
+}
+
+for (const runtime of ["claude-code", "codex"]) {
+  test(`${runtime} prompt deduplication is inclusive at 5 seconds and preserves later fallback turns`, (t) => {
+    // Given: this session has one reported turn; a nearby keyed turn in a different session must not suppress fallback.
+    const { store, id, append, span } = seeded(t, runtime);
+    if (runtime === "codex") span("reported", 0);
+    else append("prompt", 0, { turnKey: "reported" });
+    const near = append("prompt", 5000);
+    const later = append("prompt", 5001);
+    const otherId = store.upsertSession({ runtime, runtimeSessionId: "different-session" }, T + 5001);
+    assert.equal(store.append(event("prompt", T + 5001, { runtime, runtimeSessionId: "different-session" },
+      { turnKey: "other-reported" }), { sessionId: otherId, method: "runtime_id" }), true);
+    // When
+    const tree = sessionTree(store, id);
+    // Then
+    assert.deepEqual(tree.turns.map((turn) => turn.id), ["reported", `prompt:${later}`]);
+    assert.equal(tree.turns[0].events.find((e) => e.id === near).basis, "inferred_time");
+    assert.equal(tree.turns[1].events[0].id, later);
+    assert.equal(tree.turns[1].basis, "inferred_time");
+  });
+}
 
 test("Claude activation groups two reported tool calls into one single-skill span", (t) => {
   // Given
@@ -180,8 +300,8 @@ test("Codex missing turn spans produce synthetic prompt turns without consuming 
   const { store, id, append, span } = seeded(t, "codex");
   span("c1", 0);
   append("prompt", 0);
-  const prompt = append("prompt", 10);
-  const action = append("tool_call", 11);
+  const prompt = append("prompt", 10000);
+  const action = append("tool_call", 10001);
   // When
   const tree = sessionTree(store, id);
   // Then

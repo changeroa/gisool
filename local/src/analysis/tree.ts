@@ -1,5 +1,7 @@
 import type { AssignedTreeEvent, FlowTree, SessionTree, SkillSpan, Store, TreeEvent, TreeSessionData, TurnBasis, TurnTree } from "../types.js";
 
+const PROMPT_JOIN_WINDOW_MS = 5_000;
+
 /** Pure assembly: timestamps decide keyless membership; row order breaks equal-time event ties.
  * A boundary at the same timestamp wins over the preceding turn, independent of ingest order.
  */
@@ -18,18 +20,19 @@ export function assembleSession(data: TreeSessionData): SessionTree {
     }
   }
   const prompts = data.events.filter((e) => e.kind === "prompt");
-  for (let i = 0; i < prompts.length; i += 1) {
-    const prompt = prompts[i];
-    if (!prompt) continue;
-    if (prompt.turnKey !== null) {
-      if (!boundaries.has(prompt.turnKey)) add(prompt.turnKey, prompt.ts, "reported");
-    } else {
-      // A turn_input in this prompt's interval supplies its boundary; otherwise the prompt is synthetic.
-      const next = prompts[i + 1]?.ts ?? Infinity;
-      const previous = prompts[i - 1]?.ts ?? -Infinity;
-      const spanBoundary = data.runtime === "codex" && [...boundaries.values()].some((b) =>
-        b.startedAt === prompt.ts || (b.startedAt > previous && b.startedAt < next && b.startedAt <= prompt.ts));
-      if (!spanBoundary) add(`prompt:${prompt.id}`, prompt.ts, "inferred_time");
+  // Collect every reported boundary before considering fallbacks, including telemetry received after a hook.
+  for (const prompt of prompts) {
+    if (prompt.turnKey !== null && !boundaries.has(prompt.turnKey)) add(prompt.turnKey, prompt.ts, "reported");
+  }
+  const reportedBoundaries = [...boundaries.values()];
+  for (const prompt of prompts) {
+    if (prompt.turnKey !== null) continue;
+    // Hook and OTLP observations of one prompt can have slightly different timestamps.
+    // Keep reported timestamps authoritative; keyless observations still use the normal time join below.
+    const nearReported = (data.runtime === "claude-code" || data.runtime === "codex") &&
+      reportedBoundaries.some((b) => Math.abs(b.startedAt - prompt.ts) <= PROMPT_JOIN_WINDOW_MS);
+    if (!nearReported) {
+      add(`prompt:${prompt.id}`, prompt.ts, "inferred_time");
     }
   }
   const ordered = [...boundaries.values()].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
