@@ -64,7 +64,9 @@ export type SkillUsageAggregate = {
 };
 
 export type FlowUsage = { readonly id: string; readonly sessions: readonly SessionUsage[]; readonly skills: readonly SkillUsageAggregate[] };
-export type RangeUsage = { readonly from: number; readonly to: number; readonly sessions: readonly SessionUsage[]; readonly skills: readonly SkillUsageAggregate[] };
+/** `skills` always covers every eligible session of the range; `truncated` reports a shortened `sessions` detail list. */
+export type RangeUsage = { readonly from: number; readonly to: number; readonly sessionCount: number; readonly truncated: boolean;
+  readonly sessions: readonly SessionUsage[]; readonly skills: readonly SkillUsageAggregate[] };
 
 const KOREAN_CORRECTIONS = ["아니", "다시", "틀렸", "잘못", "그게 아니", "왜 안"] as const;
 const ENGLISH_CORRECTIONS = ["no,", "wrong", "again", "that's not", "undo", "revert"] as const;
@@ -154,11 +156,28 @@ function readFileBelongsTo(event: AssignedTreeEvent, span: SkillSpan): boolean {
   return skillUri.split("/").at(-2) === span.name;
 }
 
+const PATH_CHAR = /[A-Za-z0-9._-]/;
+
+function normalizeSeparators(path: string): string {
+  return path.replace(/\\+/g, "/");
+}
+
+/** A directory matches only on a path-segment boundary, so `/skills/db-query` never swallows `/skills/db-query-backup`. */
+function referencesDirectory(haystack: string, dir: string): boolean {
+  for (let at = haystack.indexOf(dir); at >= 0; at = haystack.indexOf(dir, at + 1)) {
+    const before = haystack[at - 1];
+    const after = haystack[at + dir.length];
+    if ((before === undefined || !PATH_CHAR.test(before)) && (after === undefined || !PATH_CHAR.test(after))) return true;
+  }
+  return false;
+}
+
 /** Native skills leave no MCP trail, so a tool argument naming a file inside the skill directory is counted as a read. */
 function argsReferenceSkillDir(event: AssignedTreeEvent, span: SkillSpan, dirHint: string | null): boolean {
   if (event.text === null) return false;
-  if (dirHint !== null && event.text.includes(dirHint)) return true;
-  return event.text.includes(`/${span.name}/`) || event.text.includes(`\\${span.name}\\`);
+  const haystack = normalizeSeparators(event.text);
+  if (dirHint !== null && referencesDirectory(haystack, normalizeSeparators(dirHint))) return true;
+  return haystack.includes(`/${span.name}/`);
 }
 
 function supportingReadsOf(span: SkillSpan, turn: TurnTree): SupportingRead[] {
@@ -296,14 +315,25 @@ export function flowUsage(store: Pick<Store, "treeSessionData" | "treeFlowData">
   return { id: flow.id, sessions, skills: aggregateUsage(sessions.flatMap((s) => s.spans)) };
 }
 
-/** Usage of the sessions in a time range; `limit` keeps the scan bounded and automated sessions follow the store filter. */
+/**
+ * Usage of the sessions in a time range. Every eligible session is analysed and aggregated; an optional
+ * `detailLimit` shortens only the per-session list and then says so through `truncated` and `sessionCount`.
+ */
 export function rangeUsage(store: Pick<Store, "treeSessionData" | "sessions">,
-  opts: { from: number; to: number; limit?: number; automated?: Filter["automated"] }): RangeUsage {
-  const limit = Math.max(1, Math.min(100, Math.floor(opts.limit ?? 100)));
+  opts: { from: number; to: number; detailLimit?: number; automated?: Filter["automated"] }): RangeUsage {
   const filter: Filter = { from: opts.from, to: opts.to, ...(opts.automated !== undefined ? { automated: opts.automated } : {}) };
-  const sessions = store.sessions(filter).slice(0, limit).flatMap((row) => {
+  const detailLimit = opts.detailLimit === undefined ? undefined : Math.max(0, Math.floor(opts.detailLimit));
+  const sessions: SessionUsage[] = [];
+  const spans: SkillSpanUsage[] = [];
+  let sessionCount = 0;
+  for (const row of store.sessions(filter)) {
     const tree = sessionTree(store, row.id);
-    return tree ? [sessionUsage(tree)] : [];
-  });
-  return { from: opts.from, to: opts.to, sessions, skills: aggregateUsage(sessions.flatMap((s) => s.spans)) };
+    if (!tree) continue;
+    const usage = sessionUsage(tree);
+    sessionCount += 1;
+    spans.push(...usage.spans);
+    if (detailLimit === undefined || sessions.length < detailLimit) sessions.push(usage);
+  }
+  return { from: opts.from, to: opts.to, sessionCount, truncated: sessions.length < sessionCount, sessions,
+    skills: aggregateUsage(spans) };
 }

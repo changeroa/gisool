@@ -213,6 +213,46 @@ test("supporting reads come from gisool read_file events and, for native skills,
   assert.deepEqual([commit.followThrough, pdf.followThrough], [2, 2]);
 });
 
+test("a native skill's supporting reads stop at the directory boundary", (t) => {
+  // Given: a sibling directory whose name starts with the skill's name, and a file nested inside the skill.
+  const { store, append, id } = seeded(t);
+  append("prompt", 0, { turnKey: "t1", text: "Implement the query" });
+  append("native_skill", 1000, { turnKey: "t1", data: { name: "db-query", via: "file_read", path: "/skills/db-query/SKILL.md" } });
+  append("tool_call", 2000, { turnKey: "t1", text: JSON.stringify({ command: "cat /skills/db-query-backup/reference.md" }),
+    data: { toolName: "Bash", success: true } });
+  const nested = append("tool_call", 3000, { turnKey: "t1", text: JSON.stringify({ command: "cat /skills/db-query/reference/deep.md" }),
+    data: { toolName: "Bash", success: true } });
+  // When
+  const [span] = sessionUsage(sessionTree(store, id)).spans;
+  // Then: only the nested file is a supporting read, while both calls remain follow-through.
+  assert.deepEqual(span.supportingReads.map((r) => [r.eventId, r.label]), [[nested, "heuristic"]]);
+  assert.equal(span.followThrough, 2);
+});
+
+test("range usage aggregates every eligible session and declares a shortened detail list", (t) => {
+  // Given: 101 sessions in the range, one skill span and one tool call each.
+  const { db, store } = openStore();
+  t.after(() => store.close());
+  for (let i = 0; i < 101; i += 1) {
+    const ref = { runtime: "claude-code", runtimeSessionId: `range-${i}` };
+    const sessionId = store.upsertSession(ref, T + i * 100);
+    const add = (kind, delta, extra = {}) =>
+      assert.equal(store.append(event(kind, T + i * 100 + delta, ref, extra), { sessionId, method: "runtime_id" }), true);
+    add("prompt", 0, { turnKey: "t", text: "Implement the query" });
+    add("load", 10, { turnKey: "t", skillUri: uri("database-query"), data: { uri: uri("database-query") } });
+    add("tool_call", 20, { turnKey: "t", data: { toolName: "Bash", success: true } });
+  }
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sessions").get().n, 101);
+  // When
+  const whole = rangeUsage(store, { from: T - 1, to: T + 101 * 100 });
+  const capped = rangeUsage(store, { from: T - 1, to: T + 101 * 100, detailLimit: 10 });
+  // Then: the aggregate covers all 101 either way, and a shortened detail list says so.
+  assert.deepEqual([whole.sessionCount, whole.sessions.length, whole.truncated], [101, 101, false]);
+  assert.deepEqual(whole.skills.map((s) => [s.skill, s.spans, s.followThrough]), [[uri("database-query"), 101, 101]]);
+  assert.deepEqual([capped.sessionCount, capped.sessions.length, capped.truncated], [101, 10, true]);
+  assert.deepEqual(capped.skills.map((s) => [s.spans, s.followThrough]), [[101, 101]]);
+});
+
 test("aggregates sum spans per skill and keep an unknown cost unknown", (t) => {
   // Given: the same skill active in two turns, one with a reported cost and one without.
   const { store, append, id } = seeded(t);
@@ -254,6 +294,7 @@ test("flow and range usage report the same spans for a herdr-linked session", (t
   assert.deepEqual(flow.sessions.map((s) => s.spans.map((span) => [span.uri, span.followThrough])), [[[uri("pr-review-ko"), 1]]]);
   assert.deepEqual(flow.skills.map((s) => [s.skill, s.spans, s.followThrough]), [[uri("pr-review-ko"), 1, 1]]);
   assert.deepEqual(range.sessions.map((s) => s.sessionId), [id]);
+  assert.deepEqual([range.sessionCount, range.truncated], [1, false]);
   assert.deepEqual(range.skills.map((s) => s.skill), [uri("pr-review-ko")]);
   assert.equal(flowUsage(store, "does-not-exist"), undefined);
 });
