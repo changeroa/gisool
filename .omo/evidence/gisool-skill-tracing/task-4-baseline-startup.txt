@@ -1,0 +1,53 @@
+status: completed exit_code: 0
+
+> gisool@0.1.0 build
+> tsc -p tsconfig.json && node build-dashboard.mjs
+
+Built dashboard: /Users/victor/projects/gisul-wt/gst-w1-t4/local/dist/dashboard/
+✔ OTLP POST is accepted with 202, publishes a SessionRow over SSE, and lists in /api/sessions (40.431041ms)
+✔ hook ingest accepts known runtimes with 202 and rejects unknown ones (4.072ms)
+✔ read endpoints return their DTOs and validate parameters (5.577416ms)
+✔ /api/stats counts unattributed MCP activity in the filter range and reports no-data runtimes as null (14.184125ms)
+✔ POST /api/eval-cases stores a case and validates the body (1.594542ms)
+✔ Streamable HTTP MCP works through the composed daemon (4.942458ms)
+✔ binds 127.0.0.1 only and /healthz answers without auth (22.758042ms)
+✔ wrong Host, foreign Origin, and cross-site fetches are refused with 403 (12.153542ms)
+✔ modern MCP retains Host Origin bearer and body boundaries in the composed server (10.161792ms)
+✔ missing or wrong bearer on /mcp, /ingest, and /api is 401 (1.116583ms)
+✔ case and percent-encoding variants of protected paths never reach a handler without auth (2.134334ms)
+✔ routing is case-sensitive; lowercase protected paths behave unchanged (1.194625ms)
+✔ GET /?token= sets an HttpOnly SameSite=Strict cookie that works for /api only (1.630833ms)
+✔ dashboard index is served uncached (1.571625ms)
+✔ non-JSON mutations are 415; OTLP protobuf gets an http/json hint (1.086125ms)
+✔ body limits: 2 MB JSON is 413, 9 MB OTLP is 413 and counted as rejected (23.768083ms)
+✔ auth runs before body parsing: an unauthenticated 2 MB ingest body is 401, not 413, and is not counted (8.03875ms)
+✔ malformed /assets paths are 400 or 404, never 500 (1.17975ms)
+✔ a second server on the same port fails with port_in_use (6.196292ms)
+✔ the CLI exits 1 with port_in_use when the port is taken (165.502667ms)
+✔ daemon log is written under GISOOL_HOME/logs and rotates with one backup (1.0315ms)
+✔ daemon end to end: MCP, OTLP and hook ingest, dashboard API, restart, and real configs untouched (449.646375ms)
+ℹ real-config before 405e154f3c5ef181f5b06d579a17cfae33aa435fbd2faf0a043332d41aca18d5 /Users/victor/.claude.json
+ℹ real-config before 8838ef1f2f4dc883337bca238e9622977535fa7a1258c47f212fae1e9483e173 /Users/victor/.claude/settings.json
+ℹ real-config before 14ec5cf1ea1a1745c8ae4981b26ccd20def16b58b25871312a087e602b57575a /Users/victor/.codex/config.toml
+ℹ real-config before f076c5a1684187aff3b42aa3ae36b25c20bdc2ca2e564b68a97b7b178c4aed4b /Users/victor/.gemini/settings.json
+ℹ real-config before 3c06d75661a6f8f0ee6f626fdb5ead0b58e1b33f20706368a8bb582c81ac5c60 /Users/victor/.omo/agent/mcp.json
+ℹ real-config before 36e8f564ffa0976805f2191135dc45757a2b6c67fa20c937645b9702b79e0994 /Users/victor/.gjc/agent/mcp.json
+ℹ real-config before absent /Users/victor/.openclaw/openclaw.json
+ℹ real-config after  405e154f3c5ef181f5b06d579a17cfae33aa435fbd2faf0a043332d41aca18d5 /Users/victor/.claude.json
+ℹ real-config after  8838ef1f2f4dc883337bca238e9622977535fa7a1258c47f212fae1e9483e173 /Users/victor/.claude/settings.json
+ℹ real-config after  14ec5cf1ea1a1745c8ae4981b26ccd20def16b58b25871312a087e602b57575a /Users/victor/.codex/config.toml
+ℹ real-config after  f076c5a1684187aff3b42aa3ae36b25c20bdc2ca2e564b68a97b7b178c4aed4b /Users/victor/.gemini/settings.json
+ℹ real-config after  3c06d75661a6f8f0ee6f626fdb5ead0b58e1b33f20706368a8bb582c81ac5c60 /Users/victor/.omo/agent/mcp.json
+ℹ real-config after  36e8f564ffa0976805f2191135dc45757a2b6c67fa20c937645b9702b79e0994 /Users/victor/.gjc/agent/mcp.json
+ℹ real-config after  absent /Users/victor/.openclaw/openclaw.json
+✔ captureLevel metadata stores the prompt digest without text (194.416875ms)
+✔ a wrong bearer token gets 401 on /ingest and records no session (201.552125ms)
+✔ restarting without a root marks that root's skills removed (31.732709ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1098.98875

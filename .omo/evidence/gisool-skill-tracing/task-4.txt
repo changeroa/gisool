@@ -1,0 +1,235 @@
+Task 4: Follow herdr live (required dependency)
+Worktree: /Users/victor/projects/gisul-wt/gst-w1-t4
+Branch: gst-w1-t4
+Base: b3dbb7c86f27959253a8db98aeb48aafde300a9f
+Date: 2026-10-15
+
+Scope and initial state
+  npm ci was the first worktree command, from local/: exit 0, 93 packages,
+  0 vulnerabilities. npm warned that esbuild's install script was not approved;
+  the actual dashboard builds subsequently succeeded.
+  Initial git status --short was empty. No unrelated edits were reverted.
+  No source, packs, doctor files, or tests owned by task 5 were edited.
+  The main checkout was only read for the expressly requested plan, absent in
+  this worktree. No command ran or wrote in the main checkout.
+  No delegation, real agent starts, push, or real configuration edits.
+  Local skill discovery was attempted but the gisool MCP connection failed;
+  installed programming/git/runtime guidance was read directly instead.
+
+Baseline before source edits
+  cd local && npm run build &&
+    node --test test/api-*.test.mjs test/server-catalog-sync.test.mjs test/e2e/daemon.test.mjs
+  Exit 0: 25 tests, 25 passed, 0 failed, 0 skipped.
+  Full output: task-4-baseline-startup.txt.
+  Then existing test sandboxes were set GISOOL_HERDR=off centrally in
+  local/test/_helpers.mjs, including subprocess environments. No assertions
+  in existing tests were changed.
+
+Step 0 protocol dump
+  task-4-herdr-dump/ contains:
+    herdr --version
+    herdr status server
+    herdr --help
+    herdr workspace --help
+    herdr pane --help
+    herdr agent --help
+    herdr api schema --json
+    socket NDJSON {"id":"1","method":"session.snapshot","params":{}}
+  Version 0.8.2, protocol 20.
+  socket: /Users/victor/.config/herdr/herdr.sock
+  Status and help subprocesses were bounded to 10 seconds during capture.
+  Nested QA command help is saved beside the required dumps.
+  The schema confirms these 12 subscriptions require no pane_id:
+    workspace.created, workspace.renamed, workspace.closed,
+    tab.created, tab.renamed, tab.closed, pane.created, pane.updated,
+    pane.moved, pane.closed, pane.exited, pane.agent_detected.
+  No pane.agent_status_changed, pane.output_matched, pane.scroll_changed.
+  Runtime truth: one-shot RPC connections CLOSE after their response;
+  events.subscribe keeps its connection open and may replay historical events.
+  The implementation and fake server both model this distinction.
+
+Implementation
+  local/src/herdr/client.ts: only ping/session.snapshot/events.subscribe are
+  expressible methods. Override or one-time status discovery (5 second timeout),
+  abortable discovery, independent one-shot RPC sockets, persistent subscription,
+  NDJSON buffering, malformed-line rejection, request timeout, bounded buffering,
+  1/2/4/8/16/30 second capped reconnect, state-change-only connectivity logs,
+  and cleanup of requests, sockets, child discovery and retry timer.
+  local/src/herdr/sync.ts: typed snapshot parsing, transactional topology upsert,
+  authoritative missing-row closure, pushed closure cascades, event refresh,
+  30 second reconcile, reconnect snapshot and stale-response generation guard.
+  Reported sources already beginning herdr: are preserved, not double-prefixed.
+  Pending reported values link through runtime_session_id OR conversation_id.
+  Any pane without usable reported identity can infer matching cwd/time sessions,
+  labelled inferred:cwd_time. No cwd means no invented session link.
+  server.ts starts the follower without awaiting herdr availability, stops it
+  before its DB closes, and coalesces synchronous ingest notifications into
+  a microtask linking pass. GISOOL_HERDR=off disables discovery and sockets.
+
+Acceptance and adversarial tests
+  node --test test/herdr-sync.test.mjs: 11 passed, 0 failed.
+  Includes two-pane topology, preseeded runtime id, later conversation id,
+  claude/pi/codex cwd inference, no cwd, too-old session exclusion, unusable
+  path identity, unmatched reported id, immediate pane.closed, garbage/partial
+  NDJSON, actual socket close/reconnect, stale snapshot, 30 second reconcile,
+  /healthz 200 with missing socket, off switch, real HTTP hook late linking,
+  override resolution, misleading status stdout, and a hung status executable
+  killed by the production timeout. Existing real-herdr access is disabled.
+  Fake tests subscribe to DB triggers or protocol/log events before actions;
+  periodic reconciliation uses the test clock, not sleeps or polling.
+
+Mutation
+  Edited only dist/herdr/sync.js: reported-link UPDATE WHERE became WHERE 0 AND.
+  node --test --test-name-pattern="preseeded runtime identity" test/herdr-sync.test.mjs
+  Exit 1: assertion actual null, expected 'preseeded'; 1 test failed.
+  npm run build restored generated output: exit 0.
+  Full failure output: task-4-mutation-negative.txt.
+
+Gates
+  cd local && npm run build && npm run typecheck && npm test
+  Exit 0: 285 tests, 285 passed, 0 failed, 0 cancelled, 0 skipped.
+  Original full transcript: task-4-full-gates.txt.
+  Final source-prefix correction gates: task-4-final-gates.txt.
+  TypeScript LSP: client.ts, sync.ts and server.ts have zero diagnostics.
+  No failing baseline tests were hidden, skipped, or weakened.
+
+Real surface and cleanup
+  Reproducible script: task-4-qa.mjs; complete successful output:
+  task-4-real-qa.txt and task-4-real-qa-final.txt.
+  Shell setup, HOME deliberately on its own line:
+    cd /Users/victor/projects/gisul-wt/gst-w1-t4
+    export QA_REAL_HOME="$HOME"
+    export HOME=$(mktemp -d)
+    export GISOOL_HOME=$HOME/.gisool GISOOL_NO_CLI=1
+    export GISOOL_HERDR_SOCKET=/Users/victor/.config/herdr/herdr.sock
+    node .omo/evidence/gisool-skill-tracing/task-4-qa.mjs
+  The sandbox daemon runs node local/dist/cli/main.js serve --port <free-port>.
+  Only QA CLI invocations retain the original HOME to reach the real herdr.
+  All topology mutations explicitly target the newly created QA workspace.
+  Commands discovered from saved help:
+    herdr workspace create --cwd <temp-HOME> --label gst-task4-qa --no-focus
+    herdr pane split <root-pane> --direction right --cwd <temp-HOME> --no-focus
+    herdr pane run <new-pane> "printf 'GST_PANE=%s\n' \"$HERDR_PANE_ID\""
+    herdr pane wait-output <new-pane> --match GST_PANE=<new-pane> --timeout 10000
+    herdr pane read <new-pane> --source recent-unwrapped --lines 30
+    herdr workspace close <QA-workspace>
+  Proven id triple: split wK:p2 == session.snapshot wK:p2 ==
+  printed $HERDR_PANE_ID wK:p2. Matching terminal text is in wait-output's
+  result.read.text; pane read itself can return empty stdout with exit 0
+  on this installed version, so empty success was NOT accepted as evidence.
+  Sandbox DB had workspace wK and pane wK:p2 with actual cwd.
+  Synthetic authenticated SessionStart hook, not an agent process, produced
+  a pane_sessions row with source inferred:cwd_time and a non-null session_id.
+  /var temp HOME resolves to /private/var inside herdr, so the hook uses the
+  observed snapshot cwd exactly, rather than inventing path equivalence.
+  Closed wK, confirmed absent from session.snapshot and closed_ms in DB.
+  Daemon PID 5322 exited [0,null], port 49447 rebound successfully, and
+  /var/folders/p6/2s6_p7017f1bd4sdm4x_7r700000gn/T/tmp.a2lB18IBXv was removed.
+  Final source-preservation QA also passed: split/snapshot/printed id wM:p2;
+  source counts herdr:codex=4 and inferred:cwd_time=2. Workspace wM closed
+  and absent from snapshot, daemon exit [0,null], port 52920 free, and
+  /var/folders/p6/2s6_p7017f1bd4sdm4x_7r700000gn/T/tmp.uHLB5Gdhs1 removed.
+  Evidence normalizes trailing whitespace only; command content is retained.
+  Earlier QA attempts are saved rather than hidden:
+    1: exposed one-shot RPC closure; fixed client and fake.
+       wG closed and absent, daemon exit 0, port 60397 free, temp HOME removed.
+    2: DB rows existed, but a macOS directory watcher missed WAL writes.
+       QA now watches the actual WAL. wH closed/absent, port 63780 free,
+       daemon exit 0 and temp HOME removed.
+    3: pane read exit 0 had empty stdout; switched proof to wait-output's
+       embedded terminal snapshot. wJ closed/absent, port 64862 free,
+       daemon exit 0 and temp HOME removed.
+  No live user workspace or pane was closed or sent input.
+
+Assumptions and residual limits
+  Usable reported identity means a nonempty agent_session of kind id;
+  path/malformed/empty identities use the explicitly labelled cwd fallback.
+  Snapshot 0.8.2 has no creation timestamps; absent created_ms is first observed
+  time, retained on upsert. Earlier unknown lifetimes are not fabricated.
+  cwd inference is not proof of identity: concurrent same-cwd panes may both
+  link the same session, as the required heuristic allows.
+  Socket discovery runs once. If status cannot supply a path, the daemon keeps
+  serving; supplying GISOOL_HERDR_SOCKET or restarting allows discovery again.
+
+Verifier follow-up: T4-RECOVERY and T4-LATE-INGEST (2026-10-15)
+  This section supersedes the original discovery limitation above.
+  Base for this correction: 33a0cd6, branch gst-w1-t4; worktree initially clean.
+  Read-only report:
+    /Users/victor/projects/gisul/.omo/evidence/gisool-skill-tracing-todo-4-gate-review.md
+  Main checkout and task-5-owned files remain unmodified; no delegation.
+
+  Both new regressions were run against unchanged implementation before fixing:
+    cd local && node --test --test-name-pattern="discovery recovers|binding-only hook" test/herdr-sync.test.mjs
+  Exit 1, 2 tests failed:
+    recovery: no connected signal after exposing working discovery and advancing
+      the controlled clock 120000 ms; health remains 200.
+    binding-only: HTTP 202 creates the matching session but the reported link
+      remains NULL and no cwd-inferred link is made.
+  Raw output: task-4-verifier-before-fix.txt.
+
+  T4-RECOVERY correction:
+    Each connect attempt now resolves GISOOL_HERDR_SOCKET or runs bounded
+    herdr status server anew. Discovery rejection and socket disconnection use
+    the same reconnect scheduler: 1/2/4/8/16/30 seconds, capped at 30 seconds.
+    No failed discovery is terminal; connectivity logs remain state transitions.
+    The existing 5-second command timeout, abort signal, shutdown guard, and
+    cleanup of retry timers and sockets remain in force.
+    Regression uses a real disposable executable and real Unix sockets with
+    mocked production timers, and subscribes to readiness before advancing time.
+    It verifies initial discovery failure, health 200, recovery without restart,
+    and rediscovery of a different socket after the first socket disappears.
+
+  T4-LATE-INGEST correction:
+    Added an ingest sessionChanged notification distinct from event publication.
+    Common event attribution notifies for hooks, OTLP and MCP, even if a replay
+    later makes append return false; binding-only upserts notify independently.
+    The daemon coalesces these notifications into its existing microtask linking
+    pass. Binding-only hooks do not invent events or unnecessary SSE publication.
+    Periodic snapshot reconciliation also retries every NULL pane_sessions link,
+    including reported identities for panes absent from the new snapshot and
+    inferred rows whose stored value is the gisool session id.
+    Coverage verifies binding-only session creation, existing-session cwd updates,
+    actual OTLP and MCP HTTP ingestion, and 30-second reconciliation without any
+    ingest notification or push. Tests freeze reconciliation when proving prompt
+    linking, and assert exactly one initial snapshot and no SessionStart control.
+
+  Focused checks after the fix:
+    npm run build && node --test --test-name-pattern="discovery recovers|binding-only hook" test/herdr-sync.test.mjs
+    Exit 0, both reproductions pass (task-4-verifier-fixed-reproductions.txt).
+    node --test test/herdr-sync.test.mjs test/ingest-pipeline.test.mjs
+    Exit 0, 23 passed, 0 failed/skipped (task-4-verifier-focused-tests.txt).
+    TypeScript diagnostics for herdr/, server.ts and ingest/pipeline.ts: clean.
+    Timed behavior uses fake clocks; bounded deadlines stay real. No sleeps or
+    polling were added. Disposable daemons, sockets, databases, PATH changes and
+    discovery executables are cleaned by test teardown.
+
+  Required mutation checks, generated output only:
+    T4-RECOVERY: replaced dist/herdr/client.js discovery-rejection scheduler with
+      a log-only transition. Ran node --test --test-name-pattern="discovery recovers" test/herdr-sync.test.mjs.
+      Exit 1, recovery test fails with no connected signal. npm run build restores
+      output, then the same test passes (1 passed, 0 failed).
+      task-4-verifier-recovery-mutation.txt and
+      task-4-verifier-recovery-restored.txt contain both receipts.
+    T4-LATE-INGEST: removed only the binding-upsert sessionChanged call from
+      dist/ingest/pipeline.js. Ran node --test --test-name-pattern="binding-only hook links reported" test/herdr-sync.test.mjs.
+      Exit 1, reported session_id NULL and missing inferred row versus two
+      expected session links. task-4-verifier-ingest-mutation.txt has the failure.
+      npm run build restores output and the same test passes.
+    No mutation was made in tracked source or committed dist output.
+
+  Final gates and restored-output proof:
+    cd local && npm run build &&
+      node --test --test-name-pattern="binding-only hook links reported" test/herdr-sync.test.mjs &&
+      npm run typecheck && npm test
+    Exit 0: restored regression 1/1; complete suite 291/291 passed,
+    0 failed, 0 cancelled, 0 skipped. Build and typecheck passed.
+    Raw output: task-4-verifier-final-gates.txt.
+    git diff --check and node --check local/test/herdr-sync.test.mjs passed.
+    Final diagnostics: herdr/client.ts, herdr/sync.ts, ingest/pipeline.ts and
+    server.ts have zero TypeScript diagnostics.
+    No pre-existing tests were skipped, weakened, or edited to hide failures.
+    No additional live herdr workspaces, panes, agents or real configuration
+    were mutated during this correction. Only disposable fake servers and real
+    HTTP sandbox daemons were used for the new lifecycle reproductions.
+    Both verifier blockers are fixed; the first-observed lifetime and explicitly
+    heuristic cwd attribution limits described above remain unchanged.

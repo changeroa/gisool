@@ -11,6 +11,7 @@ export type IngestDeps = {
   captureLevel: CaptureLevel | (() => CaptureLevel);
   state: AttributionState;
   publish?: (change: IngestChange) => void;
+  sessionChanged?: () => void;
   log?: (message: string, error: unknown) => void;
   now?: () => number;
 };
@@ -18,7 +19,8 @@ export type IngestDeps = {
 export type OtlpResponse = { status: 200; body: { partialSuccess: Record<string, never> } } | { status: 400; body: { code: "bad_otlp"; message: string } };
 
 export function createIngestDeps(store: IngestStore, opts: Partial<Omit<IngestDeps, "store">> = {}): IngestDeps {
-  return { store, captureLevel: opts.captureLevel ?? "full", state: opts.state ?? createAttributionState(), publish: opts.publish, log: opts.log, now: opts.now };
+  return { store, captureLevel: opts.captureLevel ?? "full", state: opts.state ?? createAttributionState(), publish: opts.publish,
+    sessionChanged: opts.sessionChanged, log: opts.log, now: opts.now };
 }
 
 function nowOf(deps: IngestDeps): number {
@@ -60,6 +62,8 @@ export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | u
     const level = typeof deps.captureLevel === "function" ? deps.captureLevel() : deps.captureLevel;
     const captured = capture(event, level);
     const attribution = attribute(captured, deps.store, nowOf(deps), deps.state);
+    // Attribution can upsert a session even when append later rejects a replay.
+    if (attribution.sessionId !== "unattributed") deps.sessionChanged?.();
     const inserted = deps.store.append(captured, attribution);
     if (captured.loadId && attribution.sessionId !== "unattributed") remember(deps.state.loadSessions, captured.loadId, attribution.sessionId);
     if (!inserted) return undefined;
@@ -80,6 +84,7 @@ export function ingestHook(runtime: RuntimeId, payload: HookPayload, deps: Inges
   for (const binding of bindings) {
     try {
       const sessionId = deps.store.upsertSession(binding.ref, now);
+      deps.sessionChanged?.();
       remember(deps.state.toolUseSessions, binding.toolUseId, sessionId);
       const eventId = deps.store.findEventByToolUseId(binding.toolUseId);
       if (eventId) {

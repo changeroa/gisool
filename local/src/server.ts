@@ -11,6 +11,7 @@ import { registerStatic } from "./api/static.js";
 import { createCatalog } from "./catalog/index.js";
 import { ensureGisoolHome, ensureToken, resolveGisoolHome, resolveHome } from "./config.js";
 import { createFsWatchdog } from "./fs-watchdog.js";
+import { startHerdrSync } from "./herdr/sync.js";
 import { createIngestDeps } from "./ingest/pipeline.js";
 import { registerMcp } from "./mcp/http.js";
 import { packageVersion } from "./mcp/tools.js";
@@ -84,6 +85,12 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     cleanup.push(() => ownStore.close());
     if (deps.openStore) cleanup.push(() => db.close());
 
+    const herdr = process.env.GISOOL_HERDR === "off" ? undefined : startHerdrSync(db, { log });
+    if (herdr) cleanup.push(() => herdr.close());
+    let linkQueued = false;
+    let herdrClosed = false;
+    cleanup.push(() => { herdrClosed = true; });
+
     const catalog = createCatalog({ roots: config.roots, watch: true, log });
     cleanup.push(() => catalog.close());
     await catalog.refresh();
@@ -116,6 +123,20 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const ingestDeps = createIngestDeps(ownStore, {
       captureLevel: config.captureLevel,
       publish: (change) => sse.notify(change.sessionId),
+      sessionChanged: () => {
+        // Ingest batches are synchronous; coalesce their notifications into one linking pass.
+        if (!herdr || linkQueued) return;
+        linkQueued = true;
+        queueMicrotask(() => {
+          linkQueued = false;
+          if (herdrClosed) return;
+          try {
+            herdr.linkSessions();
+          } catch (error) {
+            log(`herdr linking failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        });
+      },
       log: (message, error) => log(`ingest: ${message}: ${error instanceof Error ? error.message : String(error)}`),
     });
 
