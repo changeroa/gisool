@@ -111,13 +111,15 @@ export interface Store {
   flowPaneUsage(flowId: string, opts?: { excludeSessions?: readonly string[] }): PaneUsageRow[];
   // Every session flowPaneUsage can read for this flow, so a caller can filter that population before comparing.
   flowSessionIds(flowId: string): string[];
+  flowEventScope(flowId: string): ExecutionEventScope | undefined;
+  flowUnattributedLoads(flowId: string, sessionIds: readonly string[]): UnattributedLoads;
   // Read-API list: registered flows plus the herdr workspaces that have none, newest first, one page at a time.
   listFlows(q: FlowListQuery): FlowListRow[];
   outsideHerdrSessions(opts: { from: number; to: number; limit: number; automated: AutomatedMode }): { id: string; activityMs: number }[];
   // Automation id per session id for the ids given, automated sessions only (rules in store/automation.ts).
   sessionAutomation(ids: readonly string[]): Record<string, string>;
   close(): void;
-  treeSessionData(sessionId: string): TreeSessionData | undefined;
+  treeSessionData(sessionId: string, scope?: ExecutionEventScope): TreeSessionData | undefined;
   treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
   outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[];
   // Reconcile ambiguous MCP loads from persisted OTLP URI evidence; return unresolved loads in the requested scope.
@@ -158,7 +160,13 @@ export type SkillSpan = { readonly id: string; readonly skill: string; readonly 
 export type TurnTree = { readonly id: string; readonly startedAt: number; readonly endedAt: number; readonly basis: TurnBasis;
   readonly events: readonly AssignedTreeEvent[]; readonly skillSpans: readonly SkillSpan[] };
 export type SessionTree = { readonly id: string; readonly runtime: RuntimeId; readonly startedAt: number; readonly endedAt: number | null;
+  readonly executionWindow?: { readonly from: number; readonly to: number | null };
   readonly turns: readonly TurnTree[]; readonly unassignedEvents: readonly TreeEvent[] };
+export type ExecutionEventScope = { readonly from: number; readonly to: number | null; readonly eventIds: readonly string[];
+  readonly priorEventIds: readonly string[];
+  readonly sessionEnds: Readonly<Record<string, number | null>> | null;
+  readonly spanKeys: readonly string[] | null;
+  readonly boundary: "recorded" | "order_unavailable" };
 export type TreeTopologyNode = { readonly id: string; readonly label: string | null; readonly createdMs: number | null; readonly closedMs: number | null };
 export type TreePaneLink = { readonly paneId: string; readonly sessionId: string | null; readonly agentSessionValue: string;
   readonly source: string | null; readonly firstSeenMs: number | null; readonly lastSeenMs: number | null };
@@ -242,6 +250,9 @@ export type FlowReportDto = { readonly generatedAt: number; readonly id: string;
   readonly spec: FlowSpecRef | null; readonly automated: AutomatedMode; readonly tree: FlowTree;
   readonly finding: FlowFindingDto; readonly usage: FlowUsage; readonly comparison: FlowComparison | null;
   readonly excludedSessions: readonly ExcludedSession[];
+  readonly executionScope: { readonly from: number; readonly to: number | null; readonly boundary: ExecutionEventScope["boundary"];
+    readonly overlaps: readonly { readonly sessionId: string; readonly startedBefore: boolean; readonly continuesAfter: boolean }[];
+    readonly label: string } | null;
   readonly unattributedLoads: UnattributedLoads };
 // GET /api/sessions/:id/skill-report. `automated` carries the automation rule id when a harness drove the session.
 export type SessionSkillReportDto = { readonly generatedAt: number; readonly sessionId: string; readonly runtime: RuntimeId;

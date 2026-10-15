@@ -309,6 +309,11 @@ Layout
 ### Callout
 - `div.callout`: hairline card (`--line`, `--r-md`, `--surface`) with a bold `--ink` title and
   `--ink-2` copy; used for the never-consulted empty state. No status color.
+- UnresolvedLoadNotice uses the same shared callout in flow and session trace reports. It shows
+  the recorded unresolved count and a selectable, wrapping list of affected URIs. Attribution
+  uncertainty is explicit, never a claim that the skill was unused. It is absent at count zero.
+- Execution boundary disclosures use this callout too: recorded identity cuts and unavailable
+  historical boundary order are distinct states. Session lifecycle tags never use analysis bounds.
 
 ### TextFold
 - `button.foldbtn`: text-only accent button (`--fs-cap`, 500) toggling the prompt body between the

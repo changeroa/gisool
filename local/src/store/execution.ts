@@ -1,16 +1,37 @@
 import type { Db } from "./db.js";
-import type { AssignedTreeEvent, FlowTree, SessionTree, TreePaneLink } from "../types.js";
+import type { AssignedTreeEvent, ExecutionEventScope, SessionTree, TreePaneLink } from "../types.js";
 import { assembleSession } from "../analysis/tree.js";
+import { parseJson } from "./writes.js";
 
 export type Execution = {
   readonly id: string; readonly workspace_id: string; readonly tab_id: string | null;
   readonly registered_ms: number | null; readonly ended_ms: number | null;
 };
 
+/** Local recording cuts resolve equal timestamps, not the runtime's unrecorded causal order. */
+export function executionEventScope(db: Db, flow: Execution): ExecutionEventScope {
+  const from = flow.registered_ms ?? 0;
+  const to = flow.ended_ms;
+  const cut = db.prepare("SELECT start_event_ids_json, end_event_ids_json, end_sessions_json, end_spans_json FROM flows WHERE id = ?").get(flow.id) as
+    { start_event_ids_json: string | null; end_event_ids_json: string | null; end_sessions_json: string | null; end_spans_json: string | null };
+  const rows = db.prepare(`SELECT id FROM events WHERE ts >= ? AND (? IS NULL OR ts <= ?)
+    AND (ts > ? OR (? IS NOT NULL AND id NOT IN (SELECT value FROM json_each(?))))
+    AND (? IS NULL OR ts < ? OR (? IS NOT NULL AND id IN (SELECT value FROM json_each(?))))
+    ORDER BY ts, rowid`).all(from, to, to, from, cut.start_event_ids_json, cut.start_event_ids_json,
+      to, to, cut.end_event_ids_json, cut.end_event_ids_json) as { id: string }[];
+  return { from, to, eventIds: rows.map((row) => row.id),
+    priorEventIds: cut.start_event_ids_json === null ? [] : parseJson<string[]>(cut.start_event_ids_json, []),
+    sessionEnds: cut.end_sessions_json === null ? null : parseJson<Record<string, number | null>>(cut.end_sessions_json, {}),
+    spanKeys: cut.end_spans_json === null ? null : parseJson<string[][]>(cut.end_spans_json, []).map((key) => JSON.stringify(key)),
+    boundary: cut.start_event_ids_json === null || (to !== null && cut.end_event_ids_json === null)
+      ? "order_unavailable" : "recorded" };
+}
+
 /** Membership is activity in the execution, not the lifetime of a pane or an unclosed session. */
 export function executionMembers(db: Db, flow: Execution): { paneIds: string[]; links: TreePaneLink[] } {
   const from = flow.registered_ms ?? 0;
   const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
+  const eventIds = JSON.stringify(executionEventScope(db, flow).eventIds);
   const paneIds = (db.prepare(`SELECT id, created_ms FROM herdr_panes
     WHERE workspace_id = ? AND (? IS NULL OR tab_id = ?)
       AND COALESCE(created_ms, ?) <= ? AND COALESCE(closed_ms, ?) >= ?
@@ -25,15 +46,15 @@ export function executionMembers(db: Db, flow: Execution): { paneIds: string[]; 
     FROM pane_sessions ps LEFT JOIN sessions s ON s.id = ps.session_id
     WHERE ps.pane_id IN (${paneIds.map(() => "?").join(",")}) AND (
       (ps.session_id IS NULL AND ps.first_seen_ms BETWEEN ? AND ?)
-      OR s.started_at BETWEEN ? AND ?
-      OR EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.ts BETWEEN ? AND ?))
+      OR (s.started_at > ? AND s.started_at < ? AND ?)
+      OR EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.id IN (SELECT value FROM json_each(?))))
     ORDER BY ps.first_seen_ms, ps.agent_session_value`)
-    .all(from, from, to, to, to, from, ...paneIds, from, to, from, to, from, to) as TreePaneLink[];
+    .all(from, from, to, to, to, from, ...paneIds, from, to, from, to, flow.ended_ms === null ? 1 : 0, eventIds) as TreePaneLink[];
   const activity = db.prepare(`SELECT s.started_at, MIN(e.ts) AS first, MAX(e.ts) AS last FROM sessions s
-    LEFT JOIN events e ON e.session_id = s.id AND e.ts BETWEEN ? AND ? WHERE s.id = ? GROUP BY s.id`);
+    LEFT JOIN events e ON e.session_id = s.id AND e.id IN (SELECT value FROM json_each(?)) WHERE s.id = ? GROUP BY s.id`);
   return { paneIds, links: links.map((link) => {
     if (link.sessionId === null) return link;
-    const row = activity.get(from, to, link.sessionId) as { started_at: number; first: number | null; last: number | null };
+    const row = activity.get(eventIds, link.sessionId) as { started_at: number; first: number | null; last: number | null };
     // Reconciliation refreshes observation times even for historical links. Event bounds do not drift with it.
     return { ...link, firstSeenMs: Math.max(from, Math.min(row.started_at, row.first ?? row.started_at)),
       lastSeenMs: Math.min(to, Math.max(row.started_at, row.last ?? row.started_at)) };
@@ -41,11 +62,13 @@ export function executionMembers(db: Db, flow: Execution): { paneIds: string[]; 
 }
 
 /** Keep turn identity from the full assembly, but never carry observations across execution boundaries. */
-export function scopeSession(session: SessionTree, from: number, to: number | undefined): SessionTree {
+export function scopeSession(session: SessionTree, scope: ExecutionEventScope): SessionTree {
+  const { from, to } = scope;
   const end = to ?? Number.MAX_SAFE_INTEGER;
-  const inside = (ts: number) => ts >= from && ts <= end;
+  const owned = new Set(scope.eventIds);
+  const inside = (event: { readonly id: string }) => owned.has(event.id);
   const turns = session.turns.flatMap((turn, index) => {
-    const events = turn.events.filter((e) => inside(e.ts));
+    const events = turn.events.filter(inside);
     if (!events.length) return [];
     const original = new Map(events.map((e) => [e.id, e]));
     const endedAt = Math.min(end, session.turns[index + 1]?.startedAt ?? session.endedAt ?? (to ?? turn.endedAt));
@@ -64,15 +87,9 @@ export function scopeSession(session: SessionTree, from: number, to: number | un
     return [{ ...scoped, basis: turn.basis, events: scoped.events.filter((e) => original.has(e.id)).map(restore),
       skillSpans: scoped.skillSpans.map((span) => ({ ...span, activation: restore(span.activation), events: span.events.map(restore) })) }];
   });
-  return { ...session, startedAt: Math.max(from, session.startedAt),
-    endedAt: to === undefined ? session.endedAt : Math.min(to, session.endedAt ?? to),
-    turns, unassignedEvents: session.unassignedEvents.filter((e) => inside(e.ts)) };
-}
-
-export function scopeFlowTree(tree: FlowTree, from: number, to: number | undefined): FlowTree {
-  return { ...tree, tabs: tree.tabs.map((tab) => ({ ...tab, panes: tab.panes.map((pane) => ({
-    ...pane, sessions: pane.sessions.map((link) => ({
-      ...link, session: link.session === null ? null : scopeSession(link.session, from, to),
-    })),
-  })) })) };
+  // An execution end clips analysis, never observed lifecycle. A later session end must not rewrite A.
+  const endedAt = session.endedAt !== null && (session.endedAt < end ||
+    (session.endedAt === end && scope.sessionEnds?.[session.id] === end)) ? session.endedAt : null;
+  return { ...session, endedAt,
+    executionWindow: { from, to }, turns, unassignedEvents: session.unassignedEvents.filter(inside) };
 }

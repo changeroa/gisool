@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { distImport } from "./_helpers.mjs";
+import { distImport, makeTempDir, removeDir } from "./_helpers.mjs";
 import { bearer, http, startTestServer } from "./helpers/api.mjs";
 
 const { openDb } = await distImport("store/db.js");
@@ -143,4 +143,142 @@ test("D3 warnings share inclusive execution bounds for a continuing session", as
   assert.deepEqual(report.unattributedLoads, { count: 1, uris: ["skill://local/fixture/skill-1100/SKILL.md"] });
   assertExecution(report, s.id, "alpha", 0.02);
   assert.deepEqual((await f.get(b)).unattributedLoads, { count: 1, uris: ["skill://local/fixture/skill-1211/SKILL.md"] });
+});
+
+test("equal-millisecond executions own disjoint recorded activity and completed A stays stable", async (t) => {
+  // Given a continuing turn with A's call already recorded at the future shared boundary.
+  const f = await fixture(t);
+  const s = f.session("boundary", 900);
+  f.append(s, "prompt", 900);
+  const a = f.start(1000);
+  f.append(s, "native_skill", 1010, { name: "alpha" });
+  f.append(s, "tool_call", 1100, { name: "Edit", success: true });
+  f.append(s, "llm_call", 1100, { costUsd: 0.02 });
+  const load = (id) => f.store.append({
+    id, kind: "load", ts: 1100, ref: { runtime: "claude-code" }, source: "mcp",
+    skillUri: `skill://local/fixture/${id}/SKILL.md`, data: { attributionCandidates: [s.id] },
+  }, { sessionId: "unattributed", method: "none", reason: "ambiguous" });
+  load("boundary-a");
+  f.end(a, 1100);
+  const before = await f.get(a);
+  // When B starts at that same millisecond and records its own activation, calls and warning.
+  const b = f.start(1100);
+  f.append(s, "native_skill", 1100, { name: "beta" });
+  f.append(s, "tool_call", 1100, { name: "Edit", success: true });
+  f.append(s, "llm_call", 1100, { costUsd: 0.07 });
+  load("boundary-b");
+  f.append(s, "session_end", 1190);
+  f.end(b, 1200);
+  // Then the real detail/list/comparison/warning paths agree, without losing either call.
+  assert.deepEqual(await f.get(a), before);
+  assertExecution(before, s.id, "alpha", 0.02);
+  const after = await f.get(b);
+  assertExecution(after, s.id, "beta", 0.07);
+  assert.deepEqual(before.unattributedLoads, { count: 1, uris: ["skill://local/fixture/boundary-a/SKILL.md"] });
+  assert.deepEqual(after.unattributedLoads, { count: 1, uris: ["skill://local/fixture/boundary-b/SKILL.md"] });
+  const events = (r) => r.tree.tabs[0].panes[0].sessions[0].session.turns.flatMap((turn) => turn.events);
+  const calls = [...events(before), ...events(after)].filter((e) => e.kind === "llm_call");
+  assert.equal(new Set(calls.map((e) => e.id)).size, 2);
+  assert.deepEqual(calls.map((e) => e.data.costUsd), [0.02, 0.07]);
+  assert.deepEqual((await f.list()).filter((row) => row.kind === "flow").map((row) => row.sessionIds), [[s.id], [s.id]]);
+});
+
+test("execution clipping does not invent an observed session end", async (t) => {
+  // Given an unended session that continues beyond a completed execution.
+  const f = await fixture(t);
+  const s = f.session("unended", 900);
+  const a = f.start(1000);
+  f.activity(s, 1010, "alpha", 0.02, "same-turn");
+  f.end(a, 1100);
+  // When the real flow report is assembled.
+  const report = await f.get(a);
+  const session = report.tree.tabs[0].panes[0].sessions[0].session;
+  // Then observed lifetime and the analysis slice have distinct semantics.
+  assert.equal(session.endedAt, null);
+  assert.deepEqual(session.executionWindow, { from: 1000, to: 1100 });
+  assert.equal(session.turns[0].endedAt, 1100);
+  assert.equal(report.executionScope.overlaps[0].continuesAfter, true);
+});
+
+test("a captured real end is not replaced by a later termination observation", async (t) => {
+  // Given A ended with a genuine session-end observation, not an analysis clipping value.
+  const f = await fixture(t);
+  const s = f.session("ended-observation", 900);
+  const a = f.start(1000);
+  f.activity(s, 1010, "alpha", 0.02, "turn");
+  f.append(s, "session_end", 1090);
+  f.end(a, 1100);
+  const before = await f.get(a);
+  assert.equal(before.tree.tabs[0].panes[0].sessions[0].session.endedAt, 1090);
+  // When another lifecycle source reports a later end for that same runtime identity.
+  f.append(s, "session_end", 1190);
+  // Then A's observed termination and duration remain stable.
+  assert.deepEqual(await f.get(a), before);
+});
+
+test("zero-duration adjacent executions retain every call once, including a new equal-time prompt", async (t) => {
+  // Given a prompt preceding two executions that fit within one clock millisecond.
+  const f = await fixture(t);
+  const s = f.session("zero-duration", 900);
+  f.append(s, "prompt", 900);
+  const a = f.start(1000);
+  f.append(s, "native_skill", 1000, { name: "alpha" });
+  f.append(s, "tool_call", 1000, { name: "Edit" }, null);
+  f.append(s, "llm_call", 1000, { costUsd: 0.02 }, null);
+  f.end(a, 1000);
+  const before = await f.get(a);
+  // When a different prompt and B's activity arrive in that same millisecond.
+  const b = f.start(1000);
+  for (const [kind, data] of [["prompt", {}], ["native_skill", { name: "beta" }],
+    ["tool_call", { name: "Edit" }], ["llm_call", { costUsd: 0.07 }]]) f.append(s, kind, 1000, data, "b-turn");
+  f.end(b, 1000);
+  // Then later prompt assembly cannot steal or duplicate A's already owned observations.
+  assert.deepEqual(await f.get(a), before);
+  assertExecution(before, s.id, "alpha", 0.02);
+  assertExecution(await f.get(b), s.id, "beta", 0.07);
+});
+
+test("completed identity cuts survive late boundary arrivals, VACUUM and history import", async (t) => {
+  // Given a completed report and portable persisted identity cuts.
+  const f = await fixture(t);
+  const s = f.session("portable", 900);
+  const a = f.start(1000);
+  f.activity(s, 1010, "alpha", 0.02, "turn");
+  f.end(a, 1100);
+  const before = await f.get(a);
+  const scope = f.store.flowEventScope(a);
+  const dir = makeTempDir();
+  t.after(() => removeDir(dir));
+  // When delayed boundary telemetry arrives and SQLite rows are rebuilt and imported elsewhere.
+  f.append(s, "native_skill", 1100, { name: "late" });
+  f.append(s, "llm_call", 1100, { costUsd: 8 });
+  f.db.exec("VACUUM");
+  f.store.exportTo(join(dir, "export"), { withHistory: true });
+  const imported = createStore(openDb(join(dir, "import.db")));
+  try {
+    imported.importFrom(join(dir, "export"), { merge: true });
+    assert.deepEqual(imported.flowEventScope(a), scope);
+    assert.deepEqual(imported.flowPaneUsage(a), f.store.flowPaneUsage(a));
+  } finally { imported.close(); }
+  // Then A remains stable and the uncredited late data remains visible in workspace history.
+  assert.deepEqual(await f.get(a), before);
+  assert.ok((await f.get("ws:w")).usage.skills.some((skill) => skill.name === "late"));
+});
+
+test("historical equal-time boundary order is exposed as unavailable rather than guessed", async (t) => {
+  // Given a legacy execution with no recorded lifecycle cuts.
+  const f = await fixture(t);
+  const s = f.session("legacy", 900);
+  f.append(s, "prompt", 900);
+  const a = f.start(1000);
+  f.activity(s, 1010, "alpha", 0.02, "turn");
+  f.append(s, "llm_call", 1100, { costUsd: 8 });
+  f.end(a, 1100);
+  f.db.prepare("UPDATE flows SET start_event_ids_json = NULL, end_event_ids_json = NULL, end_sessions_json = NULL WHERE id = ?").run(a);
+  // When reporting this history after upgrade.
+  const report = await f.get(a);
+  // Then ambiguous endpoints receive no invented owner, while interior evidence and workspace history survive.
+  assert.equal(report.executionScope.boundary, "order_unavailable");
+  assertExecution(report, s.id, "alpha", 0.02);
+  assert.equal((await f.get("ws:w")).usage.skills[0].llmCalls, 2);
 });

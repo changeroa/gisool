@@ -395,7 +395,7 @@ export function aggregateUsage(spans: Iterable<SkillSpanUsage>): SkillUsageAggre
 }
 
 /** Usage of every session linked to one flow (or to the herdr workspace acting as one). */
-export function flowUsage(store: Pick<Store, "treeSessionData" | "treeFlowData">, flowOrWorkspaceId: string): FlowUsage | undefined {
+export function flowUsage(store: Pick<Store, "treeSessionData" | "treeFlowData" | "flowEventScope">, flowOrWorkspaceId: string): FlowUsage | undefined {
   const flow = flowTree(store, flowOrWorkspaceId);
   if (!flow) return undefined;
   const sessions: SessionUsage[] = [];

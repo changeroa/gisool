@@ -179,7 +179,7 @@ export function sessionFinding(store: Pick<Store, "treeSessionData" | "getLoad">
   return tree ? analyzeSession(tree, loadedDigests(store)) : undefined;
 }
 
-export function flowFinding(store: Pick<Store, "treeSessionData" | "treeFlowData" | "getLoad">, flowOrWorkspaceId: string): FlowFinding | undefined {
+export function flowFinding(store: Pick<Store, "treeSessionData" | "treeFlowData" | "flowEventScope" | "getLoad">, flowOrWorkspaceId: string): FlowFinding | undefined {
   const flow = flowTree(store, flowOrWorkspaceId);
   if (!flow) return undefined;
   const sessions = new Map<string, SessionFinding>();

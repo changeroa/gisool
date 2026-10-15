@@ -6,7 +6,8 @@ const { openDb } = await distImport("store/db.js");
 const { createStore } = await distImport("store/index.js");
 
 export function seedEvidence(gisoolHome) {
-  const store = createStore(openDb(join(gisoolHome, "gisool.db")), { now: () => T });
+  let clock = T - 1;
+  const store = createStore(openDb(join(gisoolHome, "gisool.db")), { now: () => clock });
   let seq = 0;
   const ids = {};
   const candidate = (name, rank, digest = name) => ({
@@ -78,11 +79,12 @@ export function seedEvidence(gisoolHome) {
     db.close();
     const flow = store.createFlow({ workspaceId: "evidence-ws", tabId: "evidence-tab", specId: row.id, label: "Finding and use evidence" }).flow;
     store.mapFlowStep(flow.id, "evidence-pane", "all-skills");
+    for (const key of ["unresolved-one", "unresolved-two"]) store.append({
+      id: key, ts: T + 25, kind: "load", source: "mcp", ref: { runtime: "claude-code" },
+      skillUri: uri(key), data: { attributionCandidates: [ids.evidence] },
+    }, { sessionId: "unattributed", method: "none", reason: "ambiguous" });
+    clock = T + 30;
     store.endFlow(flow.id);
-    // Make the execution encompass the new activity but not the old pane history.
-    const timing = openDb(join(gisoolHome, "gisool.db"));
-    timing.prepare("UPDATE flows SET registered_ms = ?, ended_ms = ? WHERE id = ?").run(T - 1, T + 30, flow.id);
-    timing.close();
     return { ids, flowId: flow.id, spec, costFlows };
   } finally {
     store.close();

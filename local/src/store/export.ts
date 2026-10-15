@@ -24,7 +24,7 @@ const HISTORY_TABLES: Record<string, string[]> = {
   flows: ["id"],
   flow_steps: ["flow_id", "pane_id"],
 };
-const HISTORY_VERSIONS = [1, 2, 3];
+const HISTORY_VERSIONS = [1, 2, 3, 4];
 
 type ExportedEvalCase = { query: string; expectedUri?: string; fromTraceId?: string };
 export type ExportDoc = { version: 1; config: Record<string, unknown>; roots: { id: string; path: string }[]; evalCases: ExportedEvalCase[];

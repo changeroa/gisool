@@ -3,7 +3,7 @@ import { nameFromUri, parseJson, type StoreCtx } from "./writes.js";
 import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, PaneUsageRow, Store, WorkflowSpecRow } from "../types.js";
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
 import { createQueries } from "./queries.js";
-import { executionMembers } from "./execution.js";
+import { executionEventScope, executionMembers } from "./execution.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
 type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
@@ -13,7 +13,7 @@ type FlowDbRow = {
 };
 
 type WorkflowStore = Pick<Store, "putWorkflowSpec" | "workflowSpecs" | "workflowSpecVersions" | "workflowSpec" | "createFlow" | "getFlow"
-  | "flowSteps" | "mapFlowStep" | "endFlow" | "flowPaneUsage" | "flowSessionIds" | "listFlows">;
+  | "flowSteps" | "mapFlowStep" | "endFlow" | "flowPaneUsage" | "flowSessionIds" | "listFlows" | "flowEventScope" | "flowUnattributedLoads">;
 
 type FlowListDbRow = {
   id: string; kind: FlowListRow["kind"]; workspace_id: string; tab_id: string | null; label: string | null;
@@ -111,8 +111,9 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       if (open) return { created: false, conflict: flowOf(open) };
       const id = randomUUID();
       const registeredMs = ctx.now();
-      db.prepare("INSERT INTO flows (id, workspace_id, tab_id, spec_id, label, registered_ms) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs);
+      db.prepare(`INSERT INTO flows (id, workspace_id, tab_id, spec_id, label, registered_ms, start_event_ids_json)
+        VALUES (?, ?, ?, ?, ?, ?, (SELECT json_group_array(id) FROM events WHERE ts = ?))`)
+        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs, registeredMs);
       return { created: true, flow: flowOf(selectFlow.get(id) as FlowDbRow) };
     },
 
@@ -198,12 +199,35 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
         .links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))].sort();
     },
 
+    flowEventScope(flowId) {
+      const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
+      return flow ? executionEventScope(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" }) : undefined;
+    },
+
+    flowUnattributedLoads(flowId, sessionIds) {
+      const scope = this.flowEventScope(flowId);
+      if (!scope) return { count: 0, uris: [] };
+      // Reconciliation has already run. Apply the same identity population as every other flow consumer.
+      const rows = db.prepare(`SELECT skill_uri FROM events e
+        WHERE e.id IN (SELECT value FROM json_each(?)) AND kind = 'load' AND source = 'mcp'
+        AND session_id = 'unattributed' AND attribution_reason = 'ambiguous' AND skill_uri IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(e.data_json, '$.attributionCandidates') c
+          WHERE c.value IN (SELECT value FROM json_each(?)))`)
+        .all(JSON.stringify(scope.eventIds), JSON.stringify(sessionIds)) as { skill_uri: string }[];
+      return { count: rows.length, uris: [...new Set(rows.map((row) => row.skill_uri))].sort() };
+    },
+
     endFlow(flowId: string) {
       const row = db.prepare("SELECT ended_ms FROM flows WHERE id = ?").get(flowId) as { ended_ms: number | null } | undefined;
       if (!row) return undefined;
       if (row.ended_ms !== null) return { endedMs: row.ended_ms, alreadyEnded: true };
       const endedMs = ctx.now();
-      db.prepare("UPDATE flows SET ended_ms = ? WHERE id = ?").run(endedMs, flowId);
+      const sessionIds = JSON.stringify(this.flowSessionIds(flowId));
+      db.prepare(`UPDATE flows SET ended_ms = ?, end_event_ids_json =
+        (SELECT json_group_array(id) FROM events WHERE ts = ?),
+        end_sessions_json = (SELECT json_group_object(id, ended_at) FROM sessions WHERE id IN (SELECT value FROM json_each(?))),
+        end_spans_json = (SELECT json_group_array(json_array(trace_id, span_id)) FROM otel_spans WHERE start_ms IS NULL OR start_ms = ?)
+        WHERE id = ?`).run(endedMs, endedMs, sessionIds, endedMs, flowId);
       return { endedMs, alreadyEnded: false };
     },
 
@@ -216,23 +240,22 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
       if (!flow) return [];
       const members = executionMembers(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" });
-      const registeredMs = flow.registered_ms ?? 0;
-      const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
+      const eventIds = JSON.stringify(executionEventScope(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" }).eventIds);
       const activations = db.prepare(`SELECT kind, skill_uri, data_json FROM events
-        WHERE session_id = ? AND kind IN ('load', 'native_skill') AND ts >= ? AND ts <= ? ORDER BY ts, rowid`);
+        WHERE session_id = ? AND kind IN ('load', 'native_skill') AND id IN (SELECT value FROM json_each(?)) ORDER BY ts, rowid`);
       const toolCalls = db.prepare(`SELECT data_json FROM events
-        WHERE session_id = ? AND kind = 'tool_call' AND ts >= ? AND ts <= ? ORDER BY ts, rowid`);
+        WHERE session_id = ? AND kind = 'tool_call' AND id IN (SELECT value FROM json_each(?)) ORDER BY ts, rowid`);
       const excluded = new Set(opts.excludeSessions ?? []);
       return members.paneIds.map((paneId) => {
         const skills: string[] = [];
         const tools: string[] = [];
         for (const sessionId of new Set(members.links.filter((l) => l.paneId === paneId).flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))) {
           if (excluded.has(sessionId)) continue;
-          for (const e of activations.all(sessionId, registeredMs, to) as { kind: string; skill_uri: string | null; data_json: string }[]) {
+          for (const e of activations.all(sessionId, eventIds) as { kind: string; skill_uri: string | null; data_json: string }[]) {
             const name = skillNameOf(e.kind, e.skill_uri, parseJson<Record<string, unknown>>(e.data_json, {}));
             if (name !== undefined && !skills.includes(name)) skills.push(name);
           }
-          for (const e of toolCalls.all(sessionId, registeredMs, to) as { data_json: string }[]) {
+          for (const e of toolCalls.all(sessionId, eventIds) as { data_json: string }[]) {
             const tool = toolNameOf(parseJson<Record<string, unknown>>(e.data_json, {}));
             if (tool !== undefined && !tools.includes(tool)) tools.push(tool);
           }

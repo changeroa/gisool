@@ -1,4 +1,5 @@
 import type { AssignedTreeEvent, FlowTree, SessionTree, SkillSpan, Store, TreeEvent, TreeSessionData, TurnBasis, TurnTree } from "../types.js";
+import { scopeSession } from "../store/execution.js";
 
 const PROMPT_JOIN_WINDOW_MS = 5_000;
 
@@ -125,12 +126,17 @@ export function sessionTree(store: Pick<Store, "treeSessionData">, sessionId: st
   return data ? assembleSession(data) : undefined;
 }
 
-export function flowTree(store: Pick<Store, "treeSessionData" | "treeFlowData">, flowOrWorkspaceId: string): FlowTree | undefined {
+export function flowTree(store: Pick<Store, "treeSessionData" | "treeFlowData" | "flowEventScope">, flowOrWorkspaceId: string): FlowTree | undefined {
   const data = store.treeFlowData(flowOrWorkspaceId);
   if (!data) return undefined;
   const sessions = new Map<string, SessionTree | null>();
+  const scope = data.registered ? store.flowEventScope(data.id) : undefined;
   for (const link of data.links) {
-    if (link.sessionId !== null && !sessions.has(link.sessionId)) sessions.set(link.sessionId, sessionTree(store, link.sessionId) ?? null);
+    if (link.sessionId !== null && !sessions.has(link.sessionId)) {
+      const input = store.treeSessionData(link.sessionId, scope);
+      const session = input ? assembleSession(input) : null;
+      sessions.set(link.sessionId, session && scope ? scopeSession(session, scope) : session);
+    }
   }
   return { id: data.id, workspaceId: data.workspaceId, label: data.label, registered: data.registered,
     tabs: data.tabs.map((tab) => ({ ...tab, panes: data.panes.filter((p) => p.tabId === tab.id).map((pane) => ({
