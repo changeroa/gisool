@@ -30,13 +30,18 @@ function herdrPing(socketPath: string): Promise<{ protocol?: unknown }> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     let response = "";
-    const timer = setTimeout(() => socket.destroy(new Error("herdr socket timed out")), HERDR_TIMEOUT_MS);
+    let settled = false;
+    const timer = setTimeout(() => fail(new Error("herdr socket timed out")), HERDR_TIMEOUT_MS);
     const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.destroy();
       reject(error);
     };
     socket.once("error", fail);
+    socket.once("end", () => fail(new Error("herdr closed the socket before replying")));
+    socket.once("close", () => fail(new Error("herdr closed the socket before replying")));
     socket.once("connect", () => socket.write('{"id":"1","method":"ping","params":{}}\n'));
     socket.on("data", (chunk: Buffer) => {
       response += chunk.toString("utf8");
@@ -45,6 +50,7 @@ function herdrPing(socketPath: string): Promise<{ protocol?: unknown }> {
       try {
         const line: unknown = JSON.parse(response.slice(0, newline));
         if (!isObj(line) || !isObj(line.result) || line.result.type !== "pong") throw new Error("invalid herdr ping response");
+        settled = true;
         clearTimeout(timer);
         socket.destroy();
         resolve({ protocol: line.result.protocol });

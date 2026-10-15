@@ -258,6 +258,34 @@ test("doctor herdr check rejects a malformed socket reply", async (t) => {
   assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr/);
 });
 
+test("doctor herdr check rejects a truncated reply followed by EOF", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, (socket) => {
+    socket.on("data", () => socket.end('{"id":"1","result":'));
+  });
+  t.after(async () => { await herdr.close(); sb.cleanup(); });
+  prepareHome(sb, await freePort());
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  const r = await runCli(["doctor"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr \(herdr closed the socket before replying\)/);
+});
+
+test("doctor herdr check rejects an empty socket close", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, (socket) => {
+    socket.on("data", () => socket.end());
+  });
+  t.after(async () => { await herdr.close(); sb.cleanup(); });
+  prepareHome(sb, await freePort());
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  const r = await runCli(["doctor"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr \(herdr closed the socket before replying\)/);
+});
+
 test("doctor herdr check fails when the socket never replies", async (t) => {
   const sb = cliSandbox({ runtimes: [] });
   const socketPath = join(sb.home, "herdr.sock");

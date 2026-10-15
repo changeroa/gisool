@@ -28,3 +28,10 @@ Doctor test fixture updates
 - Added a fake herdr socket to `a remote gisul registration is a warning, not a failure`.
 - Added a fake herdr socket to `doctor sends this install's bearer token to /api/stats and reports ok on 200`.
 - These tests still assert their existing overall success outcomes; the fixtures now satisfy the newly required herdr check instead of depending on a host herdr installation.
+
+Verifier follow-up: early socket close
+- Fixed the gate-review blocker from `.omo/evidence/gisool-skill-tracing-todo-5-gate-review.md`: `herdrPing` now rejects on `end` or `close` before a complete reply, and uses one idempotent failure path for socket errors and the 2-second timeout.
+- Added CLI tests for truncated JSON followed by EOF and an empty socket close. Both assert exit code 1 and the herdr install/start hint with the explicit early-close reason.
+- `npm run build && node --test test/cli-doctor.test.mjs`: passed, 14 tests.
+- Final restored-state gates: `npm run build && npm run typecheck && npm test` passed; full suite 280 passed, 0 failed.
+- Mutation check: removed both early-close event handlers, rebuilt, then ran `node --test --test-name-pattern="truncated reply followed by EOF" test/cli-doctor.test.mjs`. The regression test failed as intended: doctor reported `herdr socket timed out` instead of the expected `herdr closed the socket before replying`. Restored both handlers and reran the final full gates successfully.
