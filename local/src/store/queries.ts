@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { automationOf, NO_ACTIVITY } from "./automation.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
-import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep } from "../types.js";
+import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, OtelSpanRow, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep, TreeEvent, TreeTopologyNode, TreePaneLink } from "../types.js";
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
@@ -133,7 +133,7 @@ function shortDigest(d: unknown): string {
   return s.replace(/^sha256[:-]/, "").slice(0, 12);
 }
 
-type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats">;
+type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats" | "treeSessionData" | "treeFlowData" | "outsideHerdrSessionIds">;
 
 export function createQueries(ctx: StoreCtx): Queries {
   const { db } = ctx;
@@ -226,6 +226,60 @@ export function createQueries(ctx: StoreCtx): Queries {
   }
 
   return {
+    treeSessionData(sessionId) {
+      const session = db.prepare(`SELECT id, runtime, started_at AS startedAt, ended_at AS endedAt
+        FROM sessions WHERE id = ?`).get(sessionId) as { id: string; runtime: RuntimeId; startedAt: number; endedAt: number | null } | undefined;
+      if (!session) return undefined;
+      const rows = db.prepare(`SELECT id, ts, kind, source, turn_key AS turnKey, call_id AS callId, span_id AS spanId,
+        skill_uri AS skillUri, text, text_length AS textLength, data_json FROM events WHERE session_id = ? ORDER BY ts, rowid`)
+        .all(sessionId) as (Omit<TreeEvent, "data"> & { data_json: string })[];
+      // Broker traces can differ from the turn trace. Scope call ids to this session's conversation (when supplied),
+      // and use the log's exact trace/span pair rather than treating a trace id as a turn id.
+      const spans = db.prepare(`SELECT o.trace_id AS traceId, o.span_id AS spanId, o.name, o.runtime, o.received_at AS receivedAt,
+        o.parent_span_id AS parentSpanId, o.conversation_id AS conversationId, o.turn_key AS turnKey,
+        o.call_id AS callId, o.start_ms AS startMs, o.end_ms AS endMs
+        FROM otel_spans o JOIN sessions s ON s.id = ? AND o.runtime = s.runtime
+        WHERE (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
+        AND (o.conversation_id IN (s.runtime_session_id, s.conversation_id)
+          OR EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND
+            ((e.call_id IS NOT NULL AND e.call_id = o.call_id)
+              OR (e.span_id = o.span_id AND json_extract(e.data_json, '$.otelTraceId') = o.trace_id))))
+        ORDER BY o.start_ms, o.trace_id, o.span_id`).all(sessionId) as
+        (Pick<OtelSpanRow, "traceId" | "spanId" | "name" | "runtime" | "receivedAt"> &
+          { parentSpanId: string | null; conversationId: string | null; turnKey: string | null; callId: string | null; startMs: number | null; endMs: number | null })[];
+      return { ...session, events: rows.map(({ data_json, ...row }) => ({ ...row, data: parseJson<Record<string, unknown>>(data_json, {}) })),
+        spans: spans.map((s) => ({ traceId: s.traceId, spanId: s.spanId, name: s.name, runtime: s.runtime, receivedAt: s.receivedAt,
+          ...(s.parentSpanId !== null ? { parentSpanId: s.parentSpanId } : {}), ...(s.conversationId !== null ? { conversationId: s.conversationId } : {}),
+          ...(s.turnKey !== null ? { turnKey: s.turnKey } : {}), ...(s.callId !== null ? { callId: s.callId } : {}),
+          ...(s.startMs !== null ? { startMs: s.startMs } : {}), ...(s.endMs !== null ? { endMs: s.endMs } : {}) })) };
+    },
+
+    treeFlowData(flowOrWorkspaceId) {
+      const flow = db.prepare("SELECT id, workspace_id, tab_id, label FROM flows WHERE id = ?").get(flowOrWorkspaceId) as
+        { id: string; workspace_id: string; tab_id: string | null; label: string | null } | undefined;
+      const workspaceId = flow?.workspace_id ?? flowOrWorkspaceId;
+      const workspace = db.prepare("SELECT id, label FROM herdr_workspaces WHERE id = ?").get(workspaceId) as
+        { id: string; label: string | null } | undefined;
+      if (!workspace) return undefined;
+      const tabId = flow?.tab_id ?? null;
+      const tabs = db.prepare(`SELECT id, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_tabs
+        WHERE workspace_id = ? AND (? IS NULL OR id = ?) ORDER BY created_ms, id`).all(workspaceId, tabId, tabId) as TreeTopologyNode[];
+      const panes = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_panes
+        WHERE workspace_id = ? AND (? IS NULL OR tab_id = ?) ORDER BY created_ms, id`).all(workspaceId, tabId, tabId) as (TreeTopologyNode & { tabId: string })[];
+      const links = db.prepare(`SELECT ps.pane_id AS paneId, ps.session_id AS sessionId, ps.agent_session_value AS agentSessionValue,
+        ps.source, ps.first_seen_ms AS firstSeenMs, ps.last_seen_ms AS lastSeenMs
+        FROM pane_sessions ps JOIN herdr_panes p ON p.id = ps.pane_id
+        WHERE p.workspace_id = ? AND (? IS NULL OR p.tab_id = ?)
+        ORDER BY ps.first_seen_ms, ps.agent_session_value`).all(workspaceId, tabId, tabId) as TreePaneLink[];
+      return { id: flow?.id ?? workspaceId, workspaceId, label: flow?.label ?? workspace.label, registered: flow !== undefined, tabs, panes, links };
+    },
+
+    outsideHerdrSessionIds({ from, to, limit }) {
+      return (db.prepare(`SELECT s.id FROM sessions s WHERE s.started_at >= ? AND s.started_at < ?
+        AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id)
+        ORDER BY s.started_at DESC, s.id LIMIT ?`).all(from, to, Math.max(1, Math.min(100, Math.floor(limit)))) as { id: string }[]).map((s) => s.id);
+    },
+
     sessions(f: Filter): SessionRow[] {
       return loadSessions(f)
         .sort((a, b) => b.startedAt - a.startedAt)
