@@ -20,7 +20,7 @@ export type Api = {
   /** Registered herdr flows plus the workspaces without one, newest first. */
   flows(query?: FlowsQuery): Promise<FlowListDto>;
   /** One flow: tree, per-turn finding, per-span usage and the spec comparison. `ws:<id>` addresses a workspace. */
-  flowReport(id: string, opts?: { automated?: AutomatedMode }): Promise<FlowReportDto>;
+  flowReport(id: string, opts?: FlowsQuery): Promise<FlowReportDto>;
   /** The same finding and usage analysis for one session; rejects with 404 on a daemon that predates it. */
   skillReport(sessionId: string, opts?: { automated?: AutomatedMode }): Promise<SessionSkillReportDto>;
   heatmap(filter: Filter, opts?: { tz?: string; weekStart?: 0 | 1; bucket?: 1 | 2 | 4 }): Promise<HeatmapDto>;
@@ -74,7 +74,9 @@ const httpApi: Api = {
   trace: (sessionId) => request(`/api/sessions/${encodeURIComponent(sessionId)}/trace`),
   flow: (filter, opts = {}) => request(withQuery("/api/flow", filter, { unit: opts.unit, top: opts.top })),
   flows: (query = {}) => request(withQuery("/api/flows", {}, { from: query.from, to: query.to, limit: query.limit, automated: query.automated })),
-  flowReport: (id, opts = {}) => request(withQuery(`/api/flows/${encodeURIComponent(id)}`, {}, { automated: opts.automated })),
+  flowReport: (id, opts = {}) => request(withQuery(`/api/flows/${encodeURIComponent(id)}`, {}, {
+    automated: opts.automated, from: opts.from, to: opts.to, limit: opts.limit,
+  })),
   skillReport: (sessionId, opts = {}) =>
     request(withQuery(`/api/sessions/${encodeURIComponent(sessionId)}/skill-report`, {}, { automated: opts.automated })),
   heatmap: (filter, opts = {}) => request(withQuery("/api/heatmap", filter, { tz: opts.tz, weekStart: opts.weekStart, bucket: opts.bucket })),

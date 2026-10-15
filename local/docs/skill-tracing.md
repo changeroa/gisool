@@ -14,7 +14,8 @@ doctor exits 1 if any check fails.
 If herdr is unreachable, the daemon keeps collecting sessions and serving MCP and existing views. New panes
 and sessions requiring live discovery are not linked until sync reconnects and reconciles. Previously stored
 pane/session links and reports remain available, including with `GISOOL_HERDR=off`. A session skill report
-can be read without a herdr link.
+can be read without a herdr link. Workspaces also shows these sessions as **outside herdr**; herdr being
+unavailable does not hide ingested sessions from the flows list.
 
 ## What is collected
 
@@ -159,13 +160,21 @@ Unknown measurements are `null`, not zero.
 
 | Route | Result / bounds |
 | --- | --- |
-| `GET /api/flows` | Registered flows and herdr workspaces without a registered flow, newest first. `limit` is 1-100 (default 20); use the returned `nextCursor` for paging. Optional `from`/`to` filter ordering time. |
+| `GET /api/flows` | Registered flows, herdr workspaces without a registered flow, and the `outside` group (`kind:"outside_herdr"`, label `outside herdr`), newest first. `limit` is 1-100 (default 20); use the returned `nextCursor` for paging. Optional `from`/`to` filter ordering time. |
 | `GET /api/flows/:id` | Tree, per-session finding/usage, skill aggregates, spec comparison and excluded sessions. An unregistered workspace is addressed as `ws:<workspaceId>` and has no comparison. Unknown IDs return 404. |
+| `GET /api/flows/outside` | Sessions without a pane link (no `pane_sessions` row or only `source:"unlinked"` rows), newest activity first, in `tree.sessions`, with finding and usage, no spec/comparison and no invented panes. Accepts `from`, `to`, `limit` (1-100, default 100), and `automated`. |
 | `GET /api/sessions/:id/skill-report` | One session's tree, finding, usage and automation state, even outside herdr. Unknown or excluded sessions return 404. |
 | `GET /api/skills/usage` | Per-skill totals over `[from,to)` in epoch milliseconds. Defaults to the last seven days, maximum 366 days. `detail` is 0-100 (default 20) and limits only session details; `sessionCount` and `truncated` describe that list, while skill totals cover all eligible sessions. |
 
 Automated sessions are excluded by default. Pass `automated=include` or `automated=only`; flow comparisons
 exclude the same hidden sessions. Invalid limits, ranges and automation filters return 400.
+
+The outside group contains at most 100 eligible sessions, classified before the cap. Its counts and
+`sessionIds` describe that bounded population, not a whole-history total. Activity is the latest session
+start, end or event timestamp; `[from,to)` selects that activity. With no range, outside sessions use the
+last seven days. The group is omitted when no eligible session exists,
+and is ordered and cursor-paged alongside flows/workspaces by its newest eligible activity and stable ID
+`outside`. Pass the same range and automation filter to its detail report to read the same population.
 
 The existing `GET /api/flow` is the task-to-skill-to-outcome Sankey aggregate (`first_load` or `all_loads`),
 not a registered execution. The plural `/api/flows` API is the herdr workflow tree and report surface.

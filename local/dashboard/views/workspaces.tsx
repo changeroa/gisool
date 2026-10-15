@@ -96,6 +96,7 @@ export function summaryFacts(summary: FlowSummary): Fact[] {
 }
 
 export function entryFacts(entry: FlowListEntry): Fact[] {
+  if (entry.kind === "outside_herdr") return [{ key: "sessions", value: entry.counts.sessions }];
   const facts: Fact[] = [{ key: "workspace", value: entry.workspaceId }];
   if (entry.tabId !== null) facts.push({ key: "tab", value: entry.tabId });
   facts.push({ key: "panes", value: entry.counts.panes }, { key: "sessions", value: entry.counts.sessions });
@@ -150,6 +151,7 @@ function Chevron() {
 }
 
 function SpecTag({ entry }: { entry: FlowListEntry }) {
+  if (entry.kind === "outside_herdr") return <span class="tag tag--dim">no pane link</span>;
   const { name, version } = specTagParts(entry.spec);
   const title = entry.spec
     ? `${specLabel(entry.spec)}: the workflow spec this flow was registered with`
@@ -174,8 +176,9 @@ function Runtime({ runtime }: { runtime: RuntimeId }) {
 type SummaryState = { status: "loading" } | { status: "ready"; summary: FlowSummary } | { status: "error" };
 
 /** Reads one flow report per row, SUMMARY_CONCURRENCY at a time, and drops what is in flight when the list changes. */
-function useFlowSummaries(ids: readonly string[], automated: AutomatedMode | undefined): Record<string, SummaryState> {
+function useFlowSummaries(ids: readonly string[], query: FlowsQuery): Record<string, SummaryState> {
   const key = ids.join("\n");
+  const queryKey = JSON.stringify(query);
   const [summaries, setSummaries] = useState<Record<string, SummaryState>>({});
   useEffect(() => {
     if (ids.length === 0) {
@@ -189,7 +192,7 @@ function useFlowSummaries(ids: readonly string[], automated: AutomatedMode | und
       for (let next = queue.shift(); next !== undefined && !cancelled; next = queue.shift()) {
         const id = next;
         try {
-          const report = await api.flowReport(id, automated ? { automated } : {});
+          const report = await api.flowReport(id, query);
           if (!cancelled) setSummaries((prev) => ({ ...prev, [id]: { status: "ready", summary: flowSummary(report) } }));
         } catch {
           // A report that cannot be read leaves the row's structure facts in place; the summary line says so.
@@ -199,7 +202,7 @@ function useFlowSummaries(ids: readonly string[], automated: AutomatedMode | und
     };
     void Promise.all(Array.from({ length: Math.min(SUMMARY_CONCURRENCY, ids.length) }, worker));
     return () => { cancelled = true; };
-  }, [key, automated]);
+  }, [key, queryKey]);
   return summaries;
 }
 
@@ -270,7 +273,7 @@ export function WorkspacesView({ route, navigate, live }: ViewProps) {
     return () => { cancelled = true; };
   }, [queryKey, refresh]);
 
-  const summaries = useFlowSummaries(flows?.map((entry) => entry.id) ?? [], query.automated);
+  const summaries = useFlowSummaries(flows?.map((entry) => entry.id) ?? [], query);
   const filtered = query.from !== undefined || query.to !== undefined;
 
   return (
@@ -390,7 +393,7 @@ function Turn({ turn, index, finding, usageBySpan, open }: {
 }
 
 function Session({ link, session, route, findings, usageBySpan }: {
-  link: TreePaneLink & { basis: "reported" | "inferred" }; session: SessionTree; route: Route;
+  link?: TreePaneLink & { basis: "reported" | "inferred" }; session: SessionTree; route: Route;
   findings: Map<string, TurnFindingDto>; usageBySpan: Map<string, SkillSpanUsage>;
 }) {
   const open = turnsOpen(session.turns.length);
@@ -400,8 +403,8 @@ function Session({ link, session, route, findings, usageBySpan }: {
         <Runtime runtime={session.runtime} />
         <a class="sess__link" href={buildHash({ view: "trace", sessionId: session.id, filter: route.filter })}>Open trace</a>
         <time class="sess__when" dateTime={new Date(session.startedAt).toISOString()}>{formatStarted(session.startedAt)}</time>
-        <span class="tag" title={link.basis === "reported" ? "herdr reported this pane's agent session" : "herdr did not report it; gisool inferred it from cwd and time"}>
-          {link.basis}
+        <span class="tag" title={link ? link.basis === "reported" ? "herdr reported this pane's agent session" : "herdr did not report it; gisool inferred it from cwd and time" : "no herdr pane is linked to this session"}>
+          {link?.basis ?? "outside herdr"}
         </span>
         <span class="sess__meta">{session.turns.length} {session.turns.length === 1 ? "turn" : "turns"}</span>
       </header>
@@ -421,6 +424,15 @@ function Session({ link, session, route, findings, usageBySpan }: {
 function Tree({ tree, route, findings, usageBySpan, filtered }: {
   tree: FlowTree; route: Route; findings: Map<string, TurnFindingDto>; usageBySpan: Map<string, SkillSpanUsage>; filtered: boolean;
 }) {
+  if (tree.sessions !== undefined) return (
+    <section class="card ws__block" aria-labelledby="ws-sessions">
+      <h2 class="ws__h" id="ws-sessions">Sessions</h2>
+      {tree.sessions.length === 0 && <p class="dim">No sessions outside herdr in this range.</p>}
+      {tree.sessions.map((session) => (
+        <Session key={session.id} session={session} route={route} findings={findings} usageBySpan={usageBySpan} />
+      ))}
+    </section>
+  );
   const panes = tree.tabs.reduce((n, tab) => n + tab.panes.length, 0);
   return (
     <section class="card ws__block" aria-labelledby="ws-panes">
@@ -482,6 +494,7 @@ function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; 
       </a>
       <h1 class="ws__title">{report.label ?? report.workspaceId}</h1>
       <dl class="ws__meta">
+        {report.kind !== "outside_herdr" && <>
         <div>
           <dt>Workspace</dt>
           <dd class="ws__id">{report.workspaceId}</dd>
@@ -502,6 +515,7 @@ function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; 
           <dt>Panes</dt>
           <dd>{panes}</dd>
         </div>
+        </>}
         <div>
           <dt>Sessions</dt>
           <dd>{report.usage.sessions.length}</dd>
@@ -525,7 +539,8 @@ function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; 
 export function WorkspaceView({ route }: ViewProps) {
   const flowId = route.flowId ?? "";
   const backHref = buildHash({ view: "workspaces", filter: route.filter });
-  const automated = flowsQuery(route).automated;
+  const query = flowsQuery(route);
+  const queryKey = JSON.stringify(query);
   const [report, setReport] = useState<FlowReportDto>();
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
@@ -534,12 +549,12 @@ export function WorkspaceView({ route }: ViewProps) {
   useEffect(() => {
     setReport(undefined);
     setError(undefined);
-  }, [flowId, automated]);
+  }, [flowId, queryKey]);
 
   useEffect(() => {
     let cancelled = false;
     setBusy(true);
-    api.flowReport(flowId, automated ? { automated } : {})
+    api.flowReport(flowId, query)
       .then((dto) => {
         if (cancelled) return;
         setReport(dto);
@@ -552,7 +567,7 @@ export function WorkspaceView({ route }: ViewProps) {
         setBusy(false);
       });
     return () => { cancelled = true; };
-  }, [flowId, automated, refresh]);
+  }, [flowId, queryKey, refresh]);
 
   if (error !== undefined) {
     return (

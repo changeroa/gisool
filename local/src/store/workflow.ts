@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { nameFromUri, parseJson, type StoreCtx } from "./writes.js";
 import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, PaneUsageRow, Store, WorkflowSpecRow } from "../types.js";
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
+import { createQueries } from "./queries.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
 type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
@@ -14,7 +15,7 @@ type WorkflowStore = Pick<Store, "putWorkflowSpec" | "workflowSpecs" | "workflow
   | "flowSteps" | "mapFlowStep" | "endFlow" | "flowPaneUsage" | "flowSessionIds" | "listFlows">;
 
 type FlowListDbRow = {
-  id: string; kind: "flow" | "workspace"; workspace_id: string; tab_id: string | null; label: string | null;
+  id: string; kind: FlowListRow["kind"]; workspace_id: string; tab_id: string | null; label: string | null;
   order_ms: number; started_ms: number | null; ended_ms: number | null;
   spec_id: string | null; spec_name: string | null; spec_version: number | null;
 };
@@ -144,13 +145,22 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
      * Ties on the ordering time are broken by id, which is what the cursor carries, so no entry repeats or is skipped.
      */
     listFlows(q: FlowListQuery): FlowListRow[] {
+      const to = q.to ?? ctx.now() + 1;
+      const outside = createQueries(ctx).outsideHerdrSessions({
+        from: q.from ?? to - 7 * 86_400_000, to, limit: 100, automated: q.automated ?? "exclude",
+      });
+      const activityMs = outside[0]?.activityMs;
+      // Put the group into the same SQL ordering and cursor predicate, not onto an already-paged result.
+      const entries = activityMs === undefined ? FLOW_LIST_ENTRIES : `${FLOW_LIST_ENTRIES}
+        UNION ALL SELECT 'outside', 'outside_herdr', '', NULL, 'outside herdr',
+          ${activityMs}, ${activityMs}, NULL, NULL, NULL, NULL`;
       const where: string[] = [];
       const params: (string | number)[] = [];
       if (q.from !== undefined) { where.push("order_ms >= ?"); params.push(q.from); }
       if (q.to !== undefined) { where.push("order_ms < ?"); params.push(q.to); }
       if (q.cursor) { where.push("(order_ms < ? OR (order_ms = ? AND id > ?))"); params.push(q.cursor.orderMs, q.cursor.orderMs, q.cursor.id); }
       const limit = Math.max(1, Math.min(1000, Math.floor(q.limit)));
-      const rows = db.prepare(`SELECT * FROM (${FLOW_LIST_ENTRIES}) ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      const rows = db.prepare(`SELECT * FROM (${entries}) ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY order_ms DESC, id ASC LIMIT ?`).all(...params, limit) as FlowListDbRow[];
       if (rows.length === 0) return [];
       const workspaceIds = [...new Set(rows.map((r) => r.workspace_id))];
@@ -167,6 +177,11 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
         WHERE flow_id IN (${flowIds.map(() => "?").join(",")}) ORDER BY registered_ms, pane_id`).all(...flowIds) as
         { flow_id: string; pane_id: string }[];
       return rows.map((row) => {
+        if (row.kind === "outside_herdr") return {
+          id: row.id, kind: row.kind, workspaceId: "", tabId: null, label: row.label,
+          orderMs: row.order_ms, startedMs: row.started_ms, endedMs: null, spec: null, paneIds: [],
+          links: outside.map((session) => ({ paneId: "", sessionId: session.id, source: "unlinked" })),
+        };
         // A flow registered for one tab covers that tab's panes; a step may also map a pane herdr has not reported yet.
         const paneIds = [...new Set([
           ...panes.filter((p) => p.workspace_id === row.workspace_id && (row.tab_id === null || p.tab_id === row.tab_id)).map((p) => p.pane_id),

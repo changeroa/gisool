@@ -134,7 +134,7 @@ function shortDigest(d: unknown): string {
 }
 
 type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats" | "treeSessionData" | "treeFlowData"
-  | "outsideHerdrSessionIds" | "sessionAutomation">;
+  | "outsideHerdrSessionIds" | "outsideHerdrSessions" | "sessionAutomation">;
 
 /** The automation id of a session, or undefined when a person drove it: the rule matching its first prompt, else
  * NO_ACTIVITY for a session that showed no prompt and no skill activity at all (e.g. a thread a daemon reopened). */
@@ -232,7 +232,7 @@ export function createQueries(ctx: StoreCtx): Queries {
     return s.firstTop ? [s.firstTop] : [];
   }
 
-  return {
+  const queries: Queries = {
     treeSessionData(sessionId) {
       const session = db.prepare(`SELECT id, runtime, started_at AS startedAt, ended_at AS endedAt
         FROM sessions WHERE id = ?`).get(sessionId) as { id: string; runtime: RuntimeId; startedAt: number; endedAt: number | null } | undefined;
@@ -311,6 +311,33 @@ export function createQueries(ctx: StoreCtx): Queries {
         }
       }
       return out;
+    },
+
+    outsideHerdrSessions({ from, to, limit, automated }) {
+      const kept: { id: string; activityMs: number }[] = [];
+      const cap = Math.max(1, Math.min(100, Math.floor(limit)));
+      let cursor: { id: string; activityMs: number } | undefined;
+      // Classify before the result cap: a page of automated sessions must not hide older human sessions.
+      // Each read and classification is bounded; no session tree or full event population is loaded here.
+      for (;;) {
+        const rows = db.prepare(`SELECT * FROM (
+          SELECT s.id, MAX(s.started_at, COALESCE(s.ended_at, s.started_at),
+            COALESCE((SELECT MAX(e.ts) FROM events e WHERE e.session_id = s.id), s.started_at)) AS activityMs
+          FROM sessions s WHERE NOT EXISTS (
+            SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id AND COALESCE(ps.source, '') <> 'unlinked')
+        ) WHERE activityMs >= ? AND activityMs < ?
+          ${cursor ? "AND (activityMs < ? OR (activityMs = ? AND id > ?))" : ""}
+          ORDER BY activityMs DESC, id LIMIT 100`).all(from, to,
+          ...(cursor ? [cursor.activityMs, cursor.activityMs, cursor.id] : [])) as { id: string; activityMs: number }[];
+        const automation = automated === "include" ? {} : queries.sessionAutomation(rows.map((row) => row.id));
+        for (const row of rows) {
+          const isAutomated = automation[row.id] !== undefined;
+          if (automated === "include" || (automated === "only" ? isAutomated : !isAutomated)) kept.push(row);
+          if (kept.length === cap) return kept;
+        }
+        if (rows.length < 100) return kept;
+        cursor = rows.at(-1);
+      }
     },
 
     outsideHerdrSessionIds({ from, to, limit }) {
@@ -560,5 +587,6 @@ export function createQueries(ctx: StoreCtx): Queries {
       };
     },
   };
+  return queries;
 }
 

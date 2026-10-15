@@ -102,12 +102,12 @@ function entryOf(row: FlowListRow, automation: Record<string, string>, mode: Aut
   let inferred = 0;
   let unlinked = 0;
   for (const link of links) {
-    if (link.sessionId === null) unlinked += 1;
+    if (link.sessionId === null || link.source === "unlinked") unlinked += 1;
     else if (link.source === "inferred:cwd_time") inferred += 1;
     else reported += 1;
   }
   return {
-    id: row.kind === "flow" ? row.id : `${WORKSPACE_PREFIX}${row.workspaceId}`,
+    id: row.kind === "workspace" ? `${WORKSPACE_PREFIX}${row.workspaceId}` : row.id,
     kind: row.kind, workspaceId: row.workspaceId, tabId: row.tabId, label: row.label, registered: row.kind === "flow",
     spec: row.spec, startedMs: row.startedMs, endedMs: row.endedMs,
     paneIds: row.paneIds, sessionIds,
@@ -147,7 +147,7 @@ function filterTree(tree: FlowTree, automation: Record<string, string>, mode: Au
 }
 
 function sessionsOf(tree: FlowTree): SessionTree[] {
-  const sessions = new Map<string, SessionTree>();
+  const sessions = new Map<string, SessionTree>((tree.sessions ?? []).map((session) => [session.id, session]));
   for (const tab of tree.tabs) {
     for (const pane of tab.panes) {
       for (const link of pane.sessions) if (link.session !== null) sessions.set(link.session.id, link.session);
@@ -171,7 +171,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     if (from !== undefined && to !== undefined && from > to) throw new BadQuery("bad_filter", "from must not be after to");
     const cursor = decodeCursor(one(req.query.cursor));
     // One row beyond the page says whether a next page exists, without counting the whole list.
-    const rows = store.listFlows({ limit: limit + 1, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(cursor ? { cursor } : {}) });
+    const rows = store.listFlows({ limit: limit + 1, automated, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(cursor ? { cursor } : {}) });
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     const automation = store.sessionAutomation(page.flatMap((row) => row.links.flatMap((link) => (link.sessionId === null ? [] : [link.sessionId]))));
@@ -187,7 +187,20 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const automated = automatedOf(req.query);
     const ref = String(req.params.id);
     const id = ref.startsWith(WORKSPACE_PREFIX) ? ref.slice(WORKSPACE_PREFIX.length) : ref;
-    const full = flowTree(store, id);
+    let full: FlowTree | undefined;
+    if (ref === "outside") {
+      const to = intOf(req.query, "to") ?? Date.now() + 1;
+      const from = intOf(req.query, "from") ?? to - DEFAULT_RANGE_DAYS * DAY_MS;
+      if (from > to) throw new BadQuery("bad_filter", "from must not be after to");
+      const limit = intOf(req.query, "limit", [1, MAX_LIMIT]) ?? MAX_LIMIT;
+      full = { id: "outside", workspaceId: "", label: "outside herdr", registered: false, tabs: [],
+        sessions: store.outsideHerdrSessions({ from, to, limit, automated }).flatMap(({ id: sessionId }) => {
+          const session = sessionTree(store, sessionId);
+          return session ? [session] : [];
+        }) };
+    } else {
+      full = flowTree(store, id);
+    }
     if (!full) return deny(res, 404, "flow_not_found", { message: `no flow or herdr workspace ${ref}` });
     // The comparison reads a wider population than the tree renders: a step can map a pane herdr placed on another
     // tab. Classifying that population too keeps a hidden session from crediting a step it never ran.
@@ -206,8 +219,8 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const spec = flow?.spec;
     res.json({
       generatedAt: Date.now(),
-      id: tree.registered ? tree.id : `${WORKSPACE_PREFIX}${tree.workspaceId}`,
-      kind: tree.registered ? "flow" : "workspace",
+      id: ref === "outside" ? "outside" : tree.registered ? tree.id : `${WORKSPACE_PREFIX}${tree.workspaceId}`,
+      kind: ref === "outside" ? "outside_herdr" : tree.registered ? "flow" : "workspace",
       workspaceId: tree.workspaceId, label: tree.label, registered: tree.registered,
       flow: flow ? { registeredMs: flow.registeredMs, endedMs: flow.endedMs ?? null, tabId: flow.tabId ?? null } : null,
       spec: spec ? { id: spec.id, name: spec.name, version: spec.version } : null,

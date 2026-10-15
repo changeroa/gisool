@@ -113,6 +113,7 @@ export interface Store {
   flowSessionIds(flowId: string): string[];
   // Read-API list: registered flows plus the herdr workspaces that have none, newest first, one page at a time.
   listFlows(q: FlowListQuery): FlowListRow[];
+  outsideHerdrSessions(opts: { from: number; to: number; limit: number; automated: AutomatedMode }): { id: string; activityMs: number }[];
   // Automation id per session id for the ids given, automated sessions only (rules in store/automation.ts).
   sessionAutomation(ids: readonly string[]): Record<string, string>;
   close(): void;
@@ -163,6 +164,7 @@ export type TreeFlowData = { readonly id: string; readonly workspaceId: string; 
   readonly tabs: readonly TreeTopologyNode[]; readonly panes: readonly (TreeTopologyNode & { readonly tabId: string })[];
   readonly links: readonly TreePaneLink[] };
 export type FlowTree = { readonly id: string; readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
+  readonly sessions?: readonly SessionTree[];
   readonly tabs: readonly (TreeTopologyNode & { readonly panes: readonly (TreeTopologyNode & {
     readonly sessions: readonly (TreePaneLink & { readonly basis: "reported" | "inferred"; readonly session: SessionTree | null })[] })[] })[] };
 
@@ -201,18 +203,19 @@ export type FlowSpecRef = { readonly id: string; readonly name: string; readonly
 // One entry of the flows list as the store reads it: a registered flow, or a herdr workspace with no registered flow,
 // which acts as an implicit flow. orderMs is the sort and cursor key (registration, else workspace creation, 0 when
 // neither was reported); startedMs reports that unknown as null instead.
-export type FlowListRow = { readonly id: string; readonly kind: "flow" | "workspace"; readonly workspaceId: string;
+export type FlowListRow = { readonly id: string; readonly kind: "flow" | "workspace" | "outside_herdr"; readonly workspaceId: string;
   readonly tabId: string | null; readonly label: string | null; readonly orderMs: number;
   readonly startedMs: number | null; readonly endedMs: number | null; readonly spec: FlowSpecRef | null;
   readonly paneIds: readonly string[];
   readonly links: readonly { readonly paneId: string; readonly sessionId: string | null; readonly source: string | null }[] };
 // A page of the flows list: newest first, at most `limit` rows, starting after `cursor` when one is given.
 export type FlowListQuery = { readonly from?: number; readonly to?: number; readonly limit: number;
+  readonly automated?: AutomatedMode;
   readonly cursor?: { readonly orderMs: number; readonly id: string } };
 // id addresses the entry in GET /api/flows/:id: a registered flow by its own id, an implicit workspace as "ws:<id>".
 // attribution counts the pane-to-session links behind `sessionIds`: herdr reported them, gisool inferred them from
 // cwd and time, or the pane has an agent session gisool has not matched to a session yet (unlinked).
-export type FlowListEntry = { readonly id: string; readonly kind: "flow" | "workspace"; readonly workspaceId: string;
+export type FlowListEntry = { readonly id: string; readonly kind: "flow" | "workspace" | "outside_herdr"; readonly workspaceId: string;
   readonly tabId: string | null; readonly label: string | null; readonly registered: boolean;
   readonly spec: FlowSpecRef | null; readonly startedMs: number | null; readonly endedMs: number | null;
   readonly paneIds: readonly string[]; readonly sessionIds: readonly string[];
@@ -231,7 +234,7 @@ export type FlowFindingDto = { readonly id: string; readonly sessions: readonly 
 export type ExcludedSession = { readonly sessionId: string; readonly reason: string };
 // GET /api/flows/:id. `flow` is null for an implicit workspace (nothing was registered, so there is no registration
 // time); `comparison` is null unless a flow with a spec is registered.
-export type FlowReportDto = { readonly generatedAt: number; readonly id: string; readonly kind: "flow" | "workspace";
+export type FlowReportDto = { readonly generatedAt: number; readonly id: string; readonly kind: "flow" | "workspace" | "outside_herdr";
   readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
   readonly flow: { readonly registeredMs: number | null; readonly endedMs: number | null; readonly tabId: string | null } | null;
   readonly spec: FlowSpecRef | null; readonly automated: AutomatedMode; readonly tree: FlowTree;
