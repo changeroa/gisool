@@ -492,6 +492,9 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 .notice { color: var(--bad); font-size: var(--fs-sm); margin-bottom: var(--s-3); }
+.callout { display: grid; gap: var(--s-1); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); font-size: var(--fs-sm); overflow-wrap: anywhere; min-width: 0; }
+.callout strong { color: var(--ink); font-weight: 600; }
+.callout ul { margin: 0; padding-inline-start: var(--s-5); }
 
 @media (min-width: 640px) and (max-width: 959.98px) {
   .sessions { table-layout: auto; }

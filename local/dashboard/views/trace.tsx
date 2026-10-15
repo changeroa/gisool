@@ -5,6 +5,7 @@ import { api, type SessionListRow } from "../api";
 import { CallList, callRows, isCall } from "../components/calls";
 import { Candidates, type CandidateLike } from "../components/candidates";
 import { Facts, type Fact } from "../components/facts";
+import { UnresolvedLoadNotice } from "../components/skill-evidence";
 import { ATTRIBUTION_LABEL, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
   buildHash, skillName, type ViewProps } from "../state";
 
@@ -227,7 +228,7 @@ function Runtime({ runtime }: { runtime: RuntimeId }) {
   );
 }
 
-function Header({ sessionId, row, steps, backHref, liveState }: { sessionId: string; row?: SessionListRow; steps: TraceStep[]; backHref: string; liveState: ViewProps["live"]["state"] }) {
+function Header({ sessionId, row, steps, backHref, liveState, unresolvedLoads }: { sessionId: string; row?: SessionListRow; steps: TraceStep[]; backHref: string; liveState: ViewProps["live"]["state"]; unresolvedLoads: boolean }) {
   const bounds = sessionBounds(steps, row);
   const counts = traceCounts(steps);
   const title = firstPromptOf(steps, row);
@@ -277,7 +278,8 @@ function Header({ sessionId, row, steps, backHref, liveState }: { sessionId: str
         {row && (
           <div>
             <dt>State</dt>
-            <dd><span class={`badge badge--${row.state}`} title={STATE_TITLE[row.state] ?? row.state}>{STATE_LABEL[row.state] ?? row.state}</span></dd>
+            <dd>{unresolvedLoads ? <span class="tag" data-adoption-status="uncertain">attribution unresolved</span>
+              : <span class={`badge badge--${row.state}`} title={STATE_TITLE[row.state] ?? row.state}>{STATE_LABEL[row.state] ?? row.state}</span>}</dd>
           </div>
         )}
         <div>
@@ -596,8 +598,9 @@ export function TraceView({ route, live }: ViewProps) {
   return (
     <section class="trace" aria-busy="false">
       {error && <p class="notice" role="alert">Live update failed: {error}</p>}
-      <Header sessionId={sessionId} row={row} steps={steps} backHref={backHref} liveState={live.state} />
-      {counts.searches === 0 && <NeverConsulted counts={counts} />}
+      <Header sessionId={sessionId} row={row} steps={steps} backHref={backHref} liveState={live.state} unresolvedLoads={(report?.unattributedLoads.count ?? 0) > 0} />
+      {report && <UnresolvedLoadNotice loads={report.unattributedLoads} />}
+      {counts.searches === 0 && (report?.unattributedLoads.count ?? 0) === 0 && <NeverConsulted counts={counts} />}
       {items.length > 0 && (
         <div class="card tl__card">
           <ol class="tl" aria-label="Session timeline">
@@ -631,8 +634,6 @@ const TRACE_CSS = `
 .trace__id { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-2); }
 .trace__counts { margin: 0; color: var(--ink-3); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
 .empty--trace .btn { text-decoration: none; }
-.callout { display: grid; gap: var(--s-1); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); font-size: var(--fs-sm); }
-.callout strong { color: var(--ink); font-weight: 600; }
 .tl__card { padding: var(--s-4) var(--s-5); }
 .tl { --dot-top: calc(var(--s-2) + 6px); list-style: none; margin: 0; padding: 0 0 0 var(--s-6); }
 .tl__step { --dot: var(--neutral); position: relative; padding-block: var(--s-2) var(--s-4); }

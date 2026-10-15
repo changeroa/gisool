@@ -234,7 +234,7 @@ export function createQueries(ctx: StoreCtx): Queries {
   }
 
   const queries: Queries = {
-    treeSessionData(sessionId) {
+    treeSessionData(sessionId, scope) {
       const session = db.prepare(`SELECT id, runtime, started_at AS startedAt, ended_at AS endedAt
         FROM sessions WHERE id = ?`).get(sessionId) as { id: string; runtime: RuntimeId; startedAt: number; endedAt: number | null } | undefined;
       if (!session) return undefined;
@@ -263,8 +263,17 @@ export function createQueries(ctx: StoreCtx): Queries {
         ORDER BY o.start_ms, o.trace_id, o.span_id`).all(sessionId) as
         (Pick<OtelSpanRow, "traceId" | "spanId" | "name" | "runtime" | "receivedAt"> &
           { parentSpanId: string | null; conversationId: string | null; turnKey: string | null; callId: string | null; startMs: number | null; endMs: number | null })[];
-      return { ...session, events: rows.map(({ data_json, ...row }) => ({ ...row, data: parseJson<Record<string, unknown>>(data_json, {}) })),
-        spans: spans.map((s) => ({ traceId: s.traceId, spanId: s.spanId, name: s.name, runtime: s.runtime, receivedAt: s.receivedAt,
+      const owned = scope ? new Set(scope.eventIds) : undefined;
+      const prior = scope ? new Set(scope.priorEventIds) : undefined;
+      const spanKeys = scope?.spanKeys ? new Set(scope.spanKeys) : undefined;
+      // Retain earlier context for continuing turn identity, but never let B's prompts reassign A's calls.
+      const events = rows.filter((row) => !scope || row.ts < scope.from ||
+        (row.ts === scope.from && row.kind === "prompt" && prior?.has(row.id)) || owned?.has(row.id));
+      return { ...session, endedAt: scope?.sessionEnds?.[sessionId] ?? session.endedAt,
+        events: events.map(({ data_json, ...row }) => ({ ...row, data: parseJson<Record<string, unknown>>(data_json, {}) })),
+        spans: spans.filter((s) => scope?.to == null || (s.startMs !== null && s.startMs < scope.to)
+          || spanKeys?.has(JSON.stringify([s.traceId, s.spanId])))
+          .map((s) => ({ traceId: s.traceId, spanId: s.spanId, name: s.name, runtime: s.runtime, receivedAt: s.receivedAt,
           ...(s.parentSpanId !== null ? { parentSpanId: s.parentSpanId } : {}), ...(s.conversationId !== null ? { conversationId: s.conversationId } : {}),
           ...(s.turnKey !== null ? { turnKey: s.turnKey } : {}), ...(s.callId !== null ? { callId: s.callId } : {}),
           ...(s.startMs !== null ? { startMs: s.startMs } : {}), ...(s.endMs !== null ? { endMs: s.endMs } : {}) })) };

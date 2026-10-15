@@ -5,7 +5,7 @@ import { GisoolStartupError } from "../version.js";
 
 export type Db = DatabaseSync;
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** migrations[i] upgrades user_version i -> i + 1. */
 function migrations(): string[] {
@@ -14,6 +14,7 @@ function migrations(): string[] {
     readFileSync(new URL("./migrations/002_tracing.sql", import.meta.url), "utf8"),
     readFileSync(new URL("./migrations/003_tracing_indexes.sql", import.meta.url), "utf8"),
     readFileSync(new URL("./migrations/004_load_reconciliation.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/005_execution_boundaries.sql", import.meta.url), "utf8"),
   ];
 }
 

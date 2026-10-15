@@ -1,5 +1,16 @@
 import type { SkillSpanUsage } from "../../src/analysis/usage.js";
-import type { AssignedTreeEvent, TurnFindingDto } from "../../src/types.js";
+import type { AssignedTreeEvent, TurnFindingDto, UnattributedLoads } from "../../src/types.js";
+
+export function UnresolvedLoadNotice({ loads }: { loads: UnattributedLoads }) {
+  if (loads.count === 0) return null;
+  return (
+    <aside class="callout" role="note" data-load-attribution="unresolved">
+      <strong><span data-unattributed-count={loads.count}>{loads.count}</span> skill {loads.count === 1 ? "load has" : "loads have"} unresolved session attribution</strong>
+      <span>These recorded loads may belong to this report. Missing attributed use is not evidence of non-use.</span>
+      <ul>{loads.uris.map((uri) => <li key={uri}><code data-unattributed-uri={uri}>{uri}</code></li>)}</ul>
+    </aside>
+  );
+}
 
 /** A later use remains navigable even when its turn starts folded. */
 function openTurn(id: string): void {

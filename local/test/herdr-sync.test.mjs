@@ -472,7 +472,7 @@ test("SessionEnd ingestion sets ended_at and releases the inferred reservation",
   assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions").get().n, 1);
 });
 
-for (const exit of ["pane_exited", "pane.agent_status_changed", "snapshot-agent-removed"]) {
+for (const exit of ["pane_exited", "pane.agent_status_changed", "snapshot-agent-removed", "snapshot-agent-omitted"]) {
   test(`${exit} ends the old session and frees the pane for later telemetry`, async (t) => {
     // Given an inferred session with no SessionEnd hook.
     const fake = await fakeHerdr(t, topology([pane("exit", { agent: "claude", cwd: "/exit", created_ms: 0 })]));
@@ -480,8 +480,8 @@ for (const exit of ["pane_exited", "pane.agent_status_changed", "snapshot-agent-
     session(db, "old", { runtime: "claude-code", cwd: "/exit", start: 100 });
     sync.linkSessions();
     // When herdr reports the agent's exit while retaining the pane.
-    if (exit === "snapshot-agent-removed") {
-      fake.snapshot = topology([pane("exit", { agent: null, cwd: "/exit", created_ms: 0 })]);
+    if (exit.startsWith("snapshot-")) {
+      fake.snapshot = topology([pane("exit", { ...(exit === "snapshot-agent-removed" ? { agent: null } : {}), cwd: "/exit", created_ms: 0 })]);
       await sync.reconcile();
     } else {
       await signal(changes, "change", () => db.prepare("SELECT ended_at FROM sessions WHERE id = 'old'").get().ended_at !== null,
@@ -496,6 +496,21 @@ for (const exit of ["pane_exited", "pane.agent_status_changed", "snapshot-agent-
     assert.deepEqual(linkedPairs(db).map((row) => [row.pane_id, row.session_id]), [["exit", "new"], ["exit", "old"]]);
   });
 }
+
+test("partial agent-status events omitting agent identity do not end the known session", async (t) => {
+  // Given a complete snapshot that still reports the active Codex agent.
+  const fake = await fakeHerdr(t, topology([pane("partial", { agent: "codex", cwd: "/partial", created_ms: 0 })]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "active", { cwd: "/partial", start: 100 });
+  sync.linkSessions();
+  // When a partial update omits agent and agent_session, then its refresh completes.
+  await signal(fake.events, "request", (req) => req.method === "session.snapshot",
+    () => fake.push("pane.agent_status_changed", { pane_id: "partial", agent_status: "working" }));
+  await sync.reconcile();
+  // Then omission has not invented an exit or discarded the known identity.
+  assert.equal(db.prepare("SELECT ended_at FROM sessions WHERE id = 'active'").get().ended_at, null);
+  assert.equal(db.prepare("SELECT agent FROM herdr_panes WHERE id = 'partial'").get().agent, "codex");
+});
 
 for (const order of [[0, 1], [1, 0]]) {
   test(`same-cwd sessions stay exclusive when reported identities arrive ${order.join(" then ")}`, async (t) => {

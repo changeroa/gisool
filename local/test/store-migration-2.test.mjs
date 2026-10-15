@@ -43,7 +43,7 @@ function seedTracingRows(db, sessionId) {
   db.prepare("INSERT INTO flow_steps (flow_id, pane_id, step_id, registered_ms) VALUES ('flow-1', 'pane-1', 'plan', 7)").run();
 }
 
-test("a v1 database upgrades to user_version 4, keeping its rows and gaining the tracing columns, indexes and tables", () => {
+test("a v1 database upgrades to user_version 5, keeping its rows and gaining the tracing columns, indexes and tables", () => {
   const dir = makeTempDir();
   try {
     const path = join(dir, "gisool.db");
@@ -54,8 +54,8 @@ test("a v1 database upgrades to user_version 4, keeping its rows and gaining the
 
     const db = openDb(path);
     try {
-      assert.equal(SCHEMA_VERSION, 4);
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
+      assert.equal(SCHEMA_VERSION, 5);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
       assert.deepEqual(db.prepare("SELECT id, first_prompt FROM sessions ORDER BY id").all().map((r) => [r.id, r.first_prompt]), [["s1", "hello"], ["s2", null]]);
       assert.deepEqual(db.prepare("SELECT id FROM events ORDER BY id").all().map((r) => r.id), ["e1", "e2", "e3"]);
       assert.equal(count(db, "loads"), 1);
@@ -71,7 +71,7 @@ test("a v1 database upgrades to user_version 4, keeping its rows and gaining the
     }
 
     const again = openDb(path);
-    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 4);
+    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 5);
     assert.equal(count(again, "events"), 3, "reopening an upgraded database re-runs nothing");
     again.close();
   } finally {
@@ -202,7 +202,7 @@ test("export then import into a fresh store preserves the rows of every table mi
     const out = join(base, "out");
     a.store.exportTo(out, { withHistory: true });
     const exported = new DatabaseSync(join(out, "history.db"));
-    assert.equal(exported.prepare("PRAGMA user_version").get().user_version, 4);
+    assert.equal(exported.prepare("PRAGMA user_version").get().user_version, 5);
     exported.close();
 
     const b = openStore();

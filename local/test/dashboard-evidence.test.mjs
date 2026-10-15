@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test, { before, after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { PACKAGE_ROOT } from "./_helpers.mjs";
+import { PACKAGE_ROOT, distImport } from "./_helpers.mjs";
+import { join } from "node:path";
 import { bearer, http, startTestServer } from "./helpers/api.mjs";
 import { descendants, installDom } from "./helpers/dashboard-dom.mjs";
 import { seedEvidence } from "./helpers/dashboard-evidence.mjs";
@@ -30,6 +31,9 @@ export const mutations = {
   matchingMode: ['specStep.together ? "together" : "alternatives"', 'specStep.together ? "alternatives" : "together"'],
   window: ['data-session-window="outside"', 'data-session-window="inside"'],
   lifecycle: ['? "end_not_observed" : "in_progress"', '? "in_progress" : "in_progress"'],
+  unresolvedCount: ["data-unattributed-count={loads.count}", "data-unattributed-count={0}"],
+  unresolvedUris: ["loads.uris.map", "[].map"],
+  uncertainStep: ["uncertain && step.panes.length > 0", "false"],
 };
 
 const mutation = process.env.GISOOL_DASHBOARD_MUTATION;
@@ -94,6 +98,45 @@ function attr(root, name, value) {
 }
 const finding = (index = 0) => reports.evidence.finding.turns[index];
 const findingView = (index = 0) => render(ui.FindingEvidence, { finding: finding(index) });
+
+test("a real scoped flow report renders an unended session without inventing termination", (t) => {
+  // Given the API's actual execution slice, not the workspace's unscoped session.
+  const link = report.tree.tabs.flatMap((tab) => tab.panes.flatMap((pane) => pane.sessions))
+    .find((item) => item.sessionId === fixture.ids.evidence);
+  assert.ok(link?.session);
+  assert.equal(reports.evidence.endedAt, null);
+  // When the same Session component used by the dashboard renders that slice.
+  const root = render(ui.Session, { link, session: link.session, flow: report.flow,
+    route: { view: "workspaces", filter: {} }, findings: new Map(), usageBySpan: new Map() });
+  t.after(() => ui.render(null, root));
+  // Then the semantic status remains unobserved, although the analysis interval ended.
+  assert.equal(link.session.endedAt, null);
+  attr(root, "data-session-status", "end_not_observed");
+});
+
+test("a real scoped report still renders a genuinely observed session end", async (t) => {
+  // Given a real termination event strictly inside the execution, delivered late.
+  const { openDb } = await distImport("store/db.js");
+  const { createStore } = await distImport("store/index.js");
+  const store = createStore(openDb(join(server.gisoolHome, "gisool.db")));
+  const endedAt = report.flow.endedMs - 1;
+  try {
+    store.append({ id: "observed-end-control", kind: "session_end", source: "hook", ts: endedAt,
+      ref: { runtime: "claude-code", runtimeSessionId: "evidence" }, data: {} },
+    { sessionId: fixture.ids.evidence, method: "runtime_id" });
+  } finally { store.close(); }
+  // When the actual API slice is rendered through Session.
+  const result = await http(server.port, { path: `/api/flows/${fixture.flowId}`, headers: bearer(server.token) });
+  assert.equal(result.status, 200);
+  const link = result.json.tree.tabs[0].panes[0].sessions[0];
+  const root = render(ui.Session, { link, session: link.session, flow: result.json.flow,
+    route: { view: "workspaces", filter: {} }, findings: new Map(), usageBySpan: new Map() });
+  t.after(() => ui.render(null, root));
+  // Then the observed end survives separately from the later analysis boundary.
+  assert.equal(link.session.endedAt, endedAt);
+  assert.equal(link.session.executionWindow.to, report.flow.endedMs);
+  attr(root, "data-session-status", "ended");
+});
 function usageView(name, index = 0) {
   const session = reports.evidence;
   const turn = session.tree.turns[index];
@@ -101,6 +144,24 @@ function usageView(name, index = 0) {
   assert.ok(span);
   return render(ui.UsageEvidence, { usage: span, events: turn.events });
 }
+
+for (const scope of ["flow", "session"]) test(`${scope} unresolved loads render the real API count and every affected URI`, () => {
+  // Given the corresponding real report, including its unresolved attribution population.
+  const loads = (scope === "flow" ? report : reports.evidence).unattributedLoads;
+  assert.equal(loads.count, 2);
+  assert.equal(loads.uris.length, 2);
+  // When the shared production disclosure renders it.
+  const root = render(ui.UnresolvedLoadNotice, { loads });
+  // Then its uncertainty, count and complete URI set have machine-readable semantics.
+  attr(root, "data-load-attribution", "unresolved");
+  attr(root, "data-unattributed-count", 2);
+  assert.deepEqual(descendants(root).flatMap((node) => node.attrs["data-unattributed-uri"] ?? []), loads.uris);
+});
+
+test("a zero unresolved-load count renders no uncertainty disclosure", () => {
+  const root = render(ui.UnresolvedLoadNotice, { loads: { count: 0, uris: [] } });
+  assert.equal(descendants(root).some((node) => node.attrs["data-load-attribution"] !== undefined), false);
+});
 
 test("lower-ranked loaded skill retains its machine rank and rendered value", () => {
   const node = attr(findingView(), "data-used-skill", "lower");
@@ -207,6 +268,17 @@ test("step cards render together and alternative modes from the exact spec versi
     const step = report.comparison.steps[i];
     attr(render(ui.StepRow, { step, specStep: spec.steps.find((item) => item.id === step.stepId) }), "data-skill-mode", mode);
   }
+});
+test("unresolved loads qualify a mapped step's non-use without hiding an unmapped step", () => {
+  // Given uncertainty and an otherwise empty mapped step.
+  const step = { ...report.comparison.steps[0], usedSkills: [], status: "no_skill_used" };
+  // When the actual step component renders mapped and unmapped variants.
+  const mapped = render(ui.StepRow, { step, uncertain: true });
+  const unmapped = render(ui.StepRow, { step: { ...step, panes: [], status: "not_run" }, uncertain: true });
+  // Then missing attribution is unknown, but an absent mapping remains a known not-run result.
+  attr(mapped, "data-step-attribution", "uncertain");
+  assert.equal(descendants(unmapped).some((node) => node.attrs["data-step-attribution"] === "uncertain"), false);
+  attr(unmapped, "data-status", "not_run");
 });
 test("pane history and missing ends stay distinct from the registered execution", () => {
   const pane = workspaceReport.tree.tabs[0].panes[0];

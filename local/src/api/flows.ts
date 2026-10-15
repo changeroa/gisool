@@ -6,7 +6,6 @@ import type { AutomatedMode, ExcludedSession, FlowListEntry, FlowListRow, FlowTr
   SessionFinding, Store, TurnFinding } from "../types.js";
 import { compareFlow } from "../workflow/compare.js";
 import { deny } from "./security.js";
-import { scopeFlowTree } from "../store/execution.js";
 
 /**
  * Read APIs over the analysis modules: the flows list, one flow report, one session's skill report and skill usage
@@ -207,12 +206,12 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const comparisonSessionIds = full.registered ? store.flowSessionIds(full.id) : [];
     const automation = store.sessionAutomation([...sessionIdsOf(full), ...comparisonSessionIds]);
     const flow = full.registered ? store.getFlow(full.id) : undefined;
+    const eventScope = flow ? store.flowEventScope(flow.id) : undefined;
     const overlaps = flow ? sessionsOf(full).map((session) => ({
       sessionId: session.id, startedBefore: session.startedAt < flow.registeredMs,
       continuesAfter: flow.endedMs !== undefined && (session.endedAt === null || session.endedAt > flow.endedMs),
     })).filter((session) => session.startedBefore || session.continuesAfter) : [];
-    const scoped = flow ? scopeFlowTree(full, flow.registeredMs, flow.endedMs) : full;
-    const { tree, excluded } = filterTree(scoped, automation, automated);
+    const { tree, excluded } = filterTree(full, automation, automated);
     for (const sessionId of comparisonSessionIds) {
       if (keepSession(sessionId, automation, automated)) continue;
       excluded.set(sessionId, { sessionId, reason: automation[sessionId] ?? "not_automated" });
@@ -222,14 +221,13 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const findings = sessions.map((session) => analyzeSession(session, digestOf));
     const usages = sessions.map((session) => sessionUsage(session));
     const spec = flow?.spec;
-    const unattributedLoads = store.reconcileLoads({
+    const warningSessions = [...sessions.map((session) => session.id), ...comparisonSessionIds.filter((id) => !excluded.has(id))];
+    const unattributedLoads = flow ? store.flowUnattributedLoads(flow.id, warningSessions) : store.reconcileLoads({
       readOnly: true,
-      from: flow?.registeredMs ?? (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
+      from: (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
         : sessions.length === 0 ? 0 : Math.min(...sessions.map((session) => session.startedAt))),
-      // Execution trees include the end timestamp; reconcileLoads uses an exclusive upper bound.
-      to: flow?.endedMs !== undefined ? flow.endedMs + 1
-        : (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
-      sessionIds: [...sessions.map((session) => session.id), ...comparisonSessionIds.filter((id) => !excluded.has(id))],
+      to: (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
+      sessionIds: warningSessions,
     });
     res.json({
       generatedAt: Date.now(),
@@ -239,9 +237,11 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       flow: flow ? { registeredMs: flow.registeredMs, endedMs: flow.endedMs ?? null, tabId: flow.tabId ?? null } : null,
       spec: spec ? { id: spec.id, name: spec.name, version: spec.version } : null,
       automated, tree,
-      executionScope: flow ? { from: flow.registeredMs, to: flow.endedMs ?? null, boundary: "inclusive",
+      executionScope: eventScope ? { from: eventScope.from, to: eventScope.to, boundary: eventScope.boundary,
         overlaps: overlaps.filter((session) => keepSession(session.sessionId, automation, automated)),
-        label: "Events restricted to this execution; continuing sessions are split by event time" } : null,
+        label: eventScope.boundary === "recorded"
+          ? "Events scoped by timestamp; recorded identity resolves equal-time boundaries. Delayed interior evidence can still arrive. Session ends are observed separately."
+          : "Historical boundary order was not recorded. Equal-time boundary activity is uncertain and excluded here; workspace history retains it." } : null,
       finding: { id: tree.id, sessions: findings.map(findingDto), aggregate: aggregateFindings(findings.flatMap((f) => f.turns)) },
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
       comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()] }) ?? null : null,

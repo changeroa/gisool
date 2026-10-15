@@ -9,7 +9,7 @@ import { api, type FlowsQuery } from "../api";
 import { installStyles } from "../charts/sankey";
 import { CallList, Tokens, UNKNOWN, callRows, isCall, numberOf, tokenParts } from "../components/calls";
 import { Facts, type Fact } from "../components/facts";
-import { FindingEvidence, UsageEvidence } from "../components/skill-evidence";
+import { FindingEvidence, UsageEvidence, UnresolvedLoadNotice } from "../components/skill-evidence";
 import type { WorkflowSpec } from "../../src/workflow/spec.js";
 import {
   BASIS_LABEL, BASIS_TITLE, FINDING_LABEL, FINDING_TITLE, RUNTIME_LABEL, RUNTIME_MARK, SPAN_ATTRIBUTION_LABEL,
@@ -315,9 +315,10 @@ export function WorkspacesView({ route, navigate, live }: ViewProps) {
   );
 }
 
-export function StepRow({ step, specStep }: { step: StepComparison; specStep?: WorkflowSpec["steps"][number] }) {
+export function StepRow({ step, specStep, uncertain = false }: { step: StepComparison; specStep?: WorkflowSpec["steps"][number]; uncertain?: boolean }) {
   const used = new Set(step.usedSkills);
   const intended = new Set(step.intendedSkills);
+  const attributionUncertain = uncertain && step.panes.length > 0;
   return (
     <li class="step" data-step={step.stepId} data-status={step.status}>
       <div class="step__head">
@@ -325,7 +326,9 @@ export function StepRow({ step, specStep }: { step: StepComparison; specStep?: W
         <span class="tag" data-skill-mode={specStep ? specStep.together ? "together" : "alternatives" : "unknown"}>
           {specStep ? specStep.together ? "together (all required)" : "alternatives (any one)" : "skill matching mode unavailable"}
         </span>
-        <span class={`badge badge--${step.status}`} title={STEP_STATUS_TITLE[step.status]}>{STEP_STATUS_LABEL[step.status]}</span>
+        {attributionUncertain && step.status !== "matched"
+          ? <span class="tag" data-step-attribution="uncertain">attribution unresolved</span>
+          : <span class={`badge badge--${step.status}`} title={STEP_STATUS_TITLE[step.status]}>{STEP_STATUS_LABEL[step.status]}</span>}
         <span class="dim">{step.panes.length === 0 ? "no pane mapped" : step.panes.join(", ")}</span>
       </div>
       <div class="step__row">
@@ -334,15 +337,15 @@ export function StepRow({ step, specStep }: { step: StepComparison; specStep?: W
           {step.intendedSkills.length === 0
             ? <span class="dim">none</span>
             : step.intendedSkills.map((name) => (
-              <span key={name} class={used.has(name) ? "skill" : "skill skill--missing"} title={used.has(name) ? "used in this step" : "not used in this step"}>{name}</span>
+              <span key={name} class={used.has(name) ? "skill" : "skill skill--missing"} title={used.has(name) ? "used in this step" : "no attributed use recorded"}>{name}</span>
             ))}
         </span>
       </div>
       <div class="step__row">
-        <span class="step__k">used</span>
+        <span class="step__k">{attributionUncertain ? "attributed use" : "used"}</span>
         <span class="step__v">
           {step.usedSkills.length === 0
-            ? <span class="dim">none</span>
+            ? <span class="dim">{attributionUncertain ? "unknown" : "none"}</span>
             : step.usedSkills.map((name) => (
               <span key={name} class="skill" title={intended.has(name) ? "intended by this step" : "not intended by this step"}>
                 {name}
@@ -358,13 +361,13 @@ export function StepRow({ step, specStep }: { step: StepComparison; specStep?: W
   );
 }
 
-function Steps({ comparison, specSteps, specError }: { comparison: FlowComparison; specSteps: WorkflowSpec["steps"]; specError: string | undefined }) {
+function Steps({ comparison, specSteps, specError, uncertain }: { comparison: FlowComparison; specSteps: WorkflowSpec["steps"]; specError: string | undefined; uncertain: boolean }) {
   return (
     <section class="card ws__block" aria-labelledby="ws-steps">
       <h2 class="ws__h" id="ws-steps">Steps</h2>
       {specError && <p class="notice" role="alert">Could not read step matching modes: {specError}</p>}
       <ol class="steps">
-        {comparison.steps.map((step) => <StepRow key={step.stepId} step={step} specStep={specSteps.find((item) => item.id === step.stepId)} />)}
+        {comparison.steps.map((step) => <StepRow key={step.stepId} step={step} specStep={specSteps.find((item) => item.id === step.stepId)} uncertain={uncertain} />)}
       </ol>
       {comparison.unplanned.length > 0 && (
         <p class="dim">
@@ -643,7 +646,9 @@ export function WorkspaceView({ route }: ViewProps) {
   return (
     <section class="ws" aria-busy="false">
       <Header report={report} backHref={backHref} onRefresh={() => setRefresh((n) => n + 1)} busy={busy} />
-      {report.comparison && <Steps comparison={report.comparison} specSteps={specSteps} specError={specError} />}
+      {report.executionScope && <aside class="callout" role="note" data-execution-boundary={report.executionScope.boundary}>{report.executionScope.label}</aside>}
+      <UnresolvedLoadNotice loads={report.unattributedLoads} />
+      {report.comparison && <Steps comparison={report.comparison} specSteps={specSteps} specError={specError} uncertain={report.unattributedLoads.count > 0} />}
       <Tree tree={report.tree} route={route} findings={findings} usageBySpan={usageBySpan} filtered={report.excludedSessions.length > 0} flow={report.flow} />
     </section>
   );
