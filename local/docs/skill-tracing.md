@@ -51,11 +51,18 @@ reconnection.
 Reported identity wins: a usable herdr `agent_session` ID matches a session's runtime session ID or
 conversation ID. These links retain their `herdr:` source. Without usable identity, any agent, including
 OmO, can be inferred from an exact nonempty cwd match and a session start within the pane's lifetime.
-Agent/runtime matches take precedence over shell panes; multiple equally eligible panes remain unlinked
-rather than being guessed from recency. Reported links reserve their panes and sessions before inference.
+Agent/runtime matches take precedence over shell panes, including when a matching pane is occupied:
+concurrent work does not fall back to the shell. Multiple equally eligible panes remain unlinked rather
+than being guessed from recency. A detected mismatching runtime causes abstention when none matches;
+only a unique unknown-runtime pane without conflicting agent evidence can be inferred as a fallback.
+Reported links reserve their panes and sessions before inference.
 Each inferred session gets only one pane. A newer explicit SessionStart in the same unambiguous pane ends
 the earlier session's reservation at the successor's start; ambiguous same-cwd panes are not resolved this way.
 Inferred links are labelled `inferred:cwd_time`, not reported.
+
+Still-open panes qualify for discovery regardless of age. Unchanged linked history is retained on later
+passes; new/unlinked sessions, touched active sessions and changed same-cwd topology are reconsidered.
+An old open pane's entire completed session history is not deleted and recreated on every reconcile.
 
 The Claude pack installs both SessionStart and SessionEnd hooks using the same `hook-post.mjs` command.
 A SessionEnd becomes a `session_end` event and sets `sessions.ended_at` to its event timestamp. A herdr

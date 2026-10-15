@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import { distImport } from "./_helpers.mjs";
 
 const { openDb } = await distImport("store/db.js");
@@ -13,6 +14,36 @@ function captureSql(db) {
   db.prepare = (query) => { sql.push(query); return prepare(query); };
   return sql;
 }
+
+test("a long-running open pane backfills history without rebuilding unchanged links", (t) => {
+  // Given the verifier's 96-hour pane and 2,000 sequential sessions from 72 hours ago.
+  const now = 1_000_000_000, hour = 3_600_000;
+  t.mock.method(Date, "now", () => now);
+  const db = openDb(":memory:");
+  db.prepare("INSERT INTO herdr_panes (id,cwd,created_ms,last_seen_ms,agent) VALUES (?,?,?,?,?)")
+    .run("long-running", "/repo", now - 96 * hour, now - 96 * hour, "claude");
+  const insert = db.prepare("INSERT INTO sessions (id,runtime,cwd,started_at,ended_at) VALUES (?,'claude-code','/repo',?,?)");
+  db.exec("BEGIN");
+  for (let i = 0; i < 2000; i++) insert.run(`s${i}`, now - 72 * hour + i * 1000, now - 72 * hour + i * 1000 + 500);
+  db.exec("COMMIT");
+  const sync = startHerdrSync(db, { env: { GISOOL_HERDR_SOCKET: "/tmp/gst-performance-absent.sock" }, log() {} });
+  t.after(() => { sync.close(); db.close(); });
+  sync.linkSessions();
+  assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions").get().n, 2000);
+  db.exec(`CREATE TEMP TABLE changed_links (id TEXT);
+    CREATE TEMP TRIGGER count_delete AFTER DELETE ON pane_sessions BEGIN INSERT INTO changed_links VALUES (old.session_id); END;
+    CREATE TEMP TRIGGER count_update AFTER UPDATE ON pane_sessions BEGIN INSERT INTO changed_links VALUES (old.session_id); END;`);
+  // When an unchanged pass runs, no historical link should be rewritten.
+  const begin = performance.now();
+  sync.linkSessions();
+  const elapsedMs = performance.now() - begin;
+  const changed = db.prepare("SELECT count(*) n FROM changed_links").get().n;
+  t.diagnostic(JSON.stringify({ elapsedMs, changed, links: 2000 }));
+  // Then the no-change pass is bounded and retains all 2,000 original rows.
+  assert.ok(elapsedMs < 250, `unchanged open-pane pass took ${elapsedMs}ms`);
+  assert.equal(changed, 0);
+  assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions").get().n, 2000);
+});
 
 test("linking revisits only eligible lifetimes and touched sessions, preserving historical links", (t) => {
   // Given historical, recent-closed, and still-open pane lifetimes.

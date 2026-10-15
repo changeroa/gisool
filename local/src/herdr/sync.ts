@@ -32,6 +32,7 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
   let ready = false;
   let running: Promise<void> | undefined;
   let again = false;
+  const changedCwds = new Set<string>();
   const upsertWorkspace = db.prepare(`INSERT INTO herdr_workspaces (id, label, created_ms) VALUES (?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET label = excluded.label, closed_ms = NULL`);
   const upsertTab = db.prepare(`INSERT INTO herdr_tabs (id, workspace_id, label, created_ms) VALUES (?, ?, ?, ?)
@@ -69,12 +70,15 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
     VALUES (?, ?, 'inferred:cwd_time', ?, ?, ?, ?)`);
   const inferSessions = db.prepare(`SELECT DISTINCT s.id, s.started_at FROM herdr_panes p CROSS JOIN sessions s
     WHERE (p.closed_ms IS NULL OR p.last_seen_ms >= ?) AND p.cwd IS NOT NULL AND p.cwd <> ''
-      AND s.cwd = p.cwd AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)`);
-  const touchedSession = db.prepare("SELECT id, started_at FROM sessions WHERE id = ?");
+      AND s.cwd = p.cwd AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
+      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id)`);
+  const revisitSessions = db.prepare(`SELECT DISTINCT s.id, s.started_at FROM herdr_panes p CROSS JOIN sessions s
+    WHERE p.cwd = ? AND (p.closed_ms IS NULL OR p.last_seen_ms >= ?)
+      AND s.cwd = p.cwd AND s.ended_at IS NULL AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)`);
+  const touchedSession = db.prepare("SELECT id, started_at, ended_at FROM sessions WHERE id = ?");
   const hasLink = db.prepare("SELECT 1 FROM pane_sessions WHERE session_id = ? LIMIT 1");
-  const candidates = db.prepare(`SELECT p.id, p.agent, s.runtime FROM herdr_panes p JOIN sessions s ON s.cwd = p.cwd
-    WHERE s.id = ? AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
-      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps LEFT JOIN sessions reported ON reported.id = ps.session_id
+  const candidates = db.prepare(`SELECT p.id, p.agent, s.runtime,
+      NOT EXISTS (SELECT 1 FROM pane_sessions ps LEFT JOIN sessions reported ON reported.id = ps.session_id
         WHERE ps.pane_id = p.id AND ps.source <> 'inferred:cwd_time'
           AND (ps.session_id IS NULL OR (reported.started_at <= s.started_at
             AND COALESCE(reported.ended_at, 9223372036854775807) > s.started_at
@@ -84,7 +88,9 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         WHERE ps.pane_id = p.id AND other.started_at < COALESCE(s.ended_at, 9223372036854775807)
           AND s.started_at < COALESCE(other.ended_at, 9223372036854775807)
           AND NOT (other.started_at < s.started_at AND other.runtime = s.runtime
-            AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'session_start')))
+            AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'session_start'))) AS available
+    FROM herdr_panes p JOIN sessions s ON s.cwd = p.cwd
+    WHERE s.id = ? AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
     ORDER BY p.id`);
   const usable = (pane: z.infer<typeof paneSchema>) => pane.agent_session?.kind === "id" && pane.agent_session.value.trim() !== "";
   const linkSessions = (touched: readonly string[] = []) => {
@@ -102,9 +108,12 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
       // Only revisit sessions inside recent/open pane lifetimes or this ingest batch.
       // Historical inferred links outside that set are never rewritten.
       const batch = new Map(inferSessions.all(now - RECENT_PANE_MS, now).map((s) => [s.id, s]));
+      for (const cwd of changedCwds) {
+        for (const session of revisitSessions.all(cwd, now - RECENT_PANE_MS, now)) batch.set(session.id, session);
+      }
       for (const id of touched) {
         const session = touchedSession.get(id);
-        if (session) batch.set(session.id, session);
+        if (session && (session.ended_at === null || !hasLink.get(session.id))) batch.set(session.id, session);
       }
       const sessions = [...batch.values()].sort((a, b) => Number(a.started_at) - Number(b.started_at) || String(a.id).localeCompare(String(b.id)));
       const previous = new Map(sessions.map((s) => [s.id, previousLinks.all(s.id)]));
@@ -113,9 +122,10 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         if (hasLink.get(session.id)) continue;
         let eligible = candidates.all(session.id, now);
         const matching = eligible.filter((p) => p.agent && runtimeOf(p.agent) === p.runtime);
-        const agents = eligible.filter((p) => p.agent);
-        if (matching.length) eligible = matching;
-        else if (agents.length) eligible = agents;
+        // Rank evidence before availability: an occupied matching agent must never redirect work to a shell.
+        if (matching.length) eligible = matching.filter((p) => p.available === 1);
+        else if (eligible.some((p) => p.agent)) eligible = [];
+        else eligible = eligible.filter((p) => !p.agent && p.available === 1);
         if (eligible.length !== 1) continue;
         const first = eligible[0];
         if (!first) continue;
@@ -126,6 +136,7 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         }
       }
       db.exec("RELEASE herdr_links");
+      changedCwds.clear();
     } catch (error) {
       db.exec("ROLLBACK TO herdr_links; RELEASE herdr_links");
       throw error;
@@ -138,7 +149,12 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
       for (const w of snapshot.workspaces) upsertWorkspace.run(w.workspace_id, w.label ?? null, w.created_ms ?? now);
       for (const t of snapshot.tabs) upsertTab.run(t.tab_id, t.workspace_id, t.label ?? null, t.created_ms ?? now);
       for (const p of snapshot.panes) {
-        const previousPane = db.prepare("SELECT agent FROM herdr_panes WHERE id = ?").get(p.pane_id);
+        const previousPane = db.prepare("SELECT agent, cwd, created_ms, closed_ms FROM herdr_panes WHERE id = ?").get(p.pane_id);
+        const agent = p.agent_session?.agent ?? p.agent ?? null;
+        if (!previousPane || previousPane.agent !== agent || previousPane.cwd !== (p.cwd ?? null) || previousPane.closed_ms !== null) {
+          if (typeof previousPane?.cwd === "string" && previousPane.cwd !== "") changedCwds.add(previousPane.cwd);
+          if (p.cwd) changedCwds.add(p.cwd);
+        }
         if (p.agent_status === "exited" || (previousPane?.agent && p.agent === null && !p.agent_session)) {
           endPaneSessions.run(now, p.pane_id);
         }

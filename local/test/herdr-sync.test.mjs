@@ -333,22 +333,24 @@ test("preseeded runtime identity links on the first snapshot", async (t) => {
   assert.equal(db.prepare("SELECT source FROM pane_sessions").get().source, "herdr:hook");
 });
 
-test("any agent without usable identity links by cwd within lifetime, never without cwd", async (t) => {
+test("matching or unknown agents link by cwd within lifetime, never without cwd", async (t) => {
   const fake = await fakeHerdr(t, topology([
     pane("claude", { agent: "claude", cwd: "/claude", created_ms: 100 }),
-    pane("pi", { agent: "pi", cwd: "/pi", created_ms: 100 }),
+    pane("unknown", { cwd: "/unknown", created_ms: 100 }),
     pane("codex", { agent: "codex", cwd: "/codex", created_ms: 100, agent_session: { agent: "codex", kind: "path", source: "file", value: "/not-an-id" } }),
     pane("no-cwd", { agent: "codex" }),
     pane("reported", { cwd: "/claude", agent_session: { agent: "codex", kind: "id", source: "hook", value: "unmatched" } }),
   ]));
   const { db, sync } = await follower(t, fake);
   session(db, "too-old", { cwd: "/claude", start: 99 });
-  for (const agent of ["claude", "pi", "codex"]) session(db, `${agent}-session`, { cwd: `/${agent}`, start: 101 });
+  for (const agent of ["claude", "unknown", "codex"]) session(db, `${agent}-session`, {
+    runtime: agent === "claude" ? "claude-code" : "codex", cwd: `/${agent}`, start: 101,
+  });
   sync.linkSessions();
   assert.deepEqual(db.prepare("SELECT pane_id, session_id, source FROM pane_sessions WHERE source = 'inferred:cwd_time' ORDER BY pane_id").all().map((r) => ({ ...r })), [
     { pane_id: "claude", session_id: "claude-session", source: "inferred:cwd_time" },
     { pane_id: "codex", session_id: "codex-session", source: "inferred:cwd_time" },
-    { pane_id: "pi", session_id: "pi-session", source: "inferred:cwd_time" },
+    { pane_id: "unknown", session_id: "unknown-session", source: "inferred:cwd_time" },
   ]);
   assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions WHERE pane_id = 'no-cwd'").get().n, 0);
   assert.equal(db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = 'reported'").get().session_id, null);
@@ -518,7 +520,8 @@ for (const [name, first, second, expected] of [
   ["two matching agents remain ambiguous", { agent: "claude" }, { agent: "claude" }, null],
   ["two unmatched agents remain ambiguous", { agent: "codex" }, { agent: "pi" }, null],
   ["two shells remain ambiguous", {}, {}, null],
-  ["agent pane beats shell without runtime match", { agent: "pi" }, {}, "older"],
+  ["unmatched agent plus shell abstains", { agent: "pi" }, {}, null],
+  ["wrong known runtime plus shell abstains", { agent: "codex" }, {}, null],
 ]) {
   test(`same-cwd inference: ${name}`, async (t) => {
     // Given two simultaneously live panes with different creation times.
@@ -534,6 +537,49 @@ for (const [name, first, second, expected] of [
     assert.deepEqual(linkedPairs(db).map((row) => row.pane_id), expected ? [expected] : []);
   });
 }
+
+test("an occupied matching agent never redirects a concurrent session to a shell", async (t) => {
+  // Given a matching Claude pane, a shell, and a linked session that has not ended.
+  const fake = await fakeHerdr(t, topology([
+    pane("matching", { agent: "claude", cwd: "/occupied", created_ms: 100 }),
+    pane("shell", { cwd: "/occupied", created_ms: 100 }),
+  ]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "first", { runtime: "claude-code", cwd: "/occupied", start: 200 });
+  sync.linkSessions();
+  assert.deepEqual(linkedPairs(db).map((row) => [row.pane_id, row.session_id]), [["matching", "first"]]);
+  // When a second concurrent session has no explicit successor-start or end signal.
+  session(db, "second", { runtime: "claude-code", cwd: "/occupied", start: 300 });
+  sync.linkSessions(["second"]);
+  // Then the first attribution survives and the second remains unlinked, rather than taking the shell.
+  assert.deepEqual(linkedPairs(db).map((row) => [row.pane_id, row.session_id]), [["matching", "first"]]);
+});
+
+test("a detected nonmatching runtime leaves a sole pane unlinked", async (t) => {
+  // Given a pane whose detected runtime contradicts the session.
+  const fake = await fakeHerdr(t, topology([pane("wrong", { agent: "codex", cwd: "/wrong", created_ms: 100 })]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "claude", { runtime: "claude-code", cwd: "/wrong", start: 200 });
+  // When no matching or unknown-runtime candidate exists.
+  sync.linkSessions();
+  // Then cwd alone does not override the detected runtime.
+  assert.deepEqual(linkedPairs(db), []);
+});
+
+test("changed same-cwd topology reconsiders active links without rebuilding ended history", async (t) => {
+  // Given one unambiguous matching pane and an active inferred session.
+  const original = pane("original", { agent: "claude", cwd: "/changed", created_ms: 100 });
+  const fake = await fakeHerdr(t, topology([original]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "active", { runtime: "claude-code", cwd: "/changed", start: 300 });
+  sync.linkSessions();
+  assert.deepEqual(linkedPairs(db).map((row) => row.pane_id), ["original"]);
+  // When a delayed snapshot reveals another matching pane inside that session's lifetime.
+  fake.snapshot = topology([original, pane("other", { agent: "claude", cwd: "/changed", created_ms: 200 })]);
+  await sync.reconcile();
+  // Then the new ambiguity invalidates the active inference rather than leaving a stale guess.
+  assert.deepEqual(linkedPairs(db), []);
+});
 
 test("connection failures log each distinct cause once across retries", async (t) => {
   // Given a reachable server whose connection initialization fails repeatedly.
