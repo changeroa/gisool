@@ -76,7 +76,7 @@ export function writeAliasesOverrides(db: Db, value: Record<string, string[]>): 
   setMeta(db, "aliases_overrides", JSON.stringify(value));
 }
 
-type Writes = Pick<Store, "append" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
+type Writes = Pick<Store, "append" | "hasSourceKey" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
   | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention">;
 
 export function createWrites(ctx: StoreCtx): Writes {
@@ -86,6 +86,7 @@ export function createWrites(ctx: StoreCtx): Writes {
     (id, ts, kind, source, session_id, attribution_method, attribution_reason, runtime, trace_id, load_id, skill_uri, tool_use_id, text, text_digest, text_length, data_json,
      source_key, turn_key, call_id, span_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const selectSourceKey = db.prepare("SELECT 1 AS hit FROM events WHERE source_key = ?");
   const setFirstPrompt = db.prepare("UPDATE sessions SET first_prompt = ? WHERE id = ? AND first_prompt IS NULL");
   const setEnded = db.prepare("UPDATE sessions SET ended_at = MAX(COALESCE(ended_at, 0), ?) WHERE id = ?");
 
@@ -106,6 +107,10 @@ export function createWrites(ctx: StoreCtx): Writes {
       // A record the agent re-sent must not reopen its session or replace the first prompt it already set.
       if (inserted) sessionSideEffects(attribution.sessionId, event.kind, event.ts, text);
       return inserted;
+    },
+
+    hasSourceKey(sourceKey: string): boolean {
+      return selectSourceKey.get(sourceKey) !== undefined;
     },
 
     openSessions(runtime: RuntimeId, since: number) {

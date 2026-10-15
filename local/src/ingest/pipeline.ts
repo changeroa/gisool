@@ -5,7 +5,7 @@ import { parseOtlpLogs } from "./otlp.js";
 import { applyCapture } from "./redact.js";
 
 export type IngestChange = { sessionId: string; attribution: Attribution; event?: CanonicalEvent };
-export type IngestStore = Pick<Store, "append" | "upsertSession" | "openSessions" | "traceSession" | "reattribute" | "findEventByToolUseId" | "countIngest">;
+export type IngestStore = Pick<Store, "append" | "hasSourceKey" | "upsertSession" | "openSessions" | "traceSession" | "reattribute" | "findEventByToolUseId" | "countIngest">;
 export type IngestDeps = {
   store: IngestStore;
   captureLevel: CaptureLevel | (() => CaptureLevel);
@@ -55,6 +55,8 @@ function capture(event: CanonicalEvent, level: CaptureLevel): CanonicalEvent {
  */
 export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | undefined {
   try {
+    // A replay has to be dropped here: attribute() upserts the session and the load map is written before append could reject it.
+    if (event.sourceKey !== undefined && deps.store.hasSourceKey(event.sourceKey)) return undefined;
     const level = typeof deps.captureLevel === "function" ? deps.captureLevel() : deps.captureLevel;
     const captured = capture(event, level);
     const attribution = attribute(captured, deps.store, nowOf(deps), deps.state);

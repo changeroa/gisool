@@ -104,18 +104,54 @@ test("the same source_key appended twice yields one row and the second append re
   }
 });
 
-test("ingest neither counts, publishes nor re-applies side effects for a replayed event", () => {
+test("a replayed event leaves the session row, the counters and the SSE stream untouched", () => {
   const { db, store } = openStore();
   try {
     const published = [];
     const deps = createIngestDeps(store, { now: () => NOW, publish: (c) => published.push(c) });
     const event = { id: "ev-replay-1", ts: NOW, kind: "prompt", source: "otel", data: {}, text: "hello",
       ref: { runtime: "claude-code", runtimeSessionId: "rs-replay" }, sourceKey: "sha256:record-9|prompt||0" };
+    const sessionRow = () => ({ ...db.prepare("SELECT started_at, ended_at, cwd, first_prompt FROM sessions").get() });
 
     assert.ok(ingest(event, deps));
-    assert.equal(ingest({ ...event, id: "ev-replay-2" }, deps), undefined);
+    const before = sessionRow();
+    assert.deepEqual(before, { started_at: NOW, ended_at: null, cwd: null, first_prompt: "hello" });
+
+    const replay = { ...event, id: "ev-replay-2", ts: NOW - 50, text: "replaced", ref: { ...event.ref, cwd: "/changed-by-replay" } };
+    assert.equal(ingest(replay, deps), undefined);
+    assert.deepEqual(sessionRow(), before, "a replay must not move started_at or add a cwd through upsertSession");
     assert.equal(count(db, "events"), 1);
+    assert.equal(count(db, "sessions"), 1);
     assert.equal(published.length, 1);
+    assert.equal(store.stats().ingest.accepted, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("a load replayed after a daemon restart is not re-bound to a newer session", () => {
+  const { db, store } = openStore();
+  try {
+    let now = NOW;
+    const deps = createIngestDeps(store, { now: () => now });
+    const a = store.upsertSession({ runtime: "claude-code", runtimeSessionId: "rs-a" }, NOW);
+    const load = { id: "ev-load-1", ts: NOW + 10, kind: "load", source: "mcp", ref: { runtime: "claude-code" },
+      loadId: "load-1", sourceKey: "sha256:record-load|load||0", data: {} };
+
+    now = NOW + 10;
+    assert.equal(ingest(load, deps).sessionId, a);
+    assert.equal(deps.state.loadSessions.get("load-1"), a);
+    store.append({ id: "ev-end-a", ts: NOW + 20, kind: "session_end", source: "hook", data: {},
+      ref: { runtime: "claude-code", runtimeSessionId: "rs-a" } }, { sessionId: a, method: "runtime_id" });
+    const b = store.upsertSession({ runtime: "claude-code", runtimeSessionId: "rs-b" }, NOW + 30);
+    assert.notEqual(a, b);
+
+    now = NOW + 40;
+    const restarted = createIngestDeps(store, { now: () => now });
+    assert.equal(ingest(load, restarted), undefined);
+    assert.equal(db.prepare("SELECT session_id FROM events WHERE id = ?").get(load.id).session_id, a);
+    assert.equal(restarted.state.loadSessions.get("load-1"), undefined, "a replay must not bind the load to the session that is open now");
+    assert.equal(count(db, "events"), 2);
     assert.equal(store.stats().ingest.accepted, 1);
   } finally {
     store.close();

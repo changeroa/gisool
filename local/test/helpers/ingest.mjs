@@ -40,6 +40,9 @@ export function memoryStore() {
       return [...sessions.values()].filter((s) => s.ref.runtime === runtime && s.endedAt === undefined && s.lastActivityAt >= since)
         .map(({ id, startedAt, lastActivityAt, ref }) => ({ id, startedAt, lastActivityAt, ref }));
     },
+    hasSourceKey(sourceKey) {
+      return events.some((e) => e.event.sourceKey === sourceKey);
+    },
     append(event, attribution) {
       const duplicate = events.some((e) => e.event.id === event.id || (event.sourceKey !== undefined && e.event.sourceKey === event.sourceKey));
       if (duplicate) return false;

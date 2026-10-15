@@ -61,6 +61,8 @@ export type SkillWeekDto = { weeks: string[]; rows: { uri: SkillUri; name: strin
 export interface Store {
   // Returns false when the row was already stored (same id or source_key) and nothing was written.
   append(event: CanonicalEvent, attribution: Attribution): boolean;
+  // True when an event derived from that agent record is already stored, so a replay can be dropped before anything mutates.
+  hasSourceKey(sourceKey: string): boolean;
   openSessions(runtime: RuntimeId, since: number): { id: string; startedAt: number; lastActivityAt: number; ref: SessionRef }[];
   reattribute(eventId: string, sessionId: string, method: Attribution["method"]): void;
   findEventByToolUseId(toolUseId: string): string | undefined;
