@@ -1,0 +1,90 @@
+task 11 - Dashboard "Workspaces" view and skill spans in session trace
+worktree /Users/victor/projects/gisul-wt/gst-w5 (branch gst-w5, base 3c63dfd)
+
+WHAT SHIPPED
+- local/dashboard/views/workspaces.tsx (new): flow list + flow detail.
+  list row = label (or workspace id) + spec "name v<version>" / dim "unregistered" tag + started
+  (or "unknown") + facts line (workspace, tab, panes, sessions, inferred/unlinked link counts) +
+  summary line read from the flow report (turns, found via search, spans acted, abstained, cost).
+  detail = header (workspace / spec / started / ended / panes / sessions, summary facts, snapshot
+  time + Refresh, automated-exclusion note), Steps (status badge per step, intended vs used skill
+  chips, unexpected tools, unplanned panes), Panes tree
+  tab > pane > session > turn > skill span > tool/model row.
+  basis and attribution are small tags: reported / joined / inferred, reported / single / co-active.
+- local/dashboard/components/calls.tsx (new): shared call rows + token buckets for the two views.
+  Every figure is a reported measurement; a missing one reads "unknown", never 0.
+- local/dashboard/views/trace.tsx: planTimeline() folds each skill span into the timeline right
+  after the step that activated it and moves the tool/model steps it owns inside it, with the turn's
+  finding label. Without a readable skill report the timeline stays exactly as recorded.
+- local/dashboard/main.tsx: Workspaces tab + TAB_OF (trace -> Sessions, workspace -> Workspaces).
+- local/dashboard/state.ts: #/workspaces and #/workspaces/<id> routes (ws:<id> round-trips),
+  FINDING_/BASIS_/STEP_STATUS_/SPAN_ATTRIBUTION_ label + title maps.
+- local/dashboard/api.ts: flows(), flowReport(), skillReport(); the fixture api answers like a
+  daemon that has never seen herdr.
+- local/dashboard/styles.css: shared primitives .tag/.tag--dim/.tag--ok/.tag--bad, .dim, .facts,
+  .foldbtn (moved out of the trace block), step-status badge modifiers.
+- local/dashboard/DESIGN.md: new components, the status-colour rule for steps vs findings, the
+  responsive facts rule, and three accepted-debt rows.
+- local/test/dashboard-workspaces.test.mjs (new, 10 tests).
+
+GATES (local/)
+npm run build      OK  (tsc + esbuild bundle)
+npm run typecheck  OK  (tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json)
+npm test           OK  433 pass / 0 fail
+
+TEST + MUTATION CHECK
+dashboard-workspaces.test.mjs seeds a real daemon (startTestServer) with herdr rows, a registered
+2-pane flow, a Codex span that reports no cost, an unlinked pane link and an automated session, then
+asserts the dashboard helpers against the real GET /api/flows, /api/flows/:id and
+/api/sessions/:id/skill-report payloads (machine values only: counts, nulls, key sets, row shapes).
+Mutation: flowSummary's cost rule changed to sum known costs and treat an unreported one as 0
+  -> "the flow summary ... leaves an unreported cost null" FAILED (9 pass / 1 fail); file restored.
+
+MANUAL VISUAL QA (owned headless browser: Bun.WebView, Chrome backend)
+Sandbox daemon from this build: GISOOL_HOME=$(mktemp -d)/.gisool, GISOOL_NO_CLI=1, GISOOL_HERDR=off,
+ephemeral port (52299), dashboard served from dist/dashboard.
+Seeded through the real surfaces:
+  - POST /api/workflows      201  auth-flow v1 (plan / build[together] / ship)
+  - POST /api/flows          201  ws-main + tab-main, label "Auth flow"
+  - POST /api/flows/:id/steps 201 x2 (pane-plan->plan, pane-build->build; ship left unmapped)
+  - POST /ingest/otlp/v1/logs 202 x4 (claude-otlp user-prompt, skill-activated,
+    tool-result-bash-skill, api-request from local/test/fixtures/ingest)
+  - herdr workspaces/tabs/panes/pane_sessions + agent events seeded directly into the store
+    (3 claude/codex sessions, 3 turns on one of them, a 14-call span, a failed tool call,
+    a Codex model call with no cost, an unlinked pane link, an automated session)
+Checks on every capture: document.documentElement.scrollWidth <= window.innerWidth (no horizontal
+overflow) and 0 occurrences of "NaN" and "undefined" in body text.
+  #/workspaces            1280x800  1280/1280  NaN 0  undefined 0   2 rows
+  #/workspaces            390x844   390/390    NaN 0  undefined 0   (dark pass too, bg #0f1011)
+  #/workspaces/<flow>     1280x800  1280/1280  NaN 0  undefined 0   3 skill spans
+  #/workspaces/<flow>     390x844   390/390    NaN 0  undefined 0
+  #/workspaces/<flow>     1280x800  dark       NaN 0  undefined 0
+  #/sessions/<session>    1280x800  1280/1280  NaN 0  undefined 0   2 timeline skill-span rows
+  #/sessions/<session>    390x844   390/390    NaN 0  undefined 0
+  #/workspaces/does-not-exist -> existing .notice element reads
+    "Could not load this flow: no flow or herdr workspace does-not-exist" (GET /api/flows/... 404)
+Looked at every screenshot; four defects found and fixed, then re-captured:
+  1. spec tag floated to the right edge away from its title -> grid columns auto/1fr/auto.
+  2. "Show all 15 calls" fold centered inside the span grid -> .foldbtn justify-self/text-align start.
+  3. "1 resource reads" / "1 gisool calls" mis-pluralised -> singular forms.
+  4. a pane whose only session was filtered as automated said "No agent session ran in this pane"
+     -> now "No agent session is shown for this pane; the automated ones are left out."
+  5. (mobile) wrapped facts lines started with a stranded middot -> separator dropped under 640px.
+
+SCREENSHOTS (.omo/evidence/gisool-skill-tracing/)
+  task-11-desktop.png        flow list, 1280x800 light
+  task-11-mobile.png         flow list, 390x844 light
+  task-11-mobile-dark.png    flow list, 390x844 dark
+  task-11-desktop-flow.png   flow detail (steps + pane tree + spans), 1280x800 light
+  task-11-desktop-dark.png   flow detail, 1280x800 dark
+  task-11-mobile-flow.png    flow detail, 390x844 light
+  task-11-desktop-trace.png  session trace with skill-span grouping, 1280x800
+  task-11-mobile-trace.png   session trace with skill-span grouping, 390x844
+  task-11-not-found.png      #/workspaces/does-not-exist error notice
+
+CLEANUP
+daemon killed, port released (lsof -i :52299 empty), temp GISOOL_HOME and /tmp/gisool-qa removed.
+
+NOTE ON EVIDENCE FILES
+.omo/ is gitignored; earlier todos force-added their text evidence only, so this .txt is committed
+the same way and the nine PNGs stay on disk in the worktree (3.5 MB of binaries kept out of git).

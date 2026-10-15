@@ -1,8 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
-import type { AbstainReason, EventKind, RuntimeId, SearchMode, SkillUri, TraceStep } from "../../src/types.js";
+import type { AbstainReason, EventKind, FindingLabel, RuntimeId, SearchMode, SessionSkillReportDto, SkillSpan, SkillUri,
+  TraceStep } from "../../src/types.js";
 import { api, type SessionListRow } from "../api";
+import { CallList, callRows, formatLapse, isCall } from "../components/calls";
 import { Candidates, type CandidateLike } from "../components/candidates";
-import { ATTRIBUTION_LABEL, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE, buildHash, skillName, type ViewProps } from "../state";
+import { ATTRIBUTION_LABEL, FINDING_LABEL, FINDING_TITLE, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
+  buildHash, skillName, type ViewProps } from "../state";
 
 // Session trace view (todo 15): header + narrative timeline + candidates panel + "Save as eval case".
 // The SSE stream only carries `session` rows (contract), so a live update for the open session
@@ -45,6 +48,61 @@ export const ABSTAIN_LABEL: Record<AbstainReason, string> = {
   empty_query: "empty query", no_overlap: "no overlap", below_threshold: "below threshold", explicit_only: "explicit only",
 };
 export const NEVER_CONSULTED = "This session never consulted gisool";
+export const SPAN_KIND_LABEL = "Skill active";
+
+/** One timeline row: a recorded step, or a skill span holding the model and tool calls made while it was active. */
+export type TimelineItem =
+  | { kind: "step"; step: TraceStep }
+  | { kind: "span"; span: SkillSpan; turnId: string; finding?: FindingLabel };
+
+/**
+ * Folds the session's skill spans into the flat step list: each span is placed right after the step that activated
+ * it, and the tool and model steps it owns move inside it, matched one for one by timestamp and kind. Without a
+ * skill report (an older daemon, or a session the report cannot be read for) the timeline stays exactly as recorded.
+ */
+export function planTimeline(steps: readonly TraceStep[], report?: Pick<SessionSkillReportDto, "tree" | "finding">): TimelineItem[] {
+  if (!report) return steps.map((step) => ({ kind: "step", step }));
+  const labels = new Map(report.finding.turns.map((turn) => [turn.turnId, turn.label]));
+  const spans = report.tree.turns
+    .flatMap((turn) => turn.skillSpans.map((span) => ({ span, turnId: turn.id, finding: labels.get(turn.id) })))
+    .sort((a, b) => a.span.startedAt - b.span.startedAt);
+  const owned = new Map<string, number>();
+  for (const { span } of spans) {
+    for (const event of span.events) {
+      if (!isCall(event)) continue;
+      const key = `${event.ts}:${event.kind}`;
+      owned.set(key, (owned.get(key) ?? 0) + 1);
+    }
+  }
+  const items: TimelineItem[] = [];
+  let pending = 0;
+  const placeUpTo = (ts: number) => {
+    while (pending < spans.length) {
+      const entry = spans[pending];
+      if (entry.span.startedAt > ts) return;
+      pending += 1;
+      items.push({ kind: "span", span: entry.span, turnId: entry.turnId, ...(entry.finding ? { finding: entry.finding } : {}) });
+    }
+  };
+  for (const step of steps) {
+    const key = `${step.ts}:${step.kind}`;
+    const remaining = owned.get(key) ?? 0;
+    if (remaining > 0) {
+      owned.set(key, remaining - 1);
+      continue;
+    }
+    items.push({ kind: "step", step });
+    placeUpTo(step.ts);
+  }
+  placeUpTo(Number.POSITIVE_INFINITY);
+  return items;
+}
+
+export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, calls: number, finding?: FindingLabel): string[] {
+  const facts = [`active ${formatLapse(span.endedAt - span.startedAt)}`, `${calls} ${calls === 1 ? "call" : "calls"}`];
+  if (finding) facts.push(FINDING_LABEL[finding]);
+  return facts;
+}
 
 export type TraceCounts = { steps: number; searches: number; abstained: number; loads: number; reads: number; natives: number; errors: number };
 
@@ -427,6 +485,33 @@ function Step({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof ses
   );
 }
 
+function SpanGroup({ item, bounds }: { item: Extract<TimelineItem, { kind: "span" }>; bounds: ReturnType<typeof sessionBounds> }) {
+  const rows = callRows(item.span.events);
+  const facts = spanFacts(item.span, rows.length, item.finding);
+  return (
+    <li class="tl__step tl__step--span" data-kind="skill_span" data-skill={item.span.skill} data-turn={item.turnId}>
+      <span class="tl__dot tl__dot--hollow" aria-hidden="true" />
+      <div class="tl__head">
+        <span class="tl__kind">{SPAN_KIND_LABEL}</span>
+        <span class="tl__name" title={item.span.uri ?? "no skill uri reported"}>{item.span.name}</span>
+        <StepTime ts={item.span.startedAt} startedAt={bounds.startedAt} />
+      </div>
+      <div class="tl__body">
+        <p class="facts">
+          {facts.map((fact, index) => (
+            <span key={`${index}-${fact}`} class="facts__item"
+              title={index === facts.length - 1 && item.finding ? FINDING_TITLE[item.finding] : undefined}
+              data-finding={index === facts.length - 1 && item.finding ? item.finding : undefined}>
+              {fact}
+            </span>
+          ))}
+        </p>
+        <CallList rows={rows} />
+      </div>
+    </li>
+  );
+}
+
 function NotFound({ sessionId, backHref }: { sessionId: string; backHref: string }) {
   return (
     <section class="empty empty--trace">
@@ -465,17 +550,20 @@ export function TraceView({ route, live }: ViewProps) {
   const backHref = buildHash({ view: "sessions", filter: route.filter });
   const [steps, setSteps] = useState<TraceStep[]>();
   const [row, setRow] = useState<SessionListRow>();
+  const [report, setReport] = useState<SessionSkillReportDto>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
     setSteps(undefined);
     setRow(undefined);
-    Promise.all([api.trace(sessionId), api.sessions({})])
-      .then(([trace, rows]) => {
+    setReport(undefined);
+    Promise.all([api.trace(sessionId), api.sessions({}), skillReportOf(sessionId)])
+      .then(([trace, rows, skillReport]) => {
         if (cancelled) return;
         setSteps(trace);
         setRow(rows.find((r) => r.id === sessionId));
+        setReport(skillReport);
         setError(undefined);
       })
       .catch((err: unknown) => {
@@ -488,10 +576,11 @@ export function TraceView({ route, live }: ViewProps) {
     if (live.seq === 0 || !live.last || live.last.id !== sessionId) return;
     setRow(live.last);
     let cancelled = false;
-    api.trace(sessionId)
-      .then((trace) => {
+    Promise.all([api.trace(sessionId), skillReportOf(sessionId)])
+      .then(([trace, skillReport]) => {
         if (cancelled) return;
         setSteps(trace);
+        setReport(skillReport);
         setError(undefined);
       })
       .catch((err: unknown) => {
@@ -511,20 +600,28 @@ export function TraceView({ route, live }: ViewProps) {
 
   const bounds = sessionBounds(steps, row);
   const counts = traceCounts(steps);
+  const items = planTimeline(steps, report);
   return (
     <section class="trace" aria-busy="false">
       {error && <p class="notice" role="alert">Live update failed: {error}</p>}
       <Header sessionId={sessionId} row={row} steps={steps} backHref={backHref} liveState={live.state} />
       {counts.searches === 0 && <NeverConsulted counts={counts} />}
-      {steps.length > 0 && (
+      {items.length > 0 && (
         <div class="card tl__card">
           <ol class="tl" aria-label="Session timeline">
-            {steps.map((step, index) => <Step key={`${step.ts}-${index}-${step.kind}`} step={step} bounds={bounds} />)}
+            {items.map((item, index) => (item.kind === "step"
+              ? <Step key={`${item.step.ts}-${index}-${item.step.kind}`} step={item.step} bounds={bounds} />
+              : <SpanGroup key={`${item.span.id}-${index}`} item={item} bounds={bounds} />))}
           </ol>
         </div>
       )}
     </section>
   );
+}
+
+/** The skill report is an enhancement: a daemon that cannot answer leaves the timeline exactly as recorded. */
+function skillReportOf(sessionId: string): Promise<SessionSkillReportDto | undefined> {
+  return api.skillReport(sessionId, { automated: "include" }).catch(() => undefined);
 }
 
 const TRACE_CSS = `
@@ -557,6 +654,8 @@ const TRACE_CSS = `
 .tl__step--load, .tl__step--read_file { --dot: var(--ok); }
 .tl__step--native_skill { --dot: var(--warn); }
 .tl__step--error { --dot: var(--bad); }
+.tl__step--span { --dot: var(--ok); }
+.tl__step--span .tl__body { display: grid; gap: var(--s-1); }
 .tl__dot { position: absolute; left: calc(-1 * var(--s-6)); top: var(--dot-top); width: var(--s-2); height: var(--s-2); border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 2px var(--surface); }
 .tl__dot--hollow { background: var(--surface); box-shadow: inset 0 0 0 2px var(--dot), 0 0 0 2px var(--surface); }
 .tl__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); }
@@ -586,8 +685,6 @@ const TRACE_CSS = `
 .tl__save .btn[disabled] { cursor: default; color: var(--ink-2); }
 .tl__save .btn[data-save-eval="saved"] { color: var(--ok); }
 .tl__err { color: var(--bad); font-size: var(--fs-cap); }
-.foldbtn { margin-top: var(--s-1); padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--fs-cap); font-weight: 500; cursor: pointer; }
-.foldbtn:hover { color: var(--accent-2); }
 .cands { display: grid; gap: var(--s-1); list-style: none; margin: var(--s-2) 0 0; padding: 0; }
 .cands__none { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }
 .cands__legend { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }

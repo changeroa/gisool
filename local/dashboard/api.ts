@@ -1,4 +1,5 @@
-import type { Attribution, Filter, FlowDto, HeatmapDto, SessionRow, SkillEntry, SkillWeekDto, Store, TraceStep } from "../src/types.js";
+import type { Attribution, AutomatedMode, Filter, FlowDto, FlowListDto, FlowReportDto, HeatmapDto, SessionRow, SessionSkillReportDto,
+  SkillEntry, SkillWeekDto, Store, TraceStep } from "../src/types.js";
 import { matchesFilter, serializeFilter } from "./state";
 
 export type Stats = ReturnType<Store["stats"]>;
@@ -6,6 +7,9 @@ export type Stats = ReturnType<Store["stats"]>;
 export type SessionListRow = SessionRow & { attributionReason?: NonNullable<Attribution["reason"]> };
 export type LiveState = "connecting" | "live" | "offline" | "fixtures";
 export type EvalCaseInput = { query: string; expectedUri?: string; fromTraceId?: string };
+/** GET /api/flows takes its own range and page size, not the full session Filter. */
+export type FlowsQuery = { from?: number; to?: number; limit?: number; automated?: AutomatedMode };
+export const FLOWS_PAGE_LIMIT = 20;
 export type EventHandlers = { onSession?: (row: SessionListRow) => void; onState?: (state: LiveState) => void };
 
 export type Api = {
@@ -13,6 +17,12 @@ export type Api = {
   sessions(filter: Filter): Promise<SessionListRow[]>;
   trace(sessionId: string): Promise<TraceStep[]>;
   flow(filter: Filter, opts?: { unit?: FlowDto["unit"]; top?: number }): Promise<FlowDto>;
+  /** Registered herdr flows plus the workspaces without one, newest first. */
+  flows(query?: FlowsQuery): Promise<FlowListDto>;
+  /** One flow: tree, per-turn finding, per-span usage and the spec comparison. `ws:<id>` addresses a workspace. */
+  flowReport(id: string, opts?: { automated?: AutomatedMode }): Promise<FlowReportDto>;
+  /** The same finding and usage analysis for one session; rejects with 404 on a daemon that predates it. */
+  skillReport(sessionId: string, opts?: { automated?: AutomatedMode }): Promise<SessionSkillReportDto>;
   heatmap(filter: Filter, opts?: { tz?: string; weekStart?: 0 | 1; bucket?: 1 | 2 | 4 }): Promise<HeatmapDto>;
   skillWeek(filter: Filter): Promise<SkillWeekDto>;
   /** The filter limits only the unattributed counts (time range and runtime); the other figures stay global. */
@@ -63,6 +73,10 @@ const httpApi: Api = {
   sessions: (filter) => request(withQuery("/api/sessions", filter)),
   trace: (sessionId) => request(`/api/sessions/${encodeURIComponent(sessionId)}/trace`),
   flow: (filter, opts = {}) => request(withQuery("/api/flow", filter, { unit: opts.unit, top: opts.top })),
+  flows: (query = {}) => request(withQuery("/api/flows", {}, { from: query.from, to: query.to, limit: query.limit, automated: query.automated })),
+  flowReport: (id, opts = {}) => request(withQuery(`/api/flows/${encodeURIComponent(id)}`, {}, { automated: opts.automated })),
+  skillReport: (sessionId, opts = {}) =>
+    request(withQuery(`/api/sessions/${encodeURIComponent(sessionId)}/skill-report`, {}, { automated: opts.automated })),
   heatmap: (filter, opts = {}) => request(withQuery("/api/heatmap", filter, { tz: opts.tz, weekStart: opts.weekStart, bucket: opts.bucket })),
   skillWeek: (filter) => request(withQuery("/api/skill-week", filter)),
   stats: (filter = {}) => request(withQuery("/api/stats", filter)),
@@ -128,6 +142,14 @@ function fixtureApi(variant: FixtureVariant): Api {
     mode: "fixtures",
     sessions: (filter) => settle((data) => rowsOf(data).filter((row) => matchesFilter(row, filter))),
     trace: (sessionId) => settle((data) => data.traces[sessionId] ?? []),
+    // The fixture file carries no herdr topology, so the flow APIs answer like a daemon that has never seen herdr.
+    flows: (query = {}) =>
+      Promise.resolve({
+        generatedAt: Date.now(), from: query.from ?? null, to: query.to ?? null, limit: query.limit ?? FLOWS_PAGE_LIMIT,
+        automated: query.automated ?? "exclude", flows: [], nextCursor: null,
+      }),
+    flowReport: (id) => Promise.reject(new ApiError(404, "flow_not_found", `no flow or herdr workspace ${id}`)),
+    skillReport: (sessionId) => Promise.reject(new ApiError(404, "session_not_found", `no session ${sessionId}`)),
     flow: (_filter, opts = {}) =>
       settle((data) => {
         const dto = variant === "twelve" ? data.flow12 : data.flow;
