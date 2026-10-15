@@ -178,7 +178,7 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
         };
         // A flow registered for one tab covers that tab's panes; a step may also map a pane herdr has not reported yet.
         const execution = row.kind === "flow" ? executionEventScope(db, { id: row.id, workspace_id: row.workspace_id,
-          tab_id: row.tab_id, registered_ms: row.started_ms, ended_ms: row.ended_ms }) : undefined;
+          tab_id: row.tab_id, registered_ms: row.started_ms, ended_ms: row.ended_ms }, [], false) : undefined;
         const paneIds = execution?.paneIds ?? panes.filter((p) => p.workspace_id === row.workspace_id).map((p) => p.pane_id);
         const spec: FlowSpecRef | null = row.spec_id !== null && row.spec_name !== null
           ? { id: row.spec_id, name: row.spec_name, version: row.spec_version ?? 1 } : null;

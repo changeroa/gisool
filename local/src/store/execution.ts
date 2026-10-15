@@ -9,7 +9,7 @@ export type Execution = {
 };
 
 /** Local recording cuts resolve equal timestamps, not the runtime's unrecorded causal order. */
-export function executionEventScope(db: Db, flow: Execution, warningSessionIds: readonly string[] = []): ExecutionEventScope {
+export function executionEventScope(db: Db, flow: Execution, warningSessionIds: readonly string[] = [], includeSpanCut = true): ExecutionEventScope {
   const from = flow.registered_ms ?? 0;
   const to = flow.ended_ms;
   const candidates = executionCandidates(db, flow);
@@ -43,8 +43,8 @@ export function executionEventScope(db: Db, flow: Execution, warningSessionIds: 
       ? row.end_position !== null && row.end_position <= cut.end_order : legacyEnds.has(row.id))));
   let unavailable = cut.start_order === null || (to !== null && cut.end_order === null) ||
     rows.some((row) => (row.ts === from && row.start_position === null) || (row.ts === to && row.end_position === null));
-  const spanCut = to !== null && cut.end_order !== null
-    ? executionBoundarySpans(db, { sessionIds, at: to, path: endPath, position: cut.end_order }) : null;
+  const spanCut = includeSpanCut && to !== null && cut.end_order !== null
+    ? executionBoundarySpans(db, { sessionIds, from, at: to, path: endPath, position: cut.end_order }) : null;
   if (spanCut?.unavailable) unavailable = true;
   const sessionEnds = cut.end_sessions_json === null ? null : parseJson<Record<string, number | null>>(cut.end_sessions_json, {});
   if (sessionEnds !== null && to !== null && cut.end_order !== null) {
@@ -105,24 +105,25 @@ export function executionCandidates(db: Db, flow: Execution): { paneIds: string[
 }
 
 /** Resolve the persisted scalar against eventual members, never snapshot unrelated historical spans. */
-function executionBoundarySpans(db: Db, cut: { sessionIds: string; at: number; path: string | null; position: number }) {
+function executionBoundarySpans(db: Db, cut: { sessionIds: string; from: number; at: number; path: string | null; position: number }) {
+  // An endpoint span can link to an interior event, not only an event at the endpoint.
   const rows = db.prepare(`WITH session AS (
     SELECT id, runtime, runtime_session_id, conversation_id FROM sessions WHERE id IN (SELECT value FROM json_each(?))
   ), matched AS (
     SELECT o.trace_id, o.span_id FROM session s CROSS JOIN otel_spans o
       WHERE o.conversation_id IN (s.runtime_session_id, s.conversation_id) AND o.runtime = s.runtime
     UNION
-    SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+    SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id AND e.ts BETWEEN ? AND ? CROSS JOIN otel_spans o
       WHERE o.call_id = e.call_id AND o.runtime = s.runtime
         AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
     UNION
-    SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+    SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id AND e.ts BETWEEN ? AND ? CROSS JOIN otel_spans o
       WHERE o.trace_id = json_extract(e.data_json, '$.otelTraceId') AND o.span_id = e.span_id AND o.runtime = s.runtime
         AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
   ) SELECT o.trace_id, o.span_id, json_extract(o.recording_orders_json, ?) AS position
     FROM matched m JOIN otel_spans o ON o.trace_id = m.trace_id AND o.span_id = m.span_id
     WHERE o.start_ms IS NULL OR o.start_ms = ? ORDER BY o.trace_id, o.span_id`)
-    .all(cut.sessionIds, cut.path, cut.at) as { trace_id: string; span_id: string; position: number | null }[];
+    .all(cut.sessionIds, cut.from, cut.at, cut.from, cut.at, cut.path, cut.at) as { trace_id: string; span_id: string; position: number | null }[];
   return { keys: rows.filter((row) => row.position !== null && row.position <= cut.position)
     .map((row) => JSON.stringify([row.trace_id, row.span_id])), unavailable: rows.some((row) => row.position === null) };
 }

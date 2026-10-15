@@ -104,3 +104,54 @@ test("post-close pane linking retains known endpoint evidence but rejects later 
   assert.equal(report.executionScope.boundary, "recorded");
   assert.equal(f.db.prepare("SELECT total_changes() AS n").get().n, before);
 });
+
+test("HTTP detail retains differently timestamped endpoint span joins only in recorded order", async (t) => {
+  // Given endpoint spans linked by conversation, call and exact trace/span to interior or start events.
+  const server = await startTestServer();
+  const db = openDb(join(server.gisoolHome, "gisool.db"));
+  let clock = 1000;
+  const store = createStore(db, { now: () => clock });
+  t.after(async () => { store.close(); await server.stop(); });
+  db.exec(`INSERT INTO herdr_workspaces(id,created_ms) VALUES ('w',0);
+    INSERT INTO herdr_tabs(id,workspace_id,created_ms) VALUES ('tab','w',0);
+    INSERT INTO herdr_panes(id,workspace_id,tab_id,created_ms) VALUES ('pane','w','tab',0)`);
+  const ref = { runtime: "codex", runtimeSessionId: "own" };
+  const sid = store.upsertSession(ref, 900);
+  const { row: spec } = store.putWorkflowSpec({ name: "endpoint-spans", steps: [] });
+  const { flow } = store.createFlow({ workspaceId: "w", specId: spec.id });
+  const spans = [];
+  for (const [joinKind, ts] of [["conversation", 1050], ["call", 1051], ["exact", 1052], ["call-start", 1000]]) {
+    for (const order of ["known", "late"]) {
+      const id = `${joinKind}-${order}`;
+      store.append({ id, kind: "tool_call", ts, ref, source: "otel",
+        callId: id, spanId: id, ...(joinKind === "conversation" ? { turnKey: id } : {}),
+        data: { otelTraceId: id } }, { sessionId: sid, method: "runtime_id" });
+      spans.push({ traceId: id, spanId: id, name: "codex.turn_input", runtime: "codex",
+        turnKey: id, startMs: 1100, receivedAt: 1,
+        ...(joinKind === "conversation" ? { conversationId: "own" }
+          : joinKind.startsWith("call") ? { callId: id } : {}) });
+    }
+  }
+  store.putSpans(spans.filter((span) => span.spanId.endsWith("-known")));
+  clock = 1100;
+  store.endFlow(flow.id);
+  store.putSpans(spans.filter((span) => span.spanId.endsWith("-late")));
+  // When membership arrives after close, read the real detail endpoint without mutating storage.
+  db.prepare(`INSERT INTO pane_sessions(pane_id,agent_session_value,session_id,source)
+    VALUES ('pane','own',?,'reported')`).run(sid);
+  const changes = db.prepare("SELECT total_changes() AS n").get().n;
+  const response = await http(server.port, {
+    path: `/api/flows/${flow.id}?automated=include`, headers: bearer(server.token),
+  });
+  // Then pre-close endpoint spans still assign their interior events; later equal-time spans do not.
+  assert.equal(response.status, 200, response.text);
+  const session = response.json.tree.tabs[0].panes[0].sessions[0].session;
+  assert.deepEqual(session.turns.flatMap((turn) => turn.events.map((event) => [event.id, event.basis])).sort(), [
+    ["call-known", "span_join"], ["call-start-known", "span_join"],
+    ["conversation-known", "reported"], ["exact-known", "span_join"],
+  ]);
+  assert.deepEqual(session.unassignedEvents.map((event) => event.id).sort(),
+    ["call-late", "call-start-late", "conversation-late", "exact-late"]);
+  assert.equal(response.json.executionScope.boundary, "recorded");
+  assert.equal(db.prepare("SELECT total_changes() AS n").get().n, changes);
+});
