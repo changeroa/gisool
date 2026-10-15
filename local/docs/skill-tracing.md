@@ -11,8 +11,10 @@ the socket through `herdr status server` and sends a ping; `GISOOL_HERDR_SOCKET`
 A missing herdr command, unavailable socket, or invalid ping reply fails the check with `herdr_unavailable`;
 doctor exits 1 if any check fails.
 
-If herdr is unavailable, the daemon keeps collecting sessions and serving MCP and existing views. Pane
-attribution is unavailable until sync recovers. A session skill report can be read without a herdr link.
+If herdr is unreachable, the daemon keeps collecting sessions and serving MCP and existing views. New panes
+and sessions requiring live discovery are not linked until sync reconnects and reconciles. Previously stored
+pane/session links and reports remain available, including with `GISOOL_HERDR=off`. A session skill report
+can be read without a herdr link.
 
 ## What is collected
 
