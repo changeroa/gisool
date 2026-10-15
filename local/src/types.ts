@@ -1,3 +1,5 @@
+import type { WorkflowSpec } from "./workflow/spec.js";
+
 export type SkillUri = string;   // "skill://local/<rootId>/<dir>/SKILL.md"
 export type RuntimeId = "claude-code" | "codex" | "gemini" | "cursor" | "omo" | "gajae" | "openclaw" | "unknown";
 export type CaptureLevel = "metadata" | "redacted" | "full";      // default "full"
@@ -82,7 +84,24 @@ export interface Store {
   countIngest(kind: "accepted" | "rejected" | "dropped", code?: string): void;
   addEvalCase(c: { query: string; expectedUri?: SkillUri; fromTraceId?: string }): void; evalCases(): { query: string; expectedUri?: SkillUri }[];
   exportTo(dir: string, opts: { withHistory: boolean }): void; importFrom(dir: string, opts: { merge: boolean }): { added: number; skipped: number };
-  retention(days: number): number; close(): void }
+  retention(days: number): number;
+  // Workflow specs, flows and step mappings registered by an orchestrator through /api.
+  putWorkflowSpec(spec: WorkflowSpec): { row: WorkflowSpecRow; created: boolean };
+  workflowSpecs(): WorkflowSpecRow[];
+  workflowSpecVersions(name: string): WorkflowSpecRow[];
+  workflowSpec(name: string, version?: number): WorkflowSpecRow | undefined;
+  createFlow(input: { workspaceId: string; tabId?: string; specId: string; label?: string }): { created: true; flow: FlowRow } | { created: false; conflict: FlowRow };
+  getFlow(id: string): FlowRow | undefined;
+  flowSteps(flowId: string): FlowStepRow[];
+  mapFlowStep(flowId: string, paneId: string, stepId: string): { created: boolean };
+  endFlow(flowId: string): { endedMs: number; alreadyEnded: boolean } | undefined;
+  flowPaneUsage(flowId: string): PaneUsageRow[];
+  close(): void }
+export type WorkflowSpecRow = { id: string; name: string; version: number; digest: string; createdMs: number; spec: WorkflowSpec };
+export type FlowRow = { id: string; workspaceId: string; tabId?: string; label?: string; registeredMs: number; endedMs?: number; spec?: WorkflowSpecRow };
+export type FlowStepRow = { paneId: string; stepId: string; registeredMs: number };
+// Skills and tools observed in the sessions linked to one pane, within the flow's open window.
+export type PaneUsageRow = { paneId: string; skills: string[]; tools: string[] };
 export type GisoolConfig = { port: number; captureLevel: CaptureLevel; retentionDays: number | null;
   roots: { id: string; path: string }[]; runtimes: Partial<Record<RuntimeId, { enabled: boolean }>> };
 export type PackPlanFile = { path: string; before: string | null; after: string; mode: number };
