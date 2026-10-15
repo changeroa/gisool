@@ -20,7 +20,7 @@ export type SearchOutcome = { traceId: string; query: string; mode: SearchMode; 
   abstained?: { reason: AbstainReason; hint: string }; elapsedMs: number };
 export interface SearchIndex { rebuild(entries: SkillEntry[]): void; apply(delta: CatalogDelta): void;
   search(query: string, opts: { mode: SearchMode; limit: number }): SearchOutcome }
-export type EventKind = "session_start" | "prompt" | "search" | "load" | "read_file" | "native_skill" | "session_end" | "error";
+export type EventKind = "session_start" | "prompt" | "search" | "load" | "read_file" | "native_skill" | "llm_call" | "tool_call" | "session_end" | "error";
 export type SessionRef = { runtime: RuntimeId; runtimeSessionId?: string; conversationId?: string; clientName?: string; cwd?: string };
 // session upsert key = (runtime, runtimeSessionId ?? conversationId); Codex MCP _meta.threadId maps to conversationId
 export type SearchEventData = { query: string; mode: SearchMode; candidates: Candidate[]; abstained?: { reason: AbstainReason; hint: string }; elapsedMs: number; total: number };
@@ -30,6 +30,13 @@ export type TraceStepDetail =
   | { kind: "load"; uri: SkillUri; loadId: string; manifestDigest: string }
   | { kind: "read_file"; skillUri: SkillUri; uri: SkillUri; bytes: number }
   | { kind: "native_skill"; name: string; via: "tool" | "otel" | "file_read" | "expansion" }
+  // inputIncludesCache says whether cacheReadTokens are already part of inputTokens (Codex) or not (Claude Code);
+  // costUsd is absent when the runtime reports no cost, which is never the same as 0.
+  | { kind: "llm_call"; model?: string; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number;
+      cacheWriteTokens?: number; reasoningTokens?: number; totalTokens?: number; inputIncludesCache: boolean; costUsd?: number; durationMs?: number;
+      ttftMs?: number; requestId?: string }
+  | { kind: "tool_call"; toolName: string; success?: boolean; durationMs?: number; toolUseId?: string; callId?: string; inputBytes?: number;
+      resultBytes?: number; gisoolMcp?: boolean; args?: string; argsLength?: number }
   | { kind: "session_start" | "session_end" }
   | { kind: "error"; code: string; message: string };
 export type HookPayload =

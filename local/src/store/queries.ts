@@ -60,7 +60,16 @@ export function classifyTaskType(skill: SkillMeta | undefined, prompt: string | 
 }
 
 type EvRow = { id: string; ts: number; kind: EventKind; session_id: string; attribution_method: Attribution["method"]; attribution_reason: string | null;
-  runtime: string; trace_id: string | null; load_id: string | null; skill_uri: string | null; text: string | null; text_length: number | null; data_json: string };
+  runtime: string; trace_id: string | null; load_id: string | null; skill_uri: string | null; text: string | null; text_length: number | null; data_json: string;
+  tool_use_id: string | null; turn_key: string | null; call_id: string | null };
+
+/** Sums the buckets a runtime reports without double counting: Codex counts cached tokens inside inputTokens, Claude Code does not. */
+function llmTokens(data: Record<string, unknown>): number {
+  const n = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  if (typeof data.totalTokens === "number") return data.totalTokens;
+  const base = n(data.inputTokens) + n(data.outputTokens);
+  return data.inputIncludesCache === true ? base : base + n(data.cacheReadTokens) + n(data.cacheCreationTokens);
+}
 
 type SessionInfo = {
   id: string; runtime: RuntimeId; startedAt: number; endedAt?: number; firstPrompt?: string; events: EvRow[];
@@ -148,7 +157,9 @@ export function createQueries(ctx: StoreCtx): Queries {
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = db.prepare(`SELECT id, runtime, started_at, ended_at, first_prompt FROM sessions ${clause}`).all(...params) as
       { id: string; runtime: string; started_at: number; ended_at: number | null; first_prompt: string | null }[];
-    const events = db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM sessions ${clause}) ORDER BY ts, rowid`).all(...params) as EvRow[];
+    // Model calls and tool runs say nothing about adoption state and outnumber every other kind, so sessions are built without them.
+    const events = db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM sessions ${clause}) AND kind NOT IN ('llm_call', 'tool_call')
+      ORDER BY ts, rowid`).all(...params) as EvRow[];
     const bySession = new Map<string, EvRow[]>();
     for (const e of events) {
       const list = bySession.get(e.session_id);
@@ -275,6 +286,20 @@ export function createQueries(ctx: StoreCtx): Queries {
             const name = typeof data.name === "string" ? data.name : e.skill_uri ? nameFromUri(e.skill_uri) : "unknown";
             const via = typeof data.via === "string" ? data.via : "tool";
             return { ts: e.ts, kind: e.kind, summary: `native skill ${name} via ${via}`, detail: { kind: "native_skill", name, via } };
+          }
+          case "llm_call": {
+            const model = typeof data.model === "string" ? data.model : "unknown";
+            return { ts: e.ts, kind: e.kind, summary: `model call: ${model}, ${llmTokens(data)} tokens`,
+              detail: { ...data, kind: "llm_call", inputIncludesCache: data.inputIncludesCache === true } };
+          }
+          case "tool_call": {
+            const toolName = typeof data.toolName === "string" ? data.toolName : "unknown";
+            const durationMs = typeof data.durationMs === "number" ? data.durationMs : undefined;
+            const outcome = data.success === true ? "ok" : data.success === false ? "failed" : "unknown";
+            return { ts: e.ts, kind: e.kind, summary: `tool: ${toolName} (${durationMs ?? "?"} ms, ${outcome})`,
+              detail: { ...data, kind: "tool_call", toolName,
+                ...(e.tool_use_id !== null ? { toolUseId: e.tool_use_id } : {}), ...(e.call_id !== null ? { callId: e.call_id } : {}),
+                ...(e.text !== null ? { args: e.text } : {}), ...(e.text_length !== null ? { argsLength: e.text_length } : {}) } };
           }
           case "error": {
             const code = typeof data.code === "string" ? data.code : "error";

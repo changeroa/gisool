@@ -27,7 +27,9 @@ const trace = await loadModule("dashboard/views/trace.tsx");
 const candidates = await loadModule("dashboard/components/candidates.tsx");
 const fixtures = JSON.parse(readFileSync(new URL("dashboard/dev-fixtures.json", PACKAGE_ROOT), "utf8"));
 
-const EVENT_KINDS = ["session_start", "prompt", "search", "load", "read_file", "native_skill", "session_end", "error"];
+const EVENT_KINDS = ["session_start", "prompt", "search", "load", "read_file", "native_skill", "llm_call", "tool_call", "session_end", "error"];
+// The dev fixtures carry the kinds the timeline renders today; model calls and tool runs reach the dashboard with the Workspaces view.
+const FIXTURE_KINDS = EVENT_KINDS.filter((kind) => kind !== "llm_call" && kind !== "tool_call");
 const ALL_KINDS_SESSION = "ses_ac514fa3a9";
 const ABSTAINED_SESSION = "ses_bb85bd8f72";
 const NEVER_CONSULTED_SESSION = "ses_b143443884";
@@ -35,9 +37,9 @@ const NEVER_CONSULTED_SESSION = "ses_b143443884";
 test("fixtures cover every step kind, one abstained search, and one session with no search", () => {
   const allKinds = fixtures.traces[ALL_KINDS_SESSION];
   assert.ok(allKinds, `trace ${ALL_KINDS_SESSION} exists`);
-  for (const kind of EVENT_KINDS) assert.ok(allKinds.some((step) => step.kind === kind), `fixture has a ${kind} step`);
+  for (const kind of FIXTURE_KINDS) assert.ok(allKinds.some((step) => step.kind === kind), `fixture has a ${kind} step`);
   const everyKind = new Set(Object.values(fixtures.traces).flat().map((step) => step.kind));
-  assert.deepEqual([...everyKind].sort(), [...EVENT_KINDS].sort());
+  assert.deepEqual([...everyKind].sort(), [...FIXTURE_KINDS].sort());
 
   const abstained = fixtures.traces[ABSTAINED_SESSION].find((step) => step.kind === "search");
   assert.equal(abstained.detail.abstained.reason, "no_overlap");

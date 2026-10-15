@@ -30,6 +30,8 @@ export const KIND_LABEL: Record<EventKind, string> = {
   load: "Loaded skill",
   read_file: "Read resource",
   native_skill: "Native skill",
+  llm_call: "Model call",
+  tool_call: "Tool run",
   session_end: "Session ended",
   error: "Error",
 };

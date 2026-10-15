@@ -8,6 +8,12 @@
             "value": {
               "stringValue": "claude-code"
             }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "2.1.273"
+            }
           }
         ]
       },
@@ -21,13 +27,13 @@
               "timeUnixNano": "1760320000000000000",
               "observedTimeUnixNano": "1760320000000000000",
               "body": {
-                "stringValue": "claude_code.api_request"
+                "stringValue": "claude_code.made_up_event"
               },
               "attributes": [
                 {
                   "key": "event.name",
                   "value": {
-                    "stringValue": "api_request"
+                    "stringValue": "made_up_event"
                   }
                 },
                 {
@@ -37,21 +43,63 @@
                   }
                 },
                 {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "99"
+                  }
+                },
+                {
                   "key": "session.id",
                   "value": {
                     "stringValue": "claude-sess-1"
                   }
                 },
                 {
-                  "key": "model",
+                  "key": "prompt.id",
                   "value": {
-                    "stringValue": "claude-sonnet-5"
+                    "stringValue": "p-1"
                   }
                 },
                 {
-                  "key": "cost_usd",
+                  "key": "some_field",
                   "value": {
-                    "stringValue": "0.01"
+                    "stringValue": "whatever"
+                  }
+                },
+                {
+                  "key": "organization.id",
+                  "value": {
+                    "stringValue": "org-placeholder"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "account-placeholder"
+                  }
+                },
+                {
+                  "key": "user.account_uuid",
+                  "value": {
+                    "stringValue": "00000000-0000-4000-8000-000000000000"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "agent@example.invalid"
+                  }
+                },
+                {
+                  "key": "user.id",
+                  "value": {
+                    "stringValue": "user-placeholder"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "iTerm.app"
                   }
                 }
               ]
