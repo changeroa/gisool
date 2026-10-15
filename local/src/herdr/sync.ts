@@ -5,7 +5,7 @@ import { createHerdrClient, type HerdrClient } from "./client.js";
 const subscriptions = [
   "workspace.created", "workspace.renamed", "workspace.closed",
   "tab.created", "tab.renamed", "tab.closed",
-  "pane.created", "pane.updated", "pane.moved", "pane.closed", "pane.exited", "pane.agent_detected",
+  "pane.created", "pane.updated", "pane.moved", "pane.closed", "pane.exited", "pane.agent_detected", "pane.agent_status_changed",
 ] as const;
 const workspaceSchema = z.object({ workspace_id: z.string(), label: z.string().nullish(), created_ms: z.number().nullish() });
 const tabSchema = z.object({ tab_id: z.string(), workspace_id: z.string(), label: z.string().nullish(), created_ms: z.number().nullish() });
@@ -13,13 +13,15 @@ const paneSchema = z.object({
   pane_id: z.string(), workspace_id: z.string(), tab_id: z.string(),
   label: z.string().nullish(), title: z.string().nullish(), cwd: z.string().nullish(),
   created_ms: z.number().nullish(), agent: z.string().nullish(),
+  agent_status: z.string().nullish(),
   agent_session: z.object({ agent: z.string(), source: z.string(), value: z.string(), kind: z.string() }).nullish().catch(null),
 });
 const snapshotSchema = z.object({
   type: z.literal("session_snapshot"),
   snapshot: z.object({ workspaces: z.array(workspaceSchema), tabs: z.array(tabSchema), panes: z.array(paneSchema) }),
 });
-const closedSchema = z.object({ workspace_id: z.string().optional(), tab_id: z.string().optional(), pane_id: z.string().optional() });
+const closedSchema = z.object({ workspace_id: z.string().optional(), tab_id: z.string().optional(), pane_id: z.string().optional(),
+  agent_status: z.string().optional() });
 const RECENT_PANE_MS = 24 * 60 * 60 * 1000;
 const runtimeOf = (agent: unknown) => agent === "claude" ? "claude-code" : agent;
 
@@ -54,9 +56,14 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         WHERE pane_sessions.source = 'inferred:cwd_time' AND id = pane_sessions.agent_session_value)
     ORDER BY started_at, id LIMIT 1)
     WHERE session_id IS NULL RETURNING pane_id, session_id, source`);
-  const clearPane = db.prepare("DELETE FROM pane_sessions WHERE pane_id = ? AND source = 'inferred:cwd_time'");
+  const clearPane = db.prepare(`DELETE FROM pane_sessions WHERE pane_id = ? AND source = 'inferred:cwd_time'
+    AND session_id IN (SELECT id FROM sessions WHERE ended_at IS NULL)`);
   const clearSession = db.prepare("DELETE FROM pane_sessions WHERE session_id = ? AND source = 'inferred:cwd_time'");
   const previousLinks = db.prepare("SELECT pane_id, agent, first_seen_ms FROM pane_sessions WHERE session_id = ? AND source = 'inferred:cwd_time'");
+  const endPaneSessions = db.prepare(`UPDATE sessions SET ended_at = MAX(started_at, ?) WHERE ended_at IS NULL
+    AND id IN (SELECT session_id FROM pane_sessions WHERE pane_id = ?)`);
+  const endPrevious = db.prepare(`UPDATE sessions SET ended_at = ? WHERE id <> ? AND started_at < ?
+    AND (ended_at IS NULL OR ended_at > ?) AND id IN (SELECT session_id FROM pane_sessions WHERE pane_id = ?)`);
   const infer = db.prepare(`INSERT INTO pane_sessions
     (pane_id, agent, source, agent_session_value, session_id, first_seen_ms, last_seen_ms)
     VALUES (?, ?, 'inferred:cwd_time', ?, ?, ?, ?)`);
@@ -67,10 +74,17 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
   const hasLink = db.prepare("SELECT 1 FROM pane_sessions WHERE session_id = ? LIMIT 1");
   const candidates = db.prepare(`SELECT p.id, p.agent, s.runtime FROM herdr_panes p JOIN sessions s ON s.cwd = p.cwd
     WHERE s.id = ? AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
-      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.pane_id = p.id AND ps.source <> 'inferred:cwd_time')
+      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps LEFT JOIN sessions reported ON reported.id = ps.session_id
+        WHERE ps.pane_id = p.id AND ps.source <> 'inferred:cwd_time'
+          AND (ps.session_id IS NULL OR (reported.started_at <= s.started_at
+            AND COALESCE(reported.ended_at, 9223372036854775807) > s.started_at
+            AND NOT (reported.started_at < s.started_at AND reported.runtime = s.runtime
+              AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'session_start')))))
       AND NOT EXISTS (SELECT 1 FROM pane_sessions ps JOIN sessions other ON other.id = ps.session_id
         WHERE ps.pane_id = p.id AND other.started_at < COALESCE(s.ended_at, 9223372036854775807)
-          AND s.started_at < COALESCE(other.ended_at, 9223372036854775807))
+          AND s.started_at < COALESCE(other.ended_at, 9223372036854775807)
+          AND NOT (other.started_at < s.started_at AND other.runtime = s.runtime
+            AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'session_start')))
     ORDER BY p.id`);
   const usable = (pane: z.infer<typeof paneSchema>) => pane.agent_session?.kind === "id" && pane.agent_session.value.trim() !== "";
   const linkSessions = (touched: readonly string[] = []) => {
@@ -80,6 +94,8 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
     try {
       for (const row of linkPending.all()) {
         if (row.session_id === null || row.source === "inferred:cwd_time") continue;
+        const session = touchedSession.get(row.session_id);
+        if (session) endPrevious.run(session.started_at, session.id, session.started_at, session.started_at, row.pane_id);
         clearPane.run(row.pane_id);
         clearSession.run(row.session_id);
       }
@@ -105,6 +121,9 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         if (!first) continue;
         const old = previous.get(session.id)?.find((row) => row.pane_id === first.id);
         infer.run(first.id, first.agent, session.id, session.id, old?.first_seen_ms ?? now, now);
+        if (db.prepare("SELECT 1 FROM events WHERE session_id = ? AND kind = 'session_start' LIMIT 1").get(session.id)) {
+          endPrevious.run(session.started_at, session.id, session.started_at, session.started_at, first.id);
+        }
       }
       db.exec("RELEASE herdr_links");
     } catch (error) {
@@ -119,12 +138,16 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
       for (const w of snapshot.workspaces) upsertWorkspace.run(w.workspace_id, w.label ?? null, w.created_ms ?? now);
       for (const t of snapshot.tabs) upsertTab.run(t.tab_id, t.workspace_id, t.label ?? null, t.created_ms ?? now);
       for (const p of snapshot.panes) {
+        const previousPane = db.prepare("SELECT agent FROM herdr_panes WHERE id = ?").get(p.pane_id);
+        if (p.agent_status === "exited" || (previousPane?.agent && p.agent === null && !p.agent_session)) {
+          endPaneSessions.run(now, p.pane_id);
+        }
         upsertPane.run(p.pane_id, p.workspace_id, p.tab_id, p.label ?? p.title ?? null, p.cwd ?? null, p.created_ms ?? now,
           p.agent_session?.agent ?? p.agent ?? null, now);
         if (usable(p) && p.agent_session) {
           const source = p.agent_session.source.startsWith("herdr:") ? p.agent_session.source : `herdr:${p.agent_session.source}`;
           upsertReported.run(p.pane_id, p.agent_session.agent, source, p.agent_session.value, now, now);
-          clearPane.run(p.pane_id);
+          // Keep inferred history; reported identity replaces only the same session during linking.
         }
       }
       // A full snapshot is authoritative: recover closes lost during an outage.
@@ -211,7 +234,13 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
             break;
           case "pane_closed":
           case "pane_exited":
-            if (pane) db.prepare("UPDATE herdr_panes SET closed_ms = ? WHERE id = ?").run(now, pane);
+            if (pane) {
+              endPaneSessions.run(now, pane);
+              db.prepare("UPDATE herdr_panes SET closed_ms = ? WHERE id = ?").run(now, pane);
+            }
+            break;
+          case "pane_agent_status_changed":
+            if (pane && parsed.data.agent_status === "exited") endPaneSessions.run(now, pane);
             break;
         }
       }

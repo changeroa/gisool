@@ -279,7 +279,7 @@ test("compareFlow derives used skills from the events of the sessions linked to 
   }
 });
 
-test("a skill activated before the flow was registered still counts for its step", () => {
+test("a skill activated before registration is excluded from the execution comparison", () => {
   let clock = 1000;
   const { db, store } = openStore({ storeOpts: { now: () => clock } });
   try {
@@ -307,9 +307,9 @@ test("a skill activated before the flow was registered still counts for its step
     store.endFlow(flow.id);
 
     const [build] = compareFlow(store, flow.id).steps;
-    assert.deepEqual(build.usedSkills, ["alpha"], "alpha was activated at 950, before the flow was registered at 1000, and omega at 1300 is after its end");
-    assert.equal(build.status, "matched");
-    assert.deepEqual(build.missingSkills, []);
+    assert.deepEqual(build.usedSkills, [], "alpha precedes registration and omega follows the execution end");
+    assert.equal(build.status, "no_skill_used");
+    assert.deepEqual(build.missingSkills, ["alpha"]);
     assert.deepEqual(build.unexpectedTools, []);
   } finally {
     store.close();
@@ -344,7 +344,7 @@ test("a pane reused by a later flow does not inherit the earlier flow's skills o
     const stepOf = (flowId) => compareFlow(store, flowId).steps[0];
 
     append("prompt", 900, {}, "turn-1");
-    append("native_skill", 950, { name: "alpha" }, "turn-1");
+    append("native_skill", 1010, { name: "alpha" }, "turn-1");
     append("tool_call", 1050, { toolName: "Edit", success: true }, "turn-1");
     append("prompt", 1200, {}, "turn-2");
     const { flow: first } = store.createFlow({ workspaceId: "ws", specId: spec.id });
@@ -352,7 +352,7 @@ test("a pane reused by a later flow does not inherit the earlier flow's skills o
     clock = 1100;
     store.endFlow(first.id);
     const firstStep = stepOf(first.id);
-    assert.deepEqual(firstStep.usedSkills, ["alpha"], "alpha was activated at 950, before this flow was registered at 1000");
+    assert.deepEqual(firstStep.usedSkills, ["alpha"], "alpha was activated inside the first execution");
     assert.equal(firstStep.status, "matched");
     assert.deepEqual(firstStep.unexpectedTools, []);
 
@@ -373,7 +373,7 @@ test("a pane reused by a later flow does not inherit the earlier flow's skills o
       name: "reuse", steps: [{ id: "build", skills: ["alpha", "beta"], together: true, expectTools: ["Edit"] }],
     });
     append("prompt", 2200, {}, "turn-3");
-    append("native_skill", 2950, { name: "beta" }, "turn-3");
+    append("native_skill", 3010, { name: "beta" }, "turn-3");
     clock = 3000;
     const { flow: third } = store.createFlow({ workspaceId: "ws", specId: newer.id });
     store.mapFlowStep(third.id, "reuse-pane", "build");
@@ -381,7 +381,7 @@ test("a pane reused by a later flow does not inherit the earlier flow's skills o
     clock = 3100;
     store.endFlow(third.id);
     const thirdStep = stepOf(third.id);
-    assert.deepEqual(thirdStep.usedSkills, ["beta"], "beta was activated at 2950, after the previous flow ended at 2100");
+    assert.deepEqual(thirdStep.usedSkills, ["beta"], "beta was activated inside the third execution");
     assert.equal(thirdStep.status, "partial");
     assert.deepEqual(thirdStep.missingSkills, ["alpha"]);
     assert.deepEqual(thirdStep.unexpectedTools, []);

@@ -315,8 +315,9 @@ test("snapshot stores two panes and links a reported identity arriving after the
   // Then the foreign key points at the gisool session, not the herdr identity.
   assert.deepEqual({ ...db.prepare("SELECT session_id, source FROM pane_sessions").get() }, { session_id: "gisool-id", source: "herdr:otel" });
   const subs = fake.requests.find((r) => r.method === "events.subscribe").params.subscriptions;
-  assert.equal(subs.length, 12);
-  assert.ok(subs.every((s) => !["pane.agent_status_changed", "pane.output_matched", "pane.scroll_changed"].includes(s.type)));
+  assert.equal(subs.length, 13);
+  assert.ok(subs.some((s) => s.type === "pane.agent_status_changed"));
+  assert.ok(subs.every((s) => !["pane.output_matched", "pane.scroll_changed"].includes(s.type)));
 });
 
 test("preseeded runtime identity links on the first snapshot", async (t) => {
@@ -356,6 +357,71 @@ test("any agent without usable identity links by cwd within lifetime, never with
 const linkedPairs = (db) => db.prepare("SELECT pane_id, session_id, source FROM pane_sessions WHERE session_id IS NOT NULL ORDER BY pane_id, session_id")
   .all().map((row) => ({ ...row }));
 const reportedIdentity = (value) => ({ agent: "codex", kind: "id", source: "hook", value });
+
+test("two sequential Claude SessionStart hooks free a reused inferred pane", async (t) => {
+  // Given a Claude pane with no reported identity and its first session still open.
+  const fake = await fakeHerdr(t, topology([
+    pane("reuse", { agent: "claude", cwd: "/reuse", created_ms: 0 }),
+    pane("reserved", { agent: "claude", cwd: "/reuse", created_ms: 0,
+      agent_session: { agent: "claude", kind: "id", source: "hook", value: "not-reported-yet" } }),
+  ]));
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const { server, db, token } = await followedServer(t, fake);
+  for (const key of ["first", "second"]) {
+    const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
+      body: JSON.stringify({ hook_event_name: "SessionStart", session_id: key, cwd: "/reuse" }) });
+    assert.equal(res.status, 202);
+    if (key === "first") db.exec("UPDATE sessions SET started_at = 1");
+  }
+  // Then both sessions are linked and the earlier reservation ends at the successor's start.
+  const rows = db.prepare(`SELECT s.runtime_session_id AS key, s.started_at, s.ended_at, ps.pane_id
+    FROM sessions s JOIN pane_sessions ps ON ps.session_id = s.id ORDER BY s.started_at`).all();
+  assert.deepEqual(rows.map((row) => [row.key, row.pane_id]), [["first", "reuse"], ["second", "reuse"]]);
+  assert.equal(rows[0].ended_at, rows[1].started_at);
+  assert.equal(rows[1].ended_at, null);
+});
+
+test("SessionEnd ingestion sets ended_at and releases the inferred reservation", async (t) => {
+  // Given a linked Claude session.
+  const fake = await fakeHerdr(t, topology([pane("ended", { agent: "claude", cwd: "/ended", created_ms: 0 })]));
+  const { server, db, token } = await followedServer(t, fake);
+  for (const hook of ["SessionStart", "SessionEnd"]) {
+    const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
+      body: JSON.stringify({ hook_event_name: hook, session_id: "ended", cwd: "/ended", reason: "prompt_input_exit" }) });
+    assert.equal(res.status, 202);
+  }
+  // Then the real hook event timestamp, not an invented timeout, is persisted as the end.
+  const row = db.prepare(`SELECT s.ended_at, e.ts FROM sessions s JOIN events e ON e.session_id = s.id
+    WHERE e.kind = 'session_end'`).get();
+  assert.equal(row.ended_at, row.ts);
+  assert.equal(typeof row.ended_at, "number");
+  assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions").get().n, 1);
+});
+
+for (const exit of ["pane_exited", "pane_agent_status_changed", "snapshot-agent-removed"]) {
+  test(`${exit} ends the old session and frees the pane for later telemetry`, async (t) => {
+    // Given an inferred session with no SessionEnd hook.
+    const fake = await fakeHerdr(t, topology([pane("exit", { agent: "claude", cwd: "/exit", created_ms: 0 })]));
+    const { db, sync, changes } = await follower(t, fake);
+    session(db, "old", { runtime: "claude-code", cwd: "/exit", start: 100 });
+    sync.linkSessions();
+    // When herdr reports the agent's exit while retaining the pane.
+    if (exit === "snapshot-agent-removed") {
+      fake.snapshot = topology([pane("exit", { agent: null, cwd: "/exit", created_ms: 0 })]);
+      await sync.reconcile();
+    } else {
+      await signal(changes, "change", () => db.prepare("SELECT ended_at FROM sessions WHERE id = 'old'").get().ended_at !== null,
+        () => fake.push(exit, { pane_id: "exit", agent_status: "exited" }));
+      await sync.reconcile();
+    }
+    const ended = db.prepare("SELECT ended_at FROM sessions WHERE id = 'old'").get().ended_at;
+    assert.equal(typeof ended, "number");
+    // Then a successor without a lifecycle hook can use the pane, and historical membership survives.
+    session(db, "new", { runtime: "claude-code", cwd: "/exit", start: ended });
+    sync.linkSessions();
+    assert.deepEqual(linkedPairs(db).map((row) => [row.pane_id, row.session_id]), [["exit", "new"], ["exit", "old"]]);
+  });
+}
 
 for (const order of [[0, 1], [1, 0]]) {
   test(`same-cwd sessions stay exclusive when reported identities arrive ${order.join(" then ")}`, async (t) => {

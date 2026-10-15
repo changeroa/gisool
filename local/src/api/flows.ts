@@ -6,6 +6,7 @@ import type { AutomatedMode, ExcludedSession, FlowListEntry, FlowListRow, FlowTr
   SessionFinding, Store, TurnFinding } from "../types.js";
 import { compareFlow } from "../workflow/compare.js";
 import { deny } from "./security.js";
+import { scopeFlowTree } from "../store/execution.js";
 
 /**
  * Read APIs over the analysis modules: the flows list, one flow report, one session's skill report and skill usage
@@ -202,11 +203,16 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       full = flowTree(store, id);
     }
     if (!full) return deny(res, 404, "flow_not_found", { message: `no flow or herdr workspace ${ref}` });
-    // The comparison reads a wider population than the tree renders: a step can map a pane herdr placed on another
-    // tab. Classifying that population too keeps a hidden session from crediting a step it never ran.
+    // Classify the shared execution population, including explicitly mapped panes on other tabs.
     const comparisonSessionIds = full.registered ? store.flowSessionIds(full.id) : [];
     const automation = store.sessionAutomation([...sessionIdsOf(full), ...comparisonSessionIds]);
-    const { tree, excluded } = filterTree(full, automation, automated);
+    const flow = full.registered ? store.getFlow(full.id) : undefined;
+    const overlaps = flow ? sessionsOf(full).map((session) => ({
+      sessionId: session.id, startedBefore: session.startedAt < flow.registeredMs,
+      continuesAfter: flow.endedMs !== undefined && (session.endedAt === null || session.endedAt > flow.endedMs),
+    })).filter((session) => session.startedBefore || session.continuesAfter) : [];
+    const scoped = flow ? scopeFlowTree(full, flow.registeredMs, flow.endedMs) : full;
+    const { tree, excluded } = filterTree(scoped, automation, automated);
     for (const sessionId of comparisonSessionIds) {
       if (keepSession(sessionId, automation, automated)) continue;
       excluded.set(sessionId, { sessionId, reason: automation[sessionId] ?? "not_automated" });
@@ -215,7 +221,6 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const digestOf = loadedDigests(store);
     const findings = sessions.map((session) => analyzeSession(session, digestOf));
     const usages = sessions.map((session) => sessionUsage(session));
-    const flow = tree.registered ? store.getFlow(tree.id) : undefined;
     const spec = flow?.spec;
     res.json({
       generatedAt: Date.now(),
@@ -225,6 +230,9 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       flow: flow ? { registeredMs: flow.registeredMs, endedMs: flow.endedMs ?? null, tabId: flow.tabId ?? null } : null,
       spec: spec ? { id: spec.id, name: spec.name, version: spec.version } : null,
       automated, tree,
+      executionScope: flow ? { from: flow.registeredMs, to: flow.endedMs ?? null, boundary: "inclusive",
+        overlaps: overlaps.filter((session) => keepSession(session.sessionId, automation, automated)),
+        label: "Events restricted to this execution; continuing sessions are split by event time" } : null,
       finding: { id: tree.id, sessions: findings.map(findingDto), aggregate: aggregateFindings(findings.flatMap((f) => f.turns)) },
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
       comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()] }) ?? null : null,

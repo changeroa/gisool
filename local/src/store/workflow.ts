@@ -3,6 +3,7 @@ import { nameFromUri, parseJson, type StoreCtx } from "./writes.js";
 import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, PaneUsageRow, Store, WorkflowSpecRow } from "../types.js";
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
 import { createQueries } from "./queries.js";
+import { executionMembers } from "./execution.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
 type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
@@ -74,11 +75,6 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
   const selectOpenFlow = db.prepare(`SELECT ${FLOW_COLUMNS} FROM flows f LEFT JOIN workflow_specs s ON s.id = f.spec_id
     WHERE f.workspace_id = ? AND COALESCE(f.tab_id, '') = ? AND f.ended_ms IS NULL ORDER BY f.registered_ms, f.rowid LIMIT 1`);
   const selectFlowScope = db.prepare("SELECT workspace_id, tab_id, registered_ms, ended_ms FROM flows WHERE id = ?");
-  // The panes one flow covers: its workspace's panes, narrowed to its tab when it was registered for one - the same
-  // scope its report renders - plus every pane an orchestrator mapped to a step, wherever herdr later put it.
-  const selectFlowPanes = db.prepare(`SELECT id AS pane_id FROM herdr_panes WHERE workspace_id = ? AND (? IS NULL OR tab_id = ?)
-    UNION SELECT pane_id FROM flow_steps WHERE flow_id = ? ORDER BY pane_id`);
-
   return {
     putWorkflowSpec(spec: WorkflowSpec) {
       const digest = specDigest(spec);
@@ -163,7 +159,7 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       const rows = db.prepare(`SELECT * FROM (${entries}) ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY order_ms DESC, id ASC LIMIT ?`).all(...params, limit) as FlowListDbRow[];
       if (rows.length === 0) return [];
-      const workspaceIds = [...new Set(rows.map((r) => r.workspace_id))];
+      const workspaceIds = [...new Set(rows.filter((r) => r.kind === "workspace").map((r) => r.workspace_id))];
       const paneHoles = workspaceIds.map(() => "?").join(",");
       const panes = db.prepare(`SELECT p.id AS pane_id, p.workspace_id, p.tab_id, p.created_ms FROM herdr_panes p
         WHERE p.workspace_id IN (${paneHoles}) ORDER BY p.created_ms, p.id`).all(...workspaceIds) as
@@ -172,10 +168,6 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
         JOIN herdr_panes p ON p.id = ps.pane_id WHERE p.workspace_id IN (${paneHoles})
         ORDER BY ps.first_seen_ms, ps.agent_session_value`).all(...workspaceIds) as
         { pane_id: string; session_id: string | null; source: string | null }[];
-      const flowIds = rows.filter((r) => r.kind === "flow").map((r) => r.id);
-      const stepPanes = flowIds.length === 0 ? [] : db.prepare(`SELECT flow_id, pane_id FROM flow_steps
-        WHERE flow_id IN (${flowIds.map(() => "?").join(",")}) ORDER BY registered_ms, pane_id`).all(...flowIds) as
-        { flow_id: string; pane_id: string }[];
       return rows.map((row) => {
         if (row.kind === "outside_herdr") return {
           id: row.id, kind: row.kind, workspaceId: "", tabId: null, label: row.label,
@@ -183,33 +175,27 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
           links: outside.map((session) => ({ paneId: "", sessionId: session.id, source: "unlinked" })),
         };
         // A flow registered for one tab covers that tab's panes; a step may also map a pane herdr has not reported yet.
-        const paneIds = [...new Set([
-          ...panes.filter((p) => p.workspace_id === row.workspace_id && (row.tab_id === null || p.tab_id === row.tab_id)).map((p) => p.pane_id),
-          ...stepPanes.filter((s) => s.flow_id === row.id).map((s) => s.pane_id),
-        ])];
+        const execution = row.kind === "flow" ? executionMembers(db, { id: row.id, workspace_id: row.workspace_id,
+          tab_id: row.tab_id, registered_ms: row.started_ms, ended_ms: row.ended_ms }) : undefined;
+        const paneIds = execution?.paneIds ?? panes.filter((p) => p.workspace_id === row.workspace_id).map((p) => p.pane_id);
         const spec: FlowSpecRef | null = row.spec_id !== null && row.spec_name !== null
           ? { id: row.spec_id, name: row.spec_name, version: row.spec_version ?? 1 } : null;
         return { id: row.id, kind: row.kind, workspaceId: row.workspace_id, tabId: row.tab_id, label: row.label,
           orderMs: row.order_ms, startedMs: row.started_ms, endedMs: row.ended_ms, spec, paneIds,
-          links: links.filter((l) => paneIds.includes(l.pane_id))
+          links: execution ? execution.links.map((l) => ({ paneId: l.paneId, sessionId: l.sessionId, source: l.source })) : links.filter((l) => paneIds.includes(l.pane_id))
             .map((l) => ({ paneId: l.pane_id, sessionId: l.session_id, source: l.source })) };
       });
     },
 
     /**
-     * Every session that can reach this flow's comparison, which is wider than the tree the report renders: a step
-     * can map a pane herdr placed on another tab. The read API classifies this population, so a session it hides
-     * cannot credit a step through the comparison.
+     * The same execution population as the tree and list, including mapped panes on other tabs. The read API
+     * classifies this population so a session it hides cannot credit a step through the comparison.
      */
     flowSessionIds(flowId: string): string[] {
       const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
       if (!flow) return [];
-      const panes = selectFlowPanes.all(flow.workspace_id ?? "", flow.tab_id, flow.tab_id, flowId) as { pane_id: string }[];
-      if (panes.length === 0) return [];
-      const rows = db.prepare(`SELECT DISTINCT session_id FROM pane_sessions
-        WHERE pane_id IN (${panes.map(() => "?").join(",")}) AND session_id IS NOT NULL ORDER BY session_id`)
-        .all(...panes.map((p) => p.pane_id)) as { session_id: string }[];
-      return rows.map((row) => row.session_id);
+      return [...new Set(executionMembers(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" })
+        .links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))].sort();
     },
 
     endFlow(flowId: string) {
@@ -222,40 +208,31 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
     },
 
     /**
-     * A skill a session activated before the flow was registered is still in effect for the work inside it, so
-     * activations are counted from the session's start, not from the registration. A pane the orchestrator reuses
-     * must not inherit finished work, so counting starts after the last flow this pane finished before this one was
-     * registered (exclusive, so an event at that end belongs to the earlier flow only). A tool call is a point in
-     * time rather than a lasting state, so tool calls count only inside this flow's own window.
+     * Skills and tools are observations inside this execution's registration/end window, just like its tree.
      * `excludeSessions` drops named sessions (the read API passes the ones its automated filter left out), so one
      * report never compares against sessions it hid everywhere else.
      */
     flowPaneUsage(flowId: string, opts: { excludeSessions?: readonly string[] } = {}): PaneUsageRow[] {
       const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
       if (!flow) return [];
-      const panes = selectFlowPanes.all(flow.workspace_id ?? "", flow.tab_id, flow.tab_id, flowId) as { pane_id: string }[];
+      const members = executionMembers(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" });
       const registeredMs = flow.registered_ms ?? 0;
       const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
-      const priorEndOf = db.prepare(`SELECT MAX(f.ended_ms) AS prior_end FROM flows f JOIN flow_steps fs ON fs.flow_id = f.id
-        WHERE fs.pane_id = ? AND f.id <> ? AND f.ended_ms IS NOT NULL AND f.ended_ms <= ?`);
-      const sessionsOf = db.prepare(`SELECT ps.session_id AS id, s.started_at AS started_at FROM pane_sessions ps
-        JOIN sessions s ON s.id = ps.session_id WHERE ps.pane_id = ? ORDER BY s.started_at, ps.session_id`);
       const activations = db.prepare(`SELECT kind, skill_uri, data_json FROM events
-        WHERE session_id = ? AND kind IN ('load', 'native_skill') AND ts >= ? AND ts > ? AND ts <= ? ORDER BY ts, rowid`);
+        WHERE session_id = ? AND kind IN ('load', 'native_skill') AND ts >= ? AND ts <= ? ORDER BY ts, rowid`);
       const toolCalls = db.prepare(`SELECT data_json FROM events
         WHERE session_id = ? AND kind = 'tool_call' AND ts >= ? AND ts <= ? ORDER BY ts, rowid`);
       const excluded = new Set(opts.excludeSessions ?? []);
-      return panes.map(({ pane_id: paneId }) => {
-        const priorEnd = (priorEndOf.get(paneId, flowId, registeredMs) as { prior_end: number | null }).prior_end ?? Number.MIN_SAFE_INTEGER;
+      return members.paneIds.map((paneId) => {
         const skills: string[] = [];
         const tools: string[] = [];
-        for (const session of sessionsOf.all(paneId) as { id: string; started_at: number }[]) {
-          if (excluded.has(session.id)) continue;
-          for (const e of activations.all(session.id, session.started_at, priorEnd, to) as { kind: string; skill_uri: string | null; data_json: string }[]) {
+        for (const sessionId of new Set(members.links.filter((l) => l.paneId === paneId).flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))) {
+          if (excluded.has(sessionId)) continue;
+          for (const e of activations.all(sessionId, registeredMs, to) as { kind: string; skill_uri: string | null; data_json: string }[]) {
             const name = skillNameOf(e.kind, e.skill_uri, parseJson<Record<string, unknown>>(e.data_json, {}));
             if (name !== undefined && !skills.includes(name)) skills.push(name);
           }
-          for (const e of toolCalls.all(session.id, registeredMs, to) as { data_json: string }[]) {
+          for (const e of toolCalls.all(sessionId, registeredMs, to) as { data_json: string }[]) {
             const tool = toolNameOf(parseJson<Record<string, unknown>>(e.data_json, {}));
             if (tool !== undefined && !tools.includes(tool)) tools.push(tool);
           }

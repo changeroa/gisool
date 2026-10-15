@@ -51,9 +51,32 @@ reconnection.
 Reported identity wins: a usable herdr `agent_session` ID matches a session's runtime session ID or
 conversation ID. These links retain their `herdr:` source. Without usable identity, any agent, including
 OmO, can be inferred from an exact nonempty cwd match and a session start within the pane's lifetime.
-The newest eligible pane wins; equal creation-time candidates remain unlinked. Reported links reserve
-their panes and sessions before inference. Each inferred session gets only one pane, and overlapping
-sessions do not share an inferred pane. Inferred links are labelled `inferred:cwd_time`, not reported.
+Agent/runtime matches take precedence over shell panes; multiple equally eligible panes remain unlinked
+rather than being guessed from recency. Reported links reserve their panes and sessions before inference.
+Each inferred session gets only one pane. A newer explicit SessionStart in the same unambiguous pane ends
+the earlier session's reservation at the successor's start; ambiguous same-cwd panes are not resolved this way.
+Inferred links are labelled `inferred:cwd_time`, not reported.
+
+The Claude pack installs both SessionStart and SessionEnd hooks using the same `hook-post.mjs` command.
+A SessionEnd becomes a `session_end` event and sets `sessions.ended_at` to its event timestamp. A herdr
+`pane.exited`, exited agent status, or snapshot showing a previously detected agent removed also ends
+linked open sessions. Historical links survive these end signals, but no longer reserve the pane forever.
+An idle or `done` interactive agent is not a process exit.
+
+### Registered execution scope
+
+Registered flows use the inclusive event window `[registeredMs, endedMs]`; an open flow has no end bound.
+The list's membership, detail tree, finding, usage and step comparison all use that window, including panes
+explicitly mapped to steps on another tab. Unmapped panes in the registered workspace/tab remain visible as
+unplanned work. A linked session belongs when it starts or has events in the window; an unmatched reported
+identity belongs only when first seen within it. Implicit `ws:` workspace reports retain full pane history.
+
+A session continuing across executions appears in each execution with only that execution's events.
+`executionScope.overlaps` labels `startedBefore` and `continuesAfter` per session. Original turn identity is
+preserved even when a turn crosses registration; turn/span durations and session bounds are clipped to the
+execution. Activations, searches, calls, later-missed skills and correction prompts outside the window do not
+contribute. A skill activated only before registration is not credited as an activation in the new run.
+Ending A and running B on the same pane does not add B's sessions, turns, skills or costs to A.
 
 Turn/event `basis` explains membership:
 

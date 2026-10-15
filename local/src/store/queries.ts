@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { automationOf, NO_ACTIVITY } from "./automation.js";
+import { executionMembers } from "./execution.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
 import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, OtelSpanRow, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep, TreeEvent, TreeTopologyNode, TreePaneLink } from "../types.js";
 
@@ -270,13 +271,28 @@ export function createQueries(ctx: StoreCtx): Queries {
     },
 
     treeFlowData(flowOrWorkspaceId) {
-      const flow = db.prepare("SELECT id, workspace_id, tab_id, label FROM flows WHERE id = ?").get(flowOrWorkspaceId) as
-        { id: string; workspace_id: string; tab_id: string | null; label: string | null } | undefined;
+      const flow = db.prepare("SELECT id, workspace_id, tab_id, label, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowOrWorkspaceId) as
+        { id: string; workspace_id: string; tab_id: string | null; label: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
       const workspaceId = flow?.workspace_id ?? flowOrWorkspaceId;
       const workspace = db.prepare("SELECT id, label FROM herdr_workspaces WHERE id = ?").get(workspaceId) as
         { id: string; label: string | null } | undefined;
       if (!workspace) return undefined;
-      const tabId = flow?.tab_id ?? null;
+      if (flow) {
+        const { paneIds, links } = executionMembers(db, flow);
+        const panes = paneIds.flatMap((id) => {
+          const pane = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs
+            FROM herdr_panes WHERE id = ?`).get(id) as (TreeTopologyNode & { tabId: string }) | undefined;
+          return pane ? [pane] : [];
+        });
+        const tabIds = [...new Set(panes.map((p) => p.tabId))];
+        const tabs = tabIds.flatMap((id) => {
+          const tab = db.prepare(`SELECT id, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_tabs WHERE id = ?`)
+            .get(id) as TreeTopologyNode | undefined;
+          return tab ? [tab] : [];
+        });
+        return { id: flow.id, workspaceId, label: flow.label ?? workspace.label, registered: true, tabs, panes, links };
+      }
+      const tabId = null;
       const tabs = db.prepare(`SELECT id, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_tabs
         WHERE workspace_id = ? AND (? IS NULL OR id = ?) ORDER BY created_ms, id`).all(workspaceId, tabId, tabId) as TreeTopologyNode[];
       const panes = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_panes
@@ -286,7 +302,7 @@ export function createQueries(ctx: StoreCtx): Queries {
         FROM pane_sessions ps JOIN herdr_panes p ON p.id = ps.pane_id
         WHERE p.workspace_id = ? AND (? IS NULL OR p.tab_id = ?)
         ORDER BY ps.first_seen_ms, ps.agent_session_value`).all(workspaceId, tabId, tabId) as TreePaneLink[];
-      return { id: flow?.id ?? workspaceId, workspaceId, label: flow?.label ?? workspace.label, registered: flow !== undefined, tabs, panes, links };
+      return { id: workspaceId, workspaceId, label: workspace.label, registered: false, tabs, panes, links };
     },
 
     /**

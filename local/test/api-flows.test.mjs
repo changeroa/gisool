@@ -158,7 +158,7 @@ function seedGateFixture(gisoolHome) {
         { id: "c", skills: ["mapped-auto-skill"], together: false, expectTools: [] },
       ],
     });
-    clock = G - 2_000;
+    clock = G - 6_000;
     const { flow } = store.createFlow({ workspaceId: "ws-gate", tabId: "gate-a", specId: spec.id, label: "gate flow" });
     store.mapFlowStep(flow.id, "pane-a", "a");
     store.mapFlowStep(flow.id, "pane-c", "c");
@@ -415,8 +415,9 @@ test("a tab-scoped flow keeps another tab's automated session out of its compari
   const res = await get(`/api/flows/${flowId}`);
   assert.equal(res.status, 200);
   // The flow was registered for tab gate-a, so tab gate-b's unmapped pane is outside the scope it reports on.
-  assert.deepEqual(res.json.tree.tabs.map((tab) => tab.id), ["gate-a"]);
+  assert.deepEqual(res.json.tree.tabs.map((tab) => tab.id), ["gate-a", "gate-b"]);
   assert.deepEqual(res.json.tree.tabs[0].panes.map((pane) => pane.id), ["pane-a"]);
+  assert.deepEqual(res.json.tree.tabs[1].panes.map((pane) => pane.id), ["pane-c"]);
   assert.ok(!res.text.includes("secret-auto-skill"), `another tab's skill reached the report: ${res.text.slice(0, 500)}`);
   assert.ok(!res.text.includes(ids["gate-auto-b"]), "another tab's session must not appear anywhere in the report");
   // pane-c is mapped to a step, so its automated session can reach the comparison and must be filtered there too.

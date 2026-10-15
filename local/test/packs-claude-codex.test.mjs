@@ -49,6 +49,8 @@ test("claude plan keeps unrelated keys, exact blocks, idempotent, commands exist
     assert.equal(out.hooks.UserPromptExpansion.length, 1);
     assert.equal(out.hooks.SessionStart.length, 1);
     assert.equal(out.hooks.SessionStart[0].hooks[0].command, g.hooks[0].command);
+    assert.equal(out.hooks.SessionEnd.length, 1);
+    assert.deepEqual(out.hooks.SessionEnd[0].hooks, out.hooks.SessionStart[0].hooks);
     assert.equal(Object.keys(out.env).some(key => key.includes("BETA") || key.includes("TRACE")), false);
     const hookPath = join(packageRoot, "packs", "hook-post.mjs");
     assert.equal(g.hooks[0].command, `"${ctx.nodePath}" "${hookPath}" claude-code`);
