@@ -124,8 +124,143 @@ for (const { first, hookOffset } of [
 }
 
 for (const first of ["span", "prompt"]) {
-  test(`Codex prompts near turn_input spans keep one reported boundary (${first} first)`, (t) => {
-    // Given: a keyless OTLP prompt and hook have timestamps just before and after the span boundary.
+  test(`distinct keyless Codex prompts retain a fallback turn without leaking skills (${first} first)`, (t) => {
+    // Given: R2 has two real prompt records 3 seconds apart but only the first turn_input span.
+    const { db, store } = openStore();
+    t.after(() => store.close());
+    const deps = createIngestDeps(store);
+    const firstPrompt = fixture("codex-otlp-user-prompt.json");
+    firstPrompt.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find((a) => a.key === "prompt").value.stringValue = "Inspect the configuration";
+    const secondPrompt = structuredClone(firstPrompt);
+    const secondRecord = secondPrompt.resourceLogs[0].scopeLogs[0].logRecords[0];
+    secondRecord.timeUnixNano = "1760320003000000000";
+    secondRecord.attributes.find((a) => a.key === "prompt").value.stringValue = "Instead inspect the tests";
+    const traces = fixture("codex-otlp-traces.json");
+    traces.resourceSpans[0].scopeSpans[0].spans = [traces.resourceSpans[0].scopeSpans[0].spans[0]];
+    const spans = () => assert.equal(ingestOtlpTraces(traces, store, T).kept, 1);
+    const prompts = () => {
+      assert.equal(ingestOtlp(firstPrompt, deps).status, 200);
+      assert.equal(ingestOtlp(secondPrompt, deps).status, 200);
+    };
+    if (first === "span") { spans(); prompts(); } else { prompts(); spans(); }
+    const ctx = { clientName: "codex-mcp-client", meta: { threadId: "codex-conv-1" } };
+    assert.ok(ingest(loadEvent(ctx, { uri: uri("debugging"), loadId: "r2-load", manifestDigest: "digest" }, T + 1), deps));
+    const usage = fixture("codex-otlp-sse-event.json");
+    usage.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano = "1760320003500000000";
+    assert.equal(ingestOtlp(usage, deps).status, 200);
+    const id = db.prepare("SELECT id FROM sessions WHERE conversation_id = 'codex-conv-1'").get().id;
+    const promptRows = db.prepare("SELECT id, turn_key FROM events WHERE kind = 'prompt' ORDER BY ts").all();
+    assert.deepEqual(promptRows.map((p) => p.turn_key), [null, null]);
+    // When
+    const tree = sessionTree(store, id);
+    // Then: the first turn keeps its skill, but the second starts with an empty active set.
+    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt]), [[CODEX_TURN, T], [`prompt:${promptRows[1].id}`, T + 3000]]);
+    assert.deepEqual(tree.turns.map((turn) => turn.events.filter((e) => e.kind === "prompt").map((e) => e.text)),
+      [["Inspect the configuration"], ["Instead inspect the tests"]]);
+    assert.deepEqual(tree.turns[0].skillSpans.map((span) => span.uri), [uri("debugging")]);
+    const model = tree.turns[1].events.find((e) => e.kind === "llm_call");
+    assert.deepEqual([model.basis, model.attribution, model.skills], ["inferred_time", "no_skill", []]);
+    assert.equal(tree.turns[1].skillSpans.length, 0);
+  });
+}
+
+for (const runtime of ["claude-code", "codex"]) {
+  for (const first of ["reported", "hook"]) {
+    test(`${runtime} pairs two reported turns with two hook prompts (${first} first)`, (t) => {
+      // Given: both reported boundaries and both hooks are within each other's 5-second windows.
+      const { db, store } = openStore();
+      t.after(() => store.close());
+      let now = T + 1;
+      const deps = createIngestDeps(store, { now: () => now });
+      const sessionId = runtime === "codex" ? "codex-conv-1" : "claude-sess-1";
+      const hooks = () => {
+        assert.equal(ingestHook(runtime, { hook_event_name: "UserPromptSubmit", session_id: sessionId, prompt: "First task" }, deps).accepted, 1);
+        now = T + 3001;
+        assert.equal(ingestHook(runtime, { hook_event_name: "UserPromptSubmit", session_id: sessionId, prompt: "Second task" }, deps).accepted, 1);
+      };
+      const reported = () => {
+        if (runtime === "codex") {
+          const traces = fixture("codex-otlp-traces.json");
+          const one = traces.resourceSpans[0].scopeSpans[0].spans[0];
+          const two = structuredClone(one);
+          two.spanId = "eef6aff0499f5a13";
+          two.startTimeUnixNano = "1760320003000000000";
+          two.endTimeUnixNano = "1760320003100000000";
+          two.attributes.find((a) => a.key === "turn.id").value.stringValue = "second-turn";
+          traces.resourceSpans[0].scopeSpans[0].spans = [one, two];
+          assert.equal(ingestOtlpTraces(traces, store, T).kept, 2);
+        } else {
+          const one = fixture("claude-otlp-user-prompt.json");
+          one.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find((a) => a.key === "prompt").value.stringValue = "First task";
+          const two = structuredClone(one);
+          const record = two.resourceLogs[0].scopeLogs[0].logRecords[0];
+          record.timeUnixNano = "1760320003000000000";
+          record.attributes.find((a) => a.key === "prompt.id").value.stringValue = "p-2";
+          record.attributes.find((a) => a.key === "prompt").value.stringValue = "Second task";
+          assert.equal(ingestOtlp(one, deps).status, 200);
+          assert.equal(ingestOtlp(two, deps).status, 200);
+        }
+      };
+      if (first === "hook") { hooks(); reported(); } else { reported(); hooks(); }
+      const ctx = { clientName: runtime === "codex" ? "codex-mcp-client" : "claude-code", meta: { sessionId } };
+      assert.ok(ingest(loadEvent(ctx, { uri: uri("debugging"), loadId: "paired-load", manifestDigest: "digest" }, T + 2), deps));
+      const usage = fixture(runtime === "codex" ? "codex-otlp-sse-event.json" : "claude-otlp-api-request.json");
+      const record = usage.resourceLogs[0].scopeLogs[0].logRecords[0];
+      record.timeUnixNano = "1760320003500000000";
+      if (runtime === "claude-code") record.attributes.find((a) => a.key === "prompt.id").value.stringValue = "p-2";
+      assert.equal(ingestOtlp(usage, deps).status, 200);
+      const id = db.prepare("SELECT id FROM sessions WHERE runtime = ?").get(runtime).id;
+      // When
+      const tree = sessionTree(store, id);
+      // Then
+      assert.deepEqual(tree.turns.map((turn) => turn.id), runtime === "codex" ? [CODEX_TURN, "second-turn"] : ["p-1", "p-2"]);
+      assert.deepEqual(tree.turns.map((turn) => turn.events.filter((e) => e.source === "hook").map((e) => [e.text, e.basis])),
+        [[["First task", "inferred_time"]], [["Second task", "inferred_time"]]]);
+      assert.deepEqual(tree.turns[0].skillSpans.map((s) => s.uri), [uri("debugging")]);
+      const model = tree.turns[1].events.find((e) => e.kind === "llm_call");
+      assert.deepEqual([model.attribution, model.skills], ["no_skill", []]);
+    });
+  }
+}
+
+for (const runtime of ["claude-code", "codex"]) {
+  test(`${runtime} pairs only the nearest prompt and breaks equal-distance ties toward the earlier timestamp`, (t) => {
+    // Given: an exact-time prompt wins first; at a second boundary, the two candidates are equally distant.
+    const { store, id, append, span } = seeded(t, runtime);
+    if (runtime === "codex") { span("first", 0); span("second", 3000); }
+    else { append("prompt", 0, { turnKey: "first" }); append("prompt", 3000, { turnKey: "second" }); }
+    append("prompt", 0);
+    const surplus = append("prompt", 1);
+    append("prompt", 2999);
+    const later = append("prompt", 3001);
+    // When
+    const tree = sessionTree(store, id);
+    // Then: each reported boundary consumes exactly one prompt; the surplus and later tie keep their own turns.
+    assert.deepEqual(tree.turns.map((turn) => turn.id), ["first", `prompt:${surplus}`, "second", `prompt:${later}`]);
+  });
+
+  for (const capture of ["text", "length"]) {
+    test(`${runtime} prefers matching prompt ${capture} over a nearer observation`, (t) => {
+      // Given: prompt identity is available on the keyed prompt even when timestamp proximity disagrees.
+      const { store, id, append, span } = seeded(t, runtime);
+      if (runtime === "codex") span("reported", 0);
+      const keyed = capture === "text" ? { text: "Inspect config" } : { textLength: 14 };
+      append("prompt", 0, { turnKey: "reported", ...keyed });
+      const wrong = append("prompt", -1, capture === "text" ? { text: "Inspect tests" } : { textLength: 13 });
+      const matched = append("prompt", 2, keyed);
+      // When
+      const tree = sessionTree(store, id);
+      // Then
+      assert.deepEqual(tree.turns.map((turn) => turn.id), [`prompt:${wrong}`, "reported"]);
+      assert.equal(tree.turns[0].events[0].id, wrong);
+      assert.equal(tree.turns[1].events.find((e) => e.id === matched).basis, "inferred_time");
+    });
+  }
+}
+
+for (const first of ["span", "prompt"]) {
+  test(`Codex absorbs the earlier tied prompt and preserves the surplus hook turn (${first} first)`, (t) => {
+    // Given: two keyless observations are equally near one span; only one can be absorbed.
     const { db, store } = openStore();
     t.after(() => store.close());
     const deps = createIngestDeps(store, { now: () => T + 2 });
@@ -143,17 +278,21 @@ for (const first of ["span", "prompt"]) {
     assert.ok(ingest(loadEvent(ctx, { uri: uri("debugging"), loadId: "codex-mixed", manifestDigest: "digest" }, T + 3), deps));
     assert.equal(ingestOtlp(fixture("codex-otlp-tool-result.json"), deps).status, 200);
     const id = db.prepare("SELECT id FROM sessions WHERE conversation_id = 'codex-conv-1'").get().id;
+    const hookId = db.prepare("SELECT id FROM events WHERE source = 'hook' AND kind = 'prompt'").get().id;
     // When
     const tree = sessionTree(store, id);
     // Then
-    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [[CODEX_TURN, T + 1, "reported"]]);
+    assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [
+      [CODEX_TURN, T + 1, "reported"], [`prompt:${hookId}`, T + 2, "inferred_time"],
+    ]);
     assert.deepEqual(tree.unassignedEvents.map((e) => [e.kind, e.source]), [["prompt", "otel"]]);
-    const turn = tree.turns[0];
-    assert.equal(turn.events.find((e) => e.source === "hook").basis, "inferred_time");
-    assert.equal(turn.events.find((e) => e.kind === "load").basis, "inferred_time");
-    const call = turn.skillSpans[0].events[0];
-    assert.deepEqual([call.callId, call.basis, call.attribution], ["call_abc123", "span_join", "single"]);
-    assert.deepEqual(call.skills, [uri("debugging")]);
+    const fallback = tree.turns[1];
+    assert.equal(fallback.events.find((e) => e.source === "hook").basis, "inferred_time");
+    assert.equal(fallback.events.find((e) => e.kind === "load").basis, "inferred_time");
+    assert.deepEqual(fallback.skillSpans.map((s) => [s.uri, s.events.length]), [[uri("debugging"), 0]]);
+    const call = tree.turns[0].events.find((e) => e.kind === "tool_call");
+    assert.deepEqual([call.callId, call.basis, call.attribution], ["call_abc123", "span_join", "no_skill"]);
+    assert.deepEqual(call.skills, []);
   });
 }
 
@@ -300,8 +439,8 @@ test("Codex missing turn spans produce synthetic prompt turns without consuming 
   const { store, id, append, span } = seeded(t, "codex");
   span("c1", 0);
   append("prompt", 0);
-  const prompt = append("prompt", 10000);
-  const action = append("tool_call", 10001);
+  const prompt = append("prompt", 10);
+  const action = append("tool_call", 11);
   // When
   const tree = sessionTree(store, id);
   // Then

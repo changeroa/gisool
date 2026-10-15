@@ -24,14 +24,30 @@ export function assembleSession(data: TreeSessionData): SessionTree {
   for (const prompt of prompts) {
     if (prompt.turnKey !== null && !boundaries.has(prompt.turnKey)) add(prompt.turnKey, prompt.ts, "reported");
   }
-  const reportedBoundaries = [...boundaries.values()];
+  const reportedBoundaries = [...boundaries.values()].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  const pairedPrompts = new Set<string>();
+  if (data.runtime === "claude-code" || data.runtime === "codex") {
+    for (const boundary of reportedBoundaries) {
+      const reference = prompts.find((p) => p.turnKey === boundary.id);
+      const strength = (prompt: TreeEvent): number => {
+        if (!reference) return 0; // Codex turn_input spans carry identity and time, not prompt content.
+        if (reference.text !== null && prompt.text !== null) return reference.text === prompt.text ? 2 : 0;
+        const length = reference.textLength ?? reference.data.promptLength;
+        const observedLength = prompt.textLength ?? prompt.data.promptLength;
+        return typeof length === "number" && length === observedLength ? 1 : 0;
+      };
+      // Each boundary consumes one observation, and each observation can be consumed only once.
+      // Prefer captured identity, then nearest timestamp; ties choose the earlier observation.
+      const match = prompts.filter((p) => p.turnKey === null && !pairedPrompts.has(p.id) &&
+        Math.abs(boundary.startedAt - p.ts) <= PROMPT_JOIN_WINDOW_MS)
+        .sort((a, b) => strength(b) - strength(a) ||
+          Math.abs(boundary.startedAt - a.ts) - Math.abs(boundary.startedAt - b.ts) ||
+          a.ts - b.ts || a.id.localeCompare(b.id))[0];
+      if (match) pairedPrompts.add(match.id);
+    }
+  }
   for (const prompt of prompts) {
-    if (prompt.turnKey !== null) continue;
-    // Hook and OTLP observations of one prompt can have slightly different timestamps.
-    // Keep reported timestamps authoritative; keyless observations still use the normal time join below.
-    const nearReported = (data.runtime === "claude-code" || data.runtime === "codex") &&
-      reportedBoundaries.some((b) => Math.abs(b.startedAt - prompt.ts) <= PROMPT_JOIN_WINDOW_MS);
-    if (!nearReported) {
+    if (prompt.turnKey === null && !pairedPrompts.has(prompt.id)) {
       add(`prompt:${prompt.id}`, prompt.ts, "inferred_time");
     }
   }
