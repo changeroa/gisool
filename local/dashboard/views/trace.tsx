@@ -25,6 +25,7 @@ type ErrorDetail = { kind: "error"; code: string; message: string };
 export const PROMPT_FOLD_CHARS = 600;
 export const SHORT_DIGEST_CHARS = 8;
 export const TOOL_ARGS_PREVIEW_CHARS = 160;
+export type ToolArgs = { captured: true; text: string; truncated: boolean } | { captured: false; length: number };
 export const COST_UNKNOWN = "cost unknown";
 
 export const KIND_LABEL: Record<EventKind, string> = {
@@ -344,12 +345,13 @@ export function formatCost(costUsd: number | undefined): string {
 }
 
 /** The captured arguments, or how much text the capture level dropped; undefined when the runtime sent none. */
-export function toolArgsPreview(detail: ToolDetail): string | undefined {
+export function toolArgsPreview(detail: ToolDetail): ToolArgs | undefined {
   if (typeof detail.args === "string") {
     const chars = Array.from(detail.args);
-    return chars.length > TOOL_ARGS_PREVIEW_CHARS ? `${chars.slice(0, TOOL_ARGS_PREVIEW_CHARS).join("")}…` : detail.args;
+    const truncated = chars.length > TOOL_ARGS_PREVIEW_CHARS;
+    return { captured: true, text: truncated ? `${chars.slice(0, TOOL_ARGS_PREVIEW_CHARS).join("")}…` : detail.args, truncated };
   }
-  return typeof detail.argsLength === "number" ? `${detail.argsLength} chars not captured` : undefined;
+  return typeof detail.argsLength === "number" ? { captured: false, length: detail.argsLength } : undefined;
 }
 
 function LlmBody({ step, detail }: { step: TraceStep; detail: LlmDetail }) {
@@ -368,7 +370,7 @@ function ToolBody({ step, detail }: { step: TraceStep; detail: ToolDetail }) {
   return (
     <p class="tl__line">
       <span class="tl__name">{step.summary}</span>
-      {args !== undefined && <span class="tl__name tl__name--mono">{args}</span>}
+      {args !== undefined && <span class="tl__name tl__name--mono">{args.captured ? args.text : `${args.length} chars not captured`}</span>}
       {detail.resultBytes !== undefined && <span class="tl__meta">result {formatBytes(detail.resultBytes)}</span>}
     </p>
   );

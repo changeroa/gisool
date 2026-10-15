@@ -68,11 +68,15 @@ test("model and tool steps carry the store's summary plus the facts their bodies
   const tool = steps.find((step) => step.kind === "tool_call");
   assert.match(tool.summary, /^tool: \S.* \(\d+ ms, (ok|failed|unknown)\)$/);
   assert.equal(tool.detail.kind, "tool_call");
-  assert.equal(trace.toolArgsPreview(tool.detail), tool.detail.args);
+  assert.deepEqual(trace.toolArgsPreview(tool.detail), { captured: true, text: tool.detail.args, truncated: false });
   assert.equal(tool.detail.argsLength, tool.detail.args.length);
   const long = { kind: "tool_call", args: "가".repeat(trace.TOOL_ARGS_PREVIEW_CHARS + 40) };
-  assert.equal(Array.from(trace.toolArgsPreview(long)).length, trace.TOOL_ARGS_PREVIEW_CHARS + 1, "long arguments are cut with one ellipsis");
-  assert.equal(trace.toolArgsPreview({ kind: "tool_call", argsLength: 412 }), "412 chars not captured");
+  const cut = trace.toolArgsPreview(long);
+  assert.equal(cut.captured, true);
+  assert.equal(cut.truncated, true);
+  assert.equal(Array.from(cut.text).length, trace.TOOL_ARGS_PREVIEW_CHARS + 1, "long arguments are cut with one ellipsis");
+  assert.deepEqual(trace.toolArgsPreview({ kind: "tool_call", argsLength: 412 }), { captured: false, length: 412 },
+    "metadata capture reports the dropped length and no text");
   assert.equal(trace.toolArgsPreview({ kind: "tool_call" }), undefined);
 });
 
