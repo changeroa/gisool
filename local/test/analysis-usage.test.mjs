@@ -213,20 +213,34 @@ test("supporting reads come from gisool read_file events and, for native skills,
   assert.deepEqual([commit.followThrough, pdf.followThrough], [2, 2]);
 });
 
-test("a native skill's supporting reads stop at the directory boundary", (t) => {
-  // Given: a sibling directory whose name starts with the skill's name, and a file nested inside the skill.
+test("a native skill's supporting reads match only at a separator or the end of the path token", (t) => {
+  // Given: one tool call per directory-lookalike, all after the same native activation.
+  const cases = [
+    ["+backup", "cat /skills/db-query+backup/reference.md", false],
+    ["@v2", "cat /skills/db-query@v2/reference.md", false],
+    ["~old", "cat /skills/db-query~old/reference.md", false],
+    [" (copy)", "cat /skills/db-query (copy)/reference.md", false],
+    [".bak", "cat /skills/db-query.bak/reference.md", false],
+    ["-x", "cat /skills/db-query-x/reference.md", false],
+    ["nested file", "cat /skills/db-query/ref.md", true],
+    ["end of text", "cat /skills/db-query", true],
+    ["closing quote", '{"file_path":"/skills/db-query"}', true],
+    ["windows separators", '{"file_path":"C:\\\\skills\\\\db-query\\\\ref.md"}', true],
+  ];
   const { store, append, id } = seeded(t);
   append("prompt", 0, { turnKey: "t1", text: "Implement the query" });
   append("native_skill", 1000, { turnKey: "t1", data: { name: "db-query", via: "file_read", path: "/skills/db-query/SKILL.md" } });
-  append("tool_call", 2000, { turnKey: "t1", text: JSON.stringify({ command: "cat /skills/db-query-backup/reference.md" }),
-    data: { toolName: "Bash", success: true } });
-  const nested = append("tool_call", 3000, { turnKey: "t1", text: JSON.stringify({ command: "cat /skills/db-query/reference/deep.md" }),
-    data: { toolName: "Bash", success: true } });
+  const windows = append("native_skill", 1100, { turnKey: "t1", data: { name: "db-query-win", via: "file_read", path: "C:\\skills\\db-query\\SKILL.md" } });
+  const ids = cases.map(([, text], i) => append("tool_call", 2000 + i * 10, { turnKey: "t1", text, data: { toolName: "Bash", success: true } }));
   // When
-  const [span] = sessionUsage(sessionTree(store, id)).spans;
-  // Then: only the nested file is a supporting read, while both calls remain follow-through.
-  assert.deepEqual(span.supportingReads.map((r) => [r.eventId, r.label]), [[nested, "heuristic"]]);
-  assert.equal(span.followThrough, 2);
+  const spans = sessionUsage(sessionTree(store, id)).spans;
+  const span = spans.find((s) => s.name === "db-query");
+  const windowsSpan = spans.find((s) => s.spanId === windows);
+  // Then: only a separator, a closing quote or the end of the text closes the directory name.
+  const matched = new Set(span.supportingReads.map((r) => r.eventId));
+  assert.deepEqual(cases.map(([label], i) => [label, matched.has(ids[i])]), cases.map(([label, , expected]) => [label, expected]));
+  assert.deepEqual(windowsSpan.supportingReads.map((r) => r.eventId), [ids[9]]);
+  assert.equal(span.followThrough, cases.length);
 });
 
 test("range usage aggregates every eligible session and declares a shortened detail list", (t) => {

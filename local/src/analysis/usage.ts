@@ -156,18 +156,27 @@ function readFileBelongsTo(event: AssignedTreeEvent, span: SkillSpan): boolean {
   return skillUri.split("/").at(-2) === span.name;
 }
 
-const PATH_CHAR = /[A-Za-z0-9._-]/;
+const QUOTES = new Set(['"', "'", "`"]);
+const TOKEN_STARTS = new Set(['"', "'", "`", "=", "(", " ", "\t", "\n", "\r"]);
 
 function normalizeSeparators(path: string): string {
   return path.replace(/\\+/g, "/");
 }
 
-/** A directory matches only on a path-segment boundary, so `/skills/db-query` never swallows `/skills/db-query-backup`. */
+/**
+ * A directory reference ends where the path does: the next character is the separator that opens the next
+ * segment, a quote closing the token, or nothing at all. Any other continuation - `+backup`, `@v2`, `~old`,
+ * ` (copy)`, `.bak`, `-x` - names a different directory, so no allowlist of "name characters" is used.
+ * A match whose directory starts with the separator carries its own left boundary; otherwise the text before
+ * it must open a token.
+ */
 function referencesDirectory(haystack: string, dir: string): boolean {
+  if (dir.length === 0) return false;
   for (let at = haystack.indexOf(dir); at >= 0; at = haystack.indexOf(dir, at + 1)) {
-    const before = haystack[at - 1];
     const after = haystack[at + dir.length];
-    if ((before === undefined || !PATH_CHAR.test(before)) && (after === undefined || !PATH_CHAR.test(after))) return true;
+    if (after !== undefined && after !== "/" && !QUOTES.has(after)) continue;
+    const before = haystack[at - 1];
+    if (before === undefined || dir.startsWith("/") || TOKEN_STARTS.has(before)) return true;
   }
   return false;
 }
