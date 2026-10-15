@@ -156,37 +156,105 @@ function readFileBelongsTo(event: AssignedTreeEvent, span: SkillSpan): boolean {
   return skillUri.split("/").at(-2) === span.name;
 }
 
-const QUOTES = new Set(['"', "'", "`"]);
-const TOKEN_STARTS = new Set(['"', "'", "`", "=", "(", " ", "\t", "\n", "\r"]);
+const COMMAND_KEYS = new Set(["command", "full_command", "bash_command", "cmd", "argv", "script", "shell_command"]);
 
-function normalizeSeparators(path: string): string {
-  return path.replace(/\\+/g, "/");
+type ArgString = { readonly text: string; readonly command: boolean };
+
+/**
+ * The strings an argument blob can hold. A JSON value under a command key (and any text that is not JSON)
+ * is a command line; every other JSON string is one path argument and keeps its spaces and quotes as data.
+ */
+function collectArgStrings(text: string): ArgString[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [{ text, command: true }];
+  }
+  const out: ArgString[] = [];
+  const walk = (value: unknown, command: boolean): void => {
+    if (typeof value === "string") out.push({ text: value, command });
+    else if (Array.isArray(value)) for (const item of value) walk(item, command);
+    else if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) walk(item, command || COMMAND_KEYS.has(key));
+    }
+  };
+  walk(parsed, false);
+  return out.length > 0 ? out : [{ text, command: true }];
 }
 
 /**
- * A directory reference ends where the path does: the next character is the separator that opens the next
- * segment, a quote closing the token, or nothing at all. Any other continuation - `+backup`, `@v2`, `~old`,
- * ` (copy)`, `.bak`, `-x` - names a different directory, so no allowlist of "name characters" is used.
- * A match whose directory starts with the separator carries its own left boundary; otherwise the text before
- * it must open a token.
+ * Shell-like split of a command line: whitespace separates, single and double quotes group and are dropped.
+ * A backslash escapes a separator, a quote or itself; anywhere else it stays, so `C:\skills\x` survives intact.
  */
-function referencesDirectory(haystack: string, dir: string): boolean {
-  if (dir.length === 0) return false;
-  for (let at = haystack.indexOf(dir); at >= 0; at = haystack.indexOf(dir, at + 1)) {
-    const after = haystack[at + dir.length];
-    if (after !== undefined && after !== "/" && !QUOTES.has(after)) continue;
-    const before = haystack[at - 1];
-    if (before === undefined || dir.startsWith("/") || TOKEN_STARTS.has(before)) return true;
+function shellTokens(text: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let open = false;
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]!;
+    if (quote === null && /\s/.test(char)) {
+      if (open) tokens.push(current);
+      current = "";
+      open = false;
+      continue;
+    }
+    if (quote === null && (char === '"' || char === "'")) {
+      quote = char;
+      open = true;
+      continue;
+    }
+    if (quote === char) {
+      quote = null;
+      continue;
+    }
+    const next = text[i + 1];
+    if (char === "\\" && quote !== "'" && next !== undefined && (/\s/.test(next) || next === '"' || next === "'" || next === "\\")) {
+      current += next;
+      open = true;
+      i += 1;
+      continue;
+    }
+    current += char;
+    open = true;
   }
-  return false;
+  if (open) tokens.push(current);
+  return tokens;
 }
 
-/** Native skills leave no MCP trail, so a tool argument naming a file inside the skill directory is counted as a read. */
+function normalizePath(path: string): string {
+  return path.replace(/\\+/g, "/").replace(/\/+$/, "");
+}
+
+/**
+ * Whole-token comparison, never a substring: `/skills/db-query` does not reference `/skills/db-query'backup`.
+ * `insideOnly` drops the bare directory itself, which is what naming a directory on a command line is.
+ */
+function tokenReferencesDir(token: string, dir: string, insideOnly: boolean): boolean {
+  const path = normalizePath(token);
+  const target = normalizePath(dir);
+  if (path === "" || target === "") return false;
+  if (path.startsWith(`${target}/`)) return true;
+  const rooted = target.startsWith("/") || /^[A-Za-z]:\//.test(target);
+  if (!rooted && path.includes(`/${target}/`)) return true;
+  if (insideOnly) return false;
+  return path === target || (!rooted && path.endsWith(`/${target}`));
+}
+
+/**
+ * Native skills leave no MCP trail, so a tool argument naming a file inside the skill directory is counted as a read.
+ * The skill name stands in as a relative directory only while the activation reported no directory of its own.
+ */
 function argsReferenceSkillDir(event: AssignedTreeEvent, span: SkillSpan, dirHint: string | null): boolean {
   if (event.text === null) return false;
-  const haystack = normalizeSeparators(event.text);
-  if (dirHint !== null && referencesDirectory(haystack, normalizeSeparators(dirHint))) return true;
-  return haystack.includes(`/${span.name}/`);
+  const target = dirHint ?? span.name;
+  for (const { text, command } of collectArgStrings(event.text)) {
+    for (const token of command ? shellTokens(text) : [text]) {
+      if (tokenReferencesDir(token, target, command)) return true;
+    }
+  }
+  return false;
 }
 
 function supportingReadsOf(span: SkillSpan, turn: TurnTree): SupportingRead[] {

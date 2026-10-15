@@ -213,34 +213,67 @@ test("supporting reads come from gisool read_file events and, for native skills,
   assert.deepEqual([commit.followThrough, pdf.followThrough], [2, 2]);
 });
 
-test("a native skill's supporting reads match only at a separator or the end of the path token", (t) => {
-  // Given: one tool call per directory-lookalike, all after the same native activation.
-  const cases = [
-    ["+backup", "cat /skills/db-query+backup/reference.md", false],
-    ["@v2", "cat /skills/db-query@v2/reference.md", false],
-    ["~old", "cat /skills/db-query~old/reference.md", false],
-    [" (copy)", "cat /skills/db-query (copy)/reference.md", false],
-    [".bak", "cat /skills/db-query.bak/reference.md", false],
-    ["-x", "cat /skills/db-query-x/reference.md", false],
-    ["nested file", "cat /skills/db-query/ref.md", true],
-    ["end of text", "cat /skills/db-query", true],
-    ["closing quote", '{"file_path":"/skills/db-query"}', true],
-    ["windows separators", '{"file_path":"C:\\\\skills\\\\db-query\\\\ref.md"}', true],
-  ];
-  const { store, append, id } = seeded(t);
-  append("prompt", 0, { turnKey: "t1", text: "Implement the query" });
-  append("native_skill", 1000, { turnKey: "t1", data: { name: "db-query", via: "file_read", path: "/skills/db-query/SKILL.md" } });
-  const windows = append("native_skill", 1100, { turnKey: "t1", data: { name: "db-query-win", via: "file_read", path: "C:\\skills\\db-query\\SKILL.md" } });
-  const ids = cases.map(([, text], i) => append("tool_call", 2000 + i * 10, { turnKey: "t1", text, data: { toolName: "Bash", success: true } }));
-  // When
-  const spans = sessionUsage(sessionTree(store, id)).spans;
-  const span = spans.find((s) => s.name === "db-query");
-  const windowsSpan = spans.find((s) => s.spanId === windows);
-  // Then: only a separator, a closing quote or the end of the text closes the directory name.
-  const matched = new Set(span.supportingReads.map((r) => r.eventId));
-  assert.deepEqual(cases.map(([label], i) => [label, matched.has(ids[i])]), cases.map(([label, , expected]) => [label, expected]));
-  assert.deepEqual(windowsSpan.supportingReads.map((r) => r.eventId), [ids[9]]);
-  assert.equal(span.followThrough, cases.length);
+const POSIX_SKILL = "/skills/db-query/SKILL.md";
+const WINDOWS_SKILL = "C:\\skills\\db-query\\SKILL.md";
+const posixArg = (suffix) => JSON.stringify({ file_path: `/skills/db-query${suffix}` });
+const windowsArg = (suffix) => JSON.stringify({ file_path: `C:\\skills\\db-query${suffix}` });
+
+// The 24 gate-review probes (R3, .omo/evidence/gisool-skill-tracing-todo-8-73e0eff-gate-review.md) first,
+// then the executor's own rows: command lines, a quoted path with a space, raw text and Codex array arguments.
+const PROBES = [
+  ["posix +backup", POSIX_SKILL, posixArg("+backup/reference.md"), 0],
+  ["posix @v2", POSIX_SKILL, posixArg("@v2/reference.md"), 0],
+  ["posix ~old", POSIX_SKILL, posixArg("~old/reference.md"), 0],
+  ["posix (copy)", POSIX_SKILL, posixArg(" (copy)/reference.md"), 0],
+  ["posix .bak", POSIX_SKILL, posixArg(".bak/reference.md"), 0],
+  ["posix -x", POSIX_SKILL, posixArg("-x/reference.md"), 0],
+  ["posix #copy", POSIX_SKILL, posixArg("#copy/reference.md"), 0],
+  ["posix %20copy", POSIX_SKILL, posixArg("%20copy/reference.md"), 0],
+  ["posix :backup", POSIX_SKILL, posixArg(":backup/reference.md"), 0],
+  ["posix ;backup", POSIX_SKILL, posixArg(";backup/reference.md"), 0],
+  ["posix [copy]", POSIX_SKILL, posixArg("[copy]/reference.md"), 0],
+  ["posix u+00e9", POSIX_SKILL, posixArg("\u00e9/reference.md"), 0],
+  ["posix apostrophe", POSIX_SKILL, posixArg("'backup/reference.md"), 0],
+  ["posix backtick", POSIX_SKILL, posixArg("`backup/reference.md"), 0],
+  ["posix double quote", POSIX_SKILL, posixArg('"backup/reference.md'), 0],
+  ["windows +backup", WINDOWS_SKILL, windowsArg("+backup\\reference.md"), 0],
+  ["windows @v2", WINDOWS_SKILL, windowsArg("@v2\\reference.md"), 0],
+  ["windows [copy]", WINDOWS_SKILL, windowsArg("[copy]\\reference.md"), 0],
+  ["windows apostrophe", WINDOWS_SKILL, windowsArg("'backup\\reference.md"), 0],
+  ["windows backtick", WINDOWS_SKILL, windowsArg("`backup\\reference.md"), 0],
+  ["posix nested file", POSIX_SKILL, posixArg("/references/deep.md"), 1],
+  ["windows nested file", WINDOWS_SKILL, windowsArg("\\references\\deep.md"), 1],
+  ["posix exact directory", POSIX_SKILL, posixArg(""), 1],
+  ["posix directory in a command", POSIX_SKILL, JSON.stringify({ command: "ls /skills/db-query -la" }), 0],
+  ["command reading a nested file", POSIX_SKILL, JSON.stringify({ command: "cat /skills/db-query/ref.md" }), 1],
+  ["command with a quoted path", POSIX_SKILL, JSON.stringify({ command: 'cat "/skills/db-query/my notes.md"' }), 1],
+  ["command reading a sibling", POSIX_SKILL, JSON.stringify({ command: "cat /skills/db-query-x/reference.md" }), 0],
+  ["command with an apostrophe sibling", POSIX_SKILL, JSON.stringify({ command: "cat /skills/db-query'backup/ref.md" }), 0],
+  ["raw text command", POSIX_SKILL, "cat /skills/db-query/ref.md", 1],
+  ["codex array arguments", POSIX_SKILL, JSON.stringify({ command: ["bash", "-lc", "cat /skills/db-query/ref.md"], workdir: "/tmp" }), 1],
+  ["windows path in a posix skill", POSIX_SKILL, windowsArg("\\ref.md"), 0],
+];
+
+test("supporting reads compare whole path tokens, not substrings", (t) => {
+  // Given: one session per probe, each with a native activation and one tool call carrying the argument blob.
+  const { store } = openStore();
+  t.after(() => store.close());
+  const reads = PROBES.map(([label, activationPath, args], index) => {
+    const ref = { runtime: "claude-code", runtimeSessionId: `probe-${index}` };
+    const sessionId = store.upsertSession(ref, T + index * 1000);
+    const add = (kind, delta, extra) =>
+      assert.equal(store.append(event(kind, T + index * 1000 + delta, ref, extra), { sessionId, method: "runtime_id" }), true);
+    add("prompt", 0, { turnKey: `t${index}`, text: "Implement the query" });
+    add("native_skill", 10, { turnKey: `t${index}`, data: { name: "db-query", via: "file_read", path: activationPath } });
+    add("tool_call", 20, { turnKey: `t${index}`, text: args, data: { toolName: "Read", success: true } });
+    // When
+    const [span] = sessionUsage(sessionTree(store, sessionId)).spans;
+    assert.equal(span.followThrough, 1, label);
+    for (const read of span.supportingReads) assert.equal(read.label, "heuristic", label);
+    return [label, span.supportingReads.length];
+  });
+  // Then: every sibling directory is excluded and every path inside the skill directory is kept.
+  assert.deepEqual(reads, PROBES.map(([label, , , expected]) => [label, expected]));
 });
 
 test("range usage aggregates every eligible session and declares a shortened detail list", (t) => {
