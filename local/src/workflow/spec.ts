@@ -8,7 +8,8 @@ const slug = (max: number) =>
 
 export const MAX_STEPS = 50;
 export const MAX_SKILLS_PER_STEP = 10;
-export const MAX_TOOLS_PER_STEP = 20;
+/** The plan bounds name, steps, skills and doneWhen but not expectTools or single names; these are anti-abuse bounds only. */
+export const MAX_TOOLS_PER_STEP = 100;
 export const MAX_NAME_LENGTH = 128;
 
 export const workflowStepSchema = z.strictObject({

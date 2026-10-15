@@ -273,8 +273,59 @@ test("compareFlow derives used skills from the events of the sessions linked to 
     store.endFlow(flowId);
     const afterEnd = compareFlow(store, flowId);
     assert.deepEqual(afterEnd.steps.map((s) => s.status), ["no_skill_used", "no_skill_used", "not_run"],
-      "usage is scoped to the flow window, so events after the flow ended no longer count");
+      "an ended flow stops counting at ended_ms, and every seeded event is later than that");
   } finally {
     store.close();
   }
+});
+
+test("a skill activated before the flow was registered still counts for its step", () => {
+  let clock = 1000;
+  const { db, store } = openStore({ storeOpts: { now: () => clock } });
+  try {
+    const { row: spec } = store.putWorkflowSpec({
+      name: "boundary",
+      steps: [{ id: "build", skills: ["alpha"], together: false, expectTools: ["Edit"] }],
+    });
+    const ref = { runtime: "claude-code", runtimeSessionId: "boundary" };
+    const sessionId = store.upsertSession(ref, 900);
+    db.prepare("INSERT INTO herdr_panes (id, workspace_id, created_ms) VALUES (?, ?, ?)").run("boundary-pane", "ws", 800);
+    db.prepare("INSERT INTO pane_sessions (pane_id, agent_session_value, session_id, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?)")
+      .run("boundary-pane", "boundary", sessionId, 800, 2000);
+    for (const [kind, ts, data] of [
+      ["prompt", 900, {}],
+      ["native_skill", 950, { name: "alpha" }],
+      ["tool_call", 1050, { toolName: "Edit", success: true }],
+      ["prompt", 1200, {}],
+      ["native_skill", 1300, { name: "omega" }],
+    ]) {
+      store.append({ id: `${kind}-${ts}`, kind, ts, source: "otel", ref, data, turnKey: "turn-1" }, { sessionId, method: "runtime_id" });
+    }
+    const { flow } = store.createFlow({ workspaceId: "ws", specId: spec.id });
+    store.mapFlowStep(flow.id, "boundary-pane", "build");
+    clock = 1100;
+    store.endFlow(flow.id);
+
+    const [build] = compareFlow(store, flow.id).steps;
+    assert.deepEqual(build.usedSkills, ["alpha"], "alpha was activated at 950, before the flow was registered at 1000, and omega at 1300 is after its end");
+    assert.equal(build.status, "matched");
+    assert.deepEqual(build.missingSkills, []);
+    assert.deepEqual(build.unexpectedTools, []);
+  } finally {
+    store.close();
+  }
+});
+
+test("expectTools takes a list longer than 20 and only refuses an abusive one", async () => {
+  const tools = Array.from({ length: 21 }, (_, i) => `tool${i}`);
+  const ok = await post("/api/workflows", { name: "tools-21", steps: [{ id: "build", skills: [], expectTools: tools }] });
+  assert.equal(ok.status, 201, ok.text);
+  const stored = await get("/api/workflows/tools-21/versions");
+  assert.deepEqual(stored.json[0].steps[0].expectTools, tools);
+
+  const abusive = await post("/api/workflows", {
+    name: "tools-101", steps: [{ id: "build", skills: [], expectTools: Array.from({ length: 101 }, (_, i) => `tool${i}`) }],
+  });
+  assert.equal(abusive.status, 400);
+  assert.match(JSON.stringify(abusive.json.issues), /<=100 items/);
 });

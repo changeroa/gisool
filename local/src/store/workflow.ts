@@ -111,13 +111,14 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       return { endedMs, alreadyEnded: false };
     },
 
+    // A skill a session activated before the flow was registered is still in effect for the work inside it, so pane
+    // usage is scoped by pane membership, not by the activation timestamp; an ended flow stops counting at ended_ms.
     flowPaneUsage(flowId: string): PaneUsageRow[] {
-      const flow = db.prepare("SELECT workspace_id, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowId) as
-        { workspace_id: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
+      const flow = db.prepare("SELECT workspace_id, ended_ms FROM flows WHERE id = ?").get(flowId) as
+        { workspace_id: string | null; ended_ms: number | null } | undefined;
       if (!flow) return [];
       const panes = db.prepare(`SELECT id AS pane_id FROM herdr_panes WHERE workspace_id = ?
         UNION SELECT pane_id FROM flow_steps WHERE flow_id = ? ORDER BY pane_id`).all(flow.workspace_id ?? "", flowId) as { pane_id: string }[];
-      const from = flow.registered_ms ?? 0;
       const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
       const sessionsOf = db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = ? AND session_id IS NOT NULL");
       return panes.map(({ pane_id: paneId }) => {
@@ -125,8 +126,8 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
         if (sessions.length === 0) return { paneId, skills: [], tools: [] };
         const marks = sessions.map(() => "?").join(", ");
         const events = db.prepare(`SELECT kind, skill_uri, data_json FROM events
-          WHERE session_id IN (${marks}) AND kind IN ('load', 'native_skill', 'tool_call') AND ts >= ? AND ts <= ? ORDER BY ts, rowid`)
-          .all(...sessions, from, to) as { kind: string; skill_uri: string | null; data_json: string }[];
+          WHERE session_id IN (${marks}) AND kind IN ('load', 'native_skill', 'tool_call') AND ts <= ? ORDER BY ts, rowid`)
+          .all(...sessions, to) as { kind: string; skill_uri: string | null; data_json: string }[];
         const skills: string[] = [];
         const tools: string[] = [];
         for (const e of events) {
