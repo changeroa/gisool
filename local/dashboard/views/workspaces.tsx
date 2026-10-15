@@ -2,13 +2,15 @@ import { useEffect, useState } from "preact/hooks";
 import type { AttributionShare, SkillSpanUsage } from "../../src/analysis/usage.js";
 import type {
   AutomatedMode, FlowListEntry, FlowReportDto, FlowSpecRef, FlowTree, RuntimeId, SessionTree, SkillSpan, TreePaneLink,
-  TurnFindingDto, TurnTree,
+  TurnFindingDto, TurnTree, AssignedTreeEvent,
 } from "../../src/types.js";
 import type { FlowComparison, StepComparison } from "../../src/workflow/compare.js";
 import { api, type FlowsQuery } from "../api";
 import { installStyles } from "../charts/sankey";
 import { CallList, Tokens, UNKNOWN, callRows, isCall, numberOf, tokenParts } from "../components/calls";
 import { Facts, type Fact } from "../components/facts";
+import { FindingEvidence, UsageEvidence } from "../components/skill-evidence";
+import type { WorkflowSpec } from "../../src/workflow/spec.js";
 import {
   BASIS_LABEL, BASIS_TITLE, FINDING_LABEL, FINDING_TITLE, RUNTIME_LABEL, RUNTIME_MARK, SPAN_ATTRIBUTION_LABEL,
   STEP_STATUS_LABEL, STEP_STATUS_TITLE, buildHash, type Route, type ViewProps,
@@ -65,22 +67,37 @@ export function attributionParts(share: AttributionShare): { key: keyof typeof S
 export type FlowSummary = {
   turns: number; foundViaSearch: number; abstainedTurns: number;
   spans: number; spansActed: number;
-  /** Null unless every span reported its cost, so a partial sum is never read as the flow's price. */
+  /** Null unless every unique model call reported its cost. Span observations are non-additive. */
   costUsd: number | null;
 };
 
-export function flowSummary(report: Pick<FlowReportDto, "finding" | "usage">): FlowSummary {
+export function flowSummary(report: Pick<FlowReportDto, "finding" | "usage" | "tree" | "flow">): FlowSummary {
   const { labels, turns, abstainedTurns } = report.finding.aggregate;
   const spans = report.usage.sessions.flatMap((session) => session.spans);
-  const costs = spans.map((span) => span.costUsd);
-  const known = costs.filter((cost): cost is number => cost !== null);
+  const sessions = new Map((report.tree.sessions ?? []).map((session) => [session.id, session]));
+  for (const tab of report.tree.tabs) for (const pane of tab.panes) {
+    for (const link of pane.sessions) if (link.session) sessions.set(link.session.id, link.session);
+  }
+  const costs = new Map<string, number | undefined>();
+  for (const session of sessions.values()) {
+    for (const event of [...session.turns.flatMap((turn) => turn.events), ...session.unassignedEvents]) {
+      if (event.kind !== "llm_call") continue;
+      if (report.flow?.registeredMs !== null && report.flow?.registeredMs !== undefined && event.ts < report.flow.registeredMs) continue;
+      if (report.flow?.endedMs !== null && report.flow?.endedMs !== undefined && event.ts > report.flow.endedMs) continue;
+      const key = JSON.stringify([session.id, event.callId ?? event.id]);
+      const cost = numberOf(event.data.costUsd);
+      // Repeated observations cannot hide an unknown measurement.
+      costs.set(key, costs.has(key) && costs.get(key) === undefined ? undefined : cost);
+    }
+  }
+  const known = [...costs.values()].filter((cost): cost is number => cost !== undefined);
   return {
     turns,
     foundViaSearch: labels.found_top1 + labels.found_lower,
     abstainedTurns,
     spans: spans.length,
     spansActed: spans.filter((span) => span.followThrough > 0).length,
-    costUsd: known.length === costs.length && known.length > 0 ? known.reduce((sum, cost) => sum + cost, 0) : null,
+    costUsd: known.length === costs.size && known.length > 0 ? known.reduce((sum, cost) => sum + cost, 0) : null,
   };
 }
 
@@ -91,7 +108,7 @@ export function summaryFacts(summary: FlowSummary): Fact[] {
     { key: "spans", acted: summary.spansActed, total: summary.spans },
   ];
   if (summary.abstainedTurns > 0) facts.push({ key: "abstained", value: summary.abstainedTurns });
-  facts.push({ key: "cost", value: summary.spans === 0 ? null : summary.costUsd });
+  facts.push({ key: "cost", value: summary.costUsd });
   return facts;
 }
 
@@ -116,6 +133,13 @@ export function flowsQuery(route: Route): FlowsQuery {
 
 export function turnsOpen(count: number): boolean {
   return count <= TURNS_OPEN_MAX;
+}
+
+function sessionInWindow(session: SessionTree, flow: FlowReportDto["flow"]): boolean {
+  const start = flow?.registeredMs;
+  const end = flow?.endedMs;
+  return start == null || [...session.turns.flatMap((turn) => turn.events), ...session.unassignedEvents]
+    .some((event) => event.ts >= start && (end == null || event.ts <= end));
 }
 
 /** Per-turn finding and per-span usage, keyed the way the tree is walked. */
@@ -291,13 +315,16 @@ export function WorkspacesView({ route, navigate, live }: ViewProps) {
   );
 }
 
-function StepRow({ step }: { step: StepComparison }) {
+export function StepRow({ step, specStep }: { step: StepComparison; specStep?: WorkflowSpec["steps"][number] }) {
   const used = new Set(step.usedSkills);
   const intended = new Set(step.intendedSkills);
   return (
     <li class="step" data-step={step.stepId} data-status={step.status}>
       <div class="step__head">
         <span class="step__id">{step.stepId}</span>
+        <span class="tag" data-skill-mode={specStep ? specStep.together ? "together" : "alternatives" : "unknown"}>
+          {specStep ? specStep.together ? "together (all required)" : "alternatives (any one)" : "skill matching mode unavailable"}
+        </span>
         <span class={`badge badge--${step.status}`} title={STEP_STATUS_TITLE[step.status]}>{STEP_STATUS_LABEL[step.status]}</span>
         <span class="dim">{step.panes.length === 0 ? "no pane mapped" : step.panes.join(", ")}</span>
       </div>
@@ -331,12 +358,13 @@ function StepRow({ step }: { step: StepComparison }) {
   );
 }
 
-function Steps({ comparison }: { comparison: FlowComparison }) {
+function Steps({ comparison, specSteps, specError }: { comparison: FlowComparison; specSteps: WorkflowSpec["steps"]; specError: string | undefined }) {
   return (
     <section class="card ws__block" aria-labelledby="ws-steps">
       <h2 class="ws__h" id="ws-steps">Steps</h2>
+      {specError && <p class="notice" role="alert">Could not read step matching modes: {specError}</p>}
       <ol class="steps">
-        {comparison.steps.map((step) => <StepRow key={step.stepId} step={step} />)}
+        {comparison.steps.map((step) => <StepRow key={step.stepId} step={step} specStep={specSteps.find((item) => item.id === step.stepId)} />)}
       </ol>
       {comparison.unplanned.length > 0 && (
         <p class="dim">
@@ -347,7 +375,7 @@ function Steps({ comparison }: { comparison: FlowComparison }) {
   );
 }
 
-function Span({ span, usage }: { span: SkillSpan; usage: SkillSpanUsage | undefined }) {
+export function Span({ span, usage, events = span.events }: { span: SkillSpan; usage: SkillSpanUsage | undefined; events?: readonly AssignedTreeEvent[] }) {
   const rows = callRows(span.events);
   const attribution = usage ? attributionParts(usage.attribution) : [];
   return (
@@ -359,19 +387,21 @@ function Span({ span, usage }: { span: SkillSpan; usage: SkillSpanUsage | undefi
           : attribution.map((part) => <span key={part.key} class="tag" title={part.title}>{part.label} {part.value}</span>)}
       </div>
       <Facts facts={spanFacts(span, usage, rows.length)} className="facts span__facts" />
+      {usage && usage.attribution.coActive > 0 && <p class="dim" data-shared-cost="true">Shared cost observation - co-active skills see the same calls; not additive billing.</p>}
       <p class="span__tokens"><Tokens parts={tokenParts(usage?.tokens ?? [])} /></p>
+      {usage && <UsageEvidence events={events} usage={usage} />}
       <CallList rows={rows} />
     </li>
   );
 }
 
-function Turn({ turn, index, finding, usageBySpan, open }: {
+export function Turn({ turn, index, finding, usageBySpan, open }: {
   turn: TurnTree; index: number; finding: TurnFindingDto | undefined; usageBySpan: Map<string, SkillSpanUsage>; open: boolean;
 }) {
   const calls = turn.events.filter(isCall).length;
   return (
     <li>
-      <details class="turn" open={open} data-turn={turn.id}>
+      <details class="turn" id={`turn-${turn.id}`} open={open} data-turn={turn.id}>
         <summary class="turn__sum">
           <Chevron />
           <span class="turn__n">Turn {index + 1}</span>
@@ -380,11 +410,12 @@ function Turn({ turn, index, finding, usageBySpan, open }: {
           {finding && <span class="tag" title={FINDING_TITLE[finding.label]} data-finding={finding.label}>{FINDING_LABEL[finding.label]}</span>}
           <span class="turn__meta">{turn.skillSpans.length} {turn.skillSpans.length === 1 ? "skill span" : "skill spans"}</span>
         </summary>
+        {finding && <FindingEvidence finding={finding} />}
         {turn.skillSpans.length === 0 ? (
           <p class="dim turn__none">No skill was active in this turn{calls > 0 ? `; ${calls} ${calls === 1 ? "call" : "calls"} ran without one` : ""}.</p>
         ) : (
           <ul class="spans">
-            {turn.skillSpans.map((span) => <Span key={span.id} span={span} usage={usageBySpan.get(span.id)} />)}
+            {turn.skillSpans.map((span) => <Span key={span.id} span={span} usage={usageBySpan.get(span.id)} events={turn.events} />)}
           </ul>
         )}
       </details>
@@ -392,11 +423,14 @@ function Turn({ turn, index, finding, usageBySpan, open }: {
   );
 }
 
-function Session({ link, session, route, findings, usageBySpan }: {
+export function Session({ link, session, route, findings, usageBySpan, flow, paneClosed = false, newerSession = false }: {
   link?: TreePaneLink & { basis: "reported" | "inferred" }; session: SessionTree; route: Route;
   findings: Map<string, TurnFindingDto>; usageBySpan: Map<string, SkillSpanUsage>;
+  flow?: FlowReportDto["flow"]; paneClosed?: boolean; newerSession?: boolean;
 }) {
   const open = turnsOpen(session.turns.length);
+  const outside = !sessionInWindow(session, flow ?? null);
+  const lifecycle = session.endedAt !== null ? "ended" : paneClosed || newerSession || flow?.endedMs != null ? "end_not_observed" : "in_progress";
   return (
     <article class="sess" data-session={session.id}>
       <header class="sess__head">
@@ -407,6 +441,8 @@ function Session({ link, session, route, findings, usageBySpan }: {
           {link?.basis ?? "outside herdr"}
         </span>
         <span class="sess__meta">{session.turns.length} {session.turns.length === 1 ? "turn" : "turns"}</span>
+        <span class="tag" data-session-status={lifecycle}>{lifecycle === "ended" ? "ended" : lifecycle === "end_not_observed" ? "end not observed" : "in progress"}</span>
+        {outside && <span class="tag" data-session-window="outside" title="Pane history outside this flow's window, not included in step results">outside flow window</span>}
       </header>
       {session.turns.length === 0
         ? <p class="dim">No turn was recorded for this session.</p>
@@ -421,8 +457,9 @@ function Session({ link, session, route, findings, usageBySpan }: {
   );
 }
 
-function Tree({ tree, route, findings, usageBySpan, filtered }: {
+function Tree({ tree, route, findings, usageBySpan, filtered, flow }: {
   tree: FlowTree; route: Route; findings: Map<string, TurnFindingDto>; usageBySpan: Map<string, SkillSpanUsage>; filtered: boolean;
+  flow: FlowReportDto["flow"];
 }) {
   if (tree.sessions !== undefined) return (
     <section class="card ws__block" aria-labelledby="ws-sessions">
@@ -469,7 +506,9 @@ function Tree({ tree, route, findings, usageBySpan, filtered }: {
                                 Agent session <code class="cmd">{link.agentSessionValue}</code> is not matched to a gisool session yet.
                               </p>
                             )
-                            : <Session key={link.session.id} link={link} session={link.session} route={route} findings={findings} usageBySpan={usageBySpan} />
+                            : <Session key={link.session.id} link={link} session={link.session} route={route} findings={findings} usageBySpan={usageBySpan}
+                              flow={flow} paneClosed={pane.closedMs !== null}
+                              newerSession={pane.sessions.some((other) => other.session !== null && other.session.startedAt > (link.session?.startedAt ?? Infinity))} />
                         ))}
                       </div>
                     </details>
@@ -484,8 +523,10 @@ function Tree({ tree, route, findings, usageBySpan, filtered }: {
   );
 }
 
-function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; backHref: string; onRefresh: () => void; busy: boolean }) {
+export function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; backHref: string; onRefresh: () => void; busy: boolean }) {
   const panes = report.tree.tabs.reduce((n, tab) => n + tab.panes.length, 0);
+  const history = report.tree.tabs.some((tab) => tab.panes.some((pane) => pane.sessions.some((link) =>
+    link.session !== null && !sessionInWindow(link.session, report.flow))));
   return (
     <header class="ws__head card">
       <a class="ws__back" href={backHref}>
@@ -522,6 +563,7 @@ function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; 
         </div>
       </dl>
       <Facts facts={summaryFacts(flowSummary(report))} className="facts ws__counts" />
+      {history && <p class="dim" data-pane-history="true">Turn and session counts include pane history. Step results and unique-call cost cover only this flow's window; outside sessions are labelled below.</p>}
       <div class="ws__actions">
         <span class="dim">as of {clockFmt.format(report.generatedAt)}</span>
         <button type="button" class="btn" onClick={onRefresh} disabled={busy}>{busy ? "Reading\u2026" : "Refresh"}</button>
@@ -545,10 +587,14 @@ export function WorkspaceView({ route }: ViewProps) {
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const [busy, setBusy] = useState(true);
+  const [specSteps, setSpecSteps] = useState<WorkflowSpec["steps"]>([]);
+  const [specError, setSpecError] = useState<string>();
 
   useEffect(() => {
     setReport(undefined);
     setError(undefined);
+    setSpecSteps([]);
+    setSpecError(undefined);
   }, [flowId, queryKey]);
 
   useEffect(() => {
@@ -560,6 +606,20 @@ export function WorkspaceView({ route }: ViewProps) {
         setReport(dto);
         setError(undefined);
         setBusy(false);
+        if (dto.spec) {
+          const spec = dto.spec;
+          api.workflowVersions(spec.name).then((versions) => {
+            if (cancelled) return;
+            const version = versions.find((item) => item.version === spec.version);
+            if (version) {
+              setSpecSteps(version.steps);
+              setSpecError(undefined);
+            }
+            else setSpecError("registered spec version not returned");
+          }).catch((err: unknown) => {
+            if (!cancelled) setSpecError(err instanceof Error ? err.message : String(err));
+          });
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -583,8 +643,8 @@ export function WorkspaceView({ route }: ViewProps) {
   return (
     <section class="ws" aria-busy="false">
       <Header report={report} backHref={backHref} onRefresh={() => setRefresh((n) => n + 1)} busy={busy} />
-      {report.comparison && <Steps comparison={report.comparison} />}
-      <Tree tree={report.tree} route={route} findings={findings} usageBySpan={usageBySpan} filtered={report.excludedSessions.length > 0} />
+      {report.comparison && <Steps comparison={report.comparison} specSteps={specSteps} specError={specError} />}
+      <Tree tree={report.tree} route={route} findings={findings} usageBySpan={usageBySpan} filtered={report.excludedSessions.length > 0} flow={report.flow} />
     </section>
   );
 }
@@ -602,7 +662,7 @@ const WORKSPACES_CSS = `
 .ws__meta dd { margin: 0; color: var(--ink); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .ws__id { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-2); }
 .ws__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); }
-.ws__block { padding: var(--s-4) var(--s-5); display: grid; gap: var(--s-3); }
+.ws__block { padding: var(--s-4) var(--s-5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
 .ws__h { margin: 0; color: var(--ink-3); font-size: var(--fs-cap); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
 
 .wslist { list-style: none; margin: 0; padding: 0; }
@@ -659,6 +719,18 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .span__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .span__name { color: var(--ink); font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
 .span__tokens { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: 0; }
+.evidence { min-width: 0; margin: var(--s-2) 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.evidence > summary { cursor: pointer; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-2); border-radius: var(--r-sm); }
+.evidence > summary:hover { background: var(--wash); }
+.evidence__body { display: grid; gap: var(--s-2); padding: var(--s-2); }
+.evidence__body p, .evidence__body h3 { margin: 0; }
+.evidence__body h3 { font-size: var(--fs-sm); font-weight: 600; }
+.evidence__body ul, .evidence__body ol { margin: 0; padding-inline-start: var(--s-5); display: grid; gap: var(--s-2); }
+.evidence__body code { display: block; font-family: var(--font-mono); font-size: var(--fs-cap); white-space: pre-wrap; overflow-wrap: anywhere; }
+.evidence__body a { display: inline-block; padding-block: var(--s-3); }
+.turn { scroll-margin-top: var(--s-12); }
+/* Nested tree tracks must shrink with the card, not with the longest metadata label. */
+.tabsets, .panes, .turns, .spans, .pane__body, .sess, .evidence__body { grid-template-columns: minmax(0, 1fr); }
 
 @media (max-width: 639.98px) {
   .ws__head, .ws__block { padding: var(--s-4); }
