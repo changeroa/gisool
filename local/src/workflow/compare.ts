@@ -80,11 +80,12 @@ export function compare(input: CompareInput): FlowComparison {
  * Store-backed input for compare(). Used skills come from the gisool `load` and `native_skill` events of the
  * sessions linked to each pane; skill spans (todo 6) replace this source without changing the comparison.
  * Returns undefined when the flow is unknown or was registered without a spec.
+ * `excludeSessions` leaves named sessions out, so a caller that hides automated sessions compares without them too.
  */
-export function compareFlow(store: Store, flowId: string): FlowComparison | undefined {
+export function compareFlow(store: Store, flowId: string, opts: { excludeSessions?: readonly string[] } = {}): FlowComparison | undefined {
   const flow = store.getFlow(flowId);
   if (!flow?.spec) return undefined;
-  const usage = store.flowPaneUsage(flowId);
+  const usage = store.flowPaneUsage(flowId, opts);
   const paneSkillUse: Record<string, string[]> = {};
   const paneTools: Record<string, string[]> = {};
   for (const row of usage) {

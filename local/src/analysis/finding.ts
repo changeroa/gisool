@@ -168,7 +168,7 @@ export function analyzeSession(tree: SessionTree, digestOf?: SkillDigestLookup):
 
 /** The SKILL.md digest of what a load actually read, taken from the resource list stored with that load. It is the
  * same digest a candidate carries, so a load of an identical copy under another uri is recognised as that skill. */
-function loadedDigests(store: Pick<Store, "getLoad">): SkillDigestLookup {
+export function loadedDigests(store: Pick<Store, "getLoad">): SkillDigestLookup {
   return ({ uri, loadId }) => (uri === null || loadId === null
     ? undefined
     : store.getLoad(loadId)?.resources.find((resource) => resource.uri === uri)?.digest);

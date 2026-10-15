@@ -5,6 +5,7 @@ import { ingestHook, ingestOtlp, type IngestDeps } from "../ingest/pipeline.js";
 import { isRuntimeId, RUNTIME_IDS } from "../ingest/runtimes.js";
 import type { AdoptionState, Catalog, Filter, RuntimeId, Store } from "../types.js";
 import { registerWorkflowRoutes } from "../workflow/routes.js";
+import { registerFlowRoutes } from "./flows.js";
 import { deny } from "./security.js";
 import type { SseHub } from "./sse.js";
 
@@ -194,4 +195,5 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/events/stream", (req, res) => deps.sse.handler(req, res));
 
   registerWorkflowRoutes(app, { store, log });
+  registerFlowRoutes(app, { store, log });
 }

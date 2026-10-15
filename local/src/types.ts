@@ -1,3 +1,5 @@
+import type { FlowUsage, SessionUsage, SkillUsageAggregate } from "./analysis/usage.js";
+import type { FlowComparison } from "./workflow/compare.js";
 import type { WorkflowSpec } from "./workflow/spec.js";
 
 export type SkillUri = string;   // "skill://local/<rootId>/<dir>/SKILL.md"
@@ -105,7 +107,12 @@ export interface Store {
   flowSteps(flowId: string): FlowStepRow[];
   mapFlowStep(flowId: string, paneId: string, stepId: string): { created: boolean };
   endFlow(flowId: string): { endedMs: number; alreadyEnded: boolean } | undefined;
-  flowPaneUsage(flowId: string): PaneUsageRow[];
+  // excludeSessions leaves those sessions out of the pane usage, so a filtered report compares against what it shows.
+  flowPaneUsage(flowId: string, opts?: { excludeSessions?: readonly string[] }): PaneUsageRow[];
+  // Read-API list: registered flows plus the herdr workspaces that have none, newest first, one page at a time.
+  listFlows(q: FlowListQuery): FlowListRow[];
+  // Automation id per session id for the ids given, automated sessions only (rules in store/automation.ts).
+  sessionAutomation(ids: readonly string[]): Record<string, string>;
   close(): void;
   treeSessionData(sessionId: string): TreeSessionData | undefined;
   treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
@@ -183,3 +190,57 @@ export type SessionFinding = { readonly sessionId: string; readonly turns: reado
 export type FlowFinding = { readonly id: string; readonly sessions: readonly SessionFinding[]; readonly aggregate: FindingAggregate };
 // Resolves the SKILL.md digest of a skill a turn used, so a load of an identical copy under another uri is recognised.
 export type SkillDigestLookup = (used: { readonly uri: SkillUri | null; readonly loadId: string | null }) => string | undefined;
+
+// --- Read APIs (api/flows.ts) ------------------------------------------------------------------------------
+// Which sessions a response counted: "exclude" (the default) leaves out the sessions store/automation.ts classifies
+// as machine-driven, "include" keeps them, "only" keeps nothing else. Every response says which one it used.
+export type AutomatedMode = "exclude" | "include" | "only";
+export type FlowSpecRef = { readonly id: string; readonly name: string; readonly version: number };
+// One entry of the flows list as the store reads it: a registered flow, or a herdr workspace with no registered flow,
+// which acts as an implicit flow. orderMs is the sort and cursor key (registration, else workspace creation, 0 when
+// neither was reported); startedMs reports that unknown as null instead.
+export type FlowListRow = { readonly id: string; readonly kind: "flow" | "workspace"; readonly workspaceId: string;
+  readonly tabId: string | null; readonly label: string | null; readonly orderMs: number;
+  readonly startedMs: number | null; readonly endedMs: number | null; readonly spec: FlowSpecRef | null;
+  readonly paneIds: readonly string[];
+  readonly links: readonly { readonly paneId: string; readonly sessionId: string | null; readonly source: string | null }[] };
+// A page of the flows list: newest first, at most `limit` rows, starting after `cursor` when one is given.
+export type FlowListQuery = { readonly from?: number; readonly to?: number; readonly limit: number;
+  readonly cursor?: { readonly orderMs: number; readonly id: string } };
+// id addresses the entry in GET /api/flows/:id: a registered flow by its own id, an implicit workspace as "ws:<id>".
+// attribution counts the pane-to-session links behind `sessionIds`: herdr reported them, gisool inferred them from
+// cwd and time, or the pane has an agent session gisool has not matched to a session yet (unlinked).
+export type FlowListEntry = { readonly id: string; readonly kind: "flow" | "workspace"; readonly workspaceId: string;
+  readonly tabId: string | null; readonly label: string | null; readonly registered: boolean;
+  readonly spec: FlowSpecRef | null; readonly startedMs: number | null; readonly endedMs: number | null;
+  readonly paneIds: readonly string[]; readonly sessionIds: readonly string[];
+  readonly counts: { readonly panes: number; readonly sessions: number };
+  readonly attribution: { readonly reported: number; readonly inferred: number; readonly unlinked: number } };
+export type FlowListDto = { readonly generatedAt: number; readonly from: number | null; readonly to: number | null;
+  readonly limit: number; readonly automated: AutomatedMode; readonly flows: readonly FlowListEntry[];
+  // The cursor that returns the next page, or null when this page ended the list.
+  readonly nextCursor: string | null };
+// The API name of TurnFinding.loadedSkills: a turn's skill uses, each one a gisool load or a native activation
+// (via "native"), so a natively used skill is never reported as a loaded one.
+export type TurnFindingDto = Omit<TurnFinding, "loadedSkills"> & { readonly usedSkills: readonly FindingUsedSkill[] };
+export type SessionFindingDto = { readonly sessionId: string; readonly turns: readonly TurnFindingDto[]; readonly aggregate: FindingAggregate };
+export type FlowFindingDto = { readonly id: string; readonly sessions: readonly SessionFindingDto[]; readonly aggregate: FindingAggregate };
+// A session the automated filter left out of a flow report, with the automation rule that classified it.
+export type ExcludedSession = { readonly sessionId: string; readonly reason: string };
+// GET /api/flows/:id. `flow` is null for an implicit workspace (nothing was registered, so there is no registration
+// time); `comparison` is null unless a flow with a spec is registered.
+export type FlowReportDto = { readonly generatedAt: number; readonly id: string; readonly kind: "flow" | "workspace";
+  readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
+  readonly flow: { readonly registeredMs: number | null; readonly endedMs: number | null; readonly tabId: string | null } | null;
+  readonly spec: FlowSpecRef | null; readonly automated: AutomatedMode; readonly tree: FlowTree;
+  readonly finding: FlowFindingDto; readonly usage: FlowUsage; readonly comparison: FlowComparison | null;
+  readonly excludedSessions: readonly ExcludedSession[] };
+// GET /api/sessions/:id/skill-report. `automated` carries the automation rule id when a harness drove the session.
+export type SessionSkillReportDto = { readonly generatedAt: number; readonly sessionId: string; readonly runtime: RuntimeId;
+  readonly startedAt: number; readonly endedAt: number | null; readonly automated: string | null;
+  readonly tree: SessionTree; readonly finding: SessionFindingDto; readonly usage: SessionUsage };
+// GET /api/skills/usage. `skills` covers every session of the range; `sessions` is the detail list `detailLimit`
+// bounds, and `truncated` says it was shortened.
+export type SkillsUsageDto = { readonly generatedAt: number; readonly from: number; readonly to: number;
+  readonly automated: AutomatedMode; readonly detailLimit: number; readonly sessionCount: number;
+  readonly truncated: boolean; readonly skills: readonly SkillUsageAggregate[]; readonly sessions: readonly SessionUsage[] };

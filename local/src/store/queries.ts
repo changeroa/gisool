@@ -133,7 +133,14 @@ function shortDigest(d: unknown): string {
   return s.replace(/^sha256[:-]/, "").slice(0, 12);
 }
 
-type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats" | "treeSessionData" | "treeFlowData" | "outsideHerdrSessionIds">;
+type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats" | "treeSessionData" | "treeFlowData"
+  | "outsideHerdrSessionIds" | "sessionAutomation">;
+
+/** The automation id of a session, or undefined when a person drove it: the rule matching its first prompt, else
+ * NO_ACTIVITY for a session that showed no prompt and no skill activity at all (e.g. a thread a daemon reopened). */
+function automationIdOf(firstPrompt: string | undefined, active: boolean): string | undefined {
+  return automationOf(firstPrompt) ?? (active ? undefined : NO_ACTIVITY);
+}
 
 export function createQueries(ctx: StoreCtx): Queries {
   const { db } = ctx;
@@ -195,9 +202,9 @@ export function createQueries(ctx: StoreCtx): Queries {
         ...(firstTop !== undefined ? { firstTop } : {}),
       };
       // A session with no prompt and no skill activity (e.g. a thread the Codex daemon reopened) tells nothing about usage.
-      const idle = loaded.length === 0 && exposed.length === 0
-        && !evs.some((e) => e.kind === "prompt" || e.kind === "native_skill" || e.kind === "read_file");
-      const automated = automationOf(info.firstPrompt) ?? (idle ? NO_ACTIVITY : undefined);
+      const active = loaded.length > 0 || exposed.length > 0
+        || evs.some((e) => e.kind === "prompt" || e.kind === "native_skill" || e.kind === "read_file");
+      const automated = automationIdOf(info.firstPrompt, active);
       if (automated !== undefined) info.automated = automated;
       if (f.automated === undefined && automated !== undefined) continue;
       if (f.automated === "only" && automated === undefined) continue;
@@ -272,6 +279,38 @@ export function createQueries(ctx: StoreCtx): Queries {
         WHERE p.workspace_id = ? AND (? IS NULL OR p.tab_id = ?)
         ORDER BY ps.first_seen_ms, ps.agent_session_value`).all(workspaceId, tabId, tabId) as TreePaneLink[];
       return { id: flow?.id ?? workspaceId, workspaceId, label: flow?.label ?? workspace.label, registered: flow !== undefined, tabs, panes, links };
+    },
+
+    /**
+     * The automation id of each automated session among the ids given; a session a person drove is absent from the
+     * result. The read APIs filter whole flows with it without loading every session of a range, so it reads the
+     * same columns loadSessions classifies on, bounded by the id list and chunked under SQLite's parameter limit.
+     */
+    sessionAutomation(ids) {
+      const out: Record<string, string> = {};
+      const unique = [...new Set(ids)];
+      for (let i = 0; i < unique.length; i += 400) {
+        const chunk = unique.slice(i, i + 400);
+        const holes = chunk.map(() => "?").join(",");
+        const rows = db.prepare(`SELECT id, first_prompt FROM sessions WHERE id IN (${holes})`).all(...chunk) as
+          { id: string; first_prompt: string | null }[];
+        const evs = db.prepare(`SELECT session_id, kind, skill_uri, data_json FROM events
+          WHERE session_id IN (${holes}) AND kind IN ('prompt', 'native_skill', 'read_file', 'load', 'search')`).all(...chunk) as
+          { session_id: string; kind: EventKind; skill_uri: string | null; data_json: string }[];
+        const active = new Set<string>();
+        for (const e of evs) {
+          const data = e.kind === "load" || e.kind === "search" ? parseJson<Record<string, unknown>>(e.data_json, {}) : {};
+          const counts = e.kind === "search" ? candidatesOf(data).length > 0
+            : e.kind === "load" ? e.skill_uri !== null || typeof data.uri === "string"
+            : true;
+          if (counts) active.add(e.session_id);
+        }
+        for (const row of rows) {
+          const automated = automationIdOf(row.first_prompt ?? undefined, active.has(row.id));
+          if (automated !== undefined) out[row.id] = automated;
+        }
+      }
+      return out;
     },
 
     outsideHerdrSessionIds({ from, to, limit }) {
