@@ -31,6 +31,17 @@ function flowOf(row: FlowDbRow): FlowRow {
   };
 }
 
+function skillNameOf(kind: string, skillUri: string | null, data: Record<string, unknown>): string | undefined {
+  if (kind === "native_skill" && typeof data.name === "string" && data.name !== "") return data.name;
+  const uri = skillUri ?? (typeof data.uri === "string" ? data.uri : undefined);
+  return uri === undefined ? undefined : nameFromUri(uri);
+}
+
+function toolNameOf(data: Record<string, unknown>): string | undefined {
+  const tool = [data.name, data.tool, data.toolName].find((v) => typeof v === "string" && v !== "");
+  return typeof tool === "string" ? tool : undefined;
+}
+
 const FLOW_COLUMNS = `f.id, f.workspace_id, f.tab_id, f.label, f.registered_ms, f.ended_ms, f.spec_id,
   s.name AS spec_name, s.version AS spec_version, s.digest AS spec_digest, s.body_json AS spec_body, s.created_ms AS spec_created_ms`;
 
@@ -111,37 +122,42 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       return { endedMs, alreadyEnded: false };
     },
 
-    // A skill a session activated before the flow was registered is still in effect for the work inside it, so pane
-    // usage is scoped by pane membership, not by the activation timestamp; an ended flow stops counting at ended_ms.
+    /**
+     * A skill a session activated before the flow was registered is still in effect for the work inside it, so
+     * activations are counted from the session's start, not from the registration. A pane the orchestrator reuses
+     * must not inherit finished work, so counting starts after the last flow this pane finished before this one was
+     * registered (exclusive, so an event at that end belongs to the earlier flow only). A tool call is a point in
+     * time rather than a lasting state, so tool calls count only inside this flow's own window.
+     */
     flowPaneUsage(flowId: string): PaneUsageRow[] {
-      const flow = db.prepare("SELECT workspace_id, ended_ms FROM flows WHERE id = ?").get(flowId) as
-        { workspace_id: string | null; ended_ms: number | null } | undefined;
+      const flow = db.prepare("SELECT workspace_id, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowId) as
+        { workspace_id: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
       if (!flow) return [];
       const panes = db.prepare(`SELECT id AS pane_id FROM herdr_panes WHERE workspace_id = ?
         UNION SELECT pane_id FROM flow_steps WHERE flow_id = ? ORDER BY pane_id`).all(flow.workspace_id ?? "", flowId) as { pane_id: string }[];
+      const registeredMs = flow.registered_ms ?? 0;
       const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
-      const sessionsOf = db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = ? AND session_id IS NOT NULL");
+      const priorEndOf = db.prepare(`SELECT MAX(f.ended_ms) AS prior_end FROM flows f JOIN flow_steps fs ON fs.flow_id = f.id
+        WHERE fs.pane_id = ? AND f.id <> ? AND f.ended_ms IS NOT NULL AND f.ended_ms <= ?`);
+      const sessionsOf = db.prepare(`SELECT ps.session_id AS id, s.started_at AS started_at FROM pane_sessions ps
+        JOIN sessions s ON s.id = ps.session_id WHERE ps.pane_id = ? ORDER BY s.started_at, ps.session_id`);
+      const activations = db.prepare(`SELECT kind, skill_uri, data_json FROM events
+        WHERE session_id = ? AND kind IN ('load', 'native_skill') AND ts >= ? AND ts > ? AND ts <= ? ORDER BY ts, rowid`);
+      const toolCalls = db.prepare(`SELECT data_json FROM events
+        WHERE session_id = ? AND kind = 'tool_call' AND ts >= ? AND ts <= ? ORDER BY ts, rowid`);
       return panes.map(({ pane_id: paneId }) => {
-        const sessions = (sessionsOf.all(paneId) as { session_id: string }[]).map((r) => r.session_id);
-        if (sessions.length === 0) return { paneId, skills: [], tools: [] };
-        const marks = sessions.map(() => "?").join(", ");
-        const events = db.prepare(`SELECT kind, skill_uri, data_json FROM events
-          WHERE session_id IN (${marks}) AND kind IN ('load', 'native_skill', 'tool_call') AND ts <= ? ORDER BY ts, rowid`)
-          .all(...sessions, to) as { kind: string; skill_uri: string | null; data_json: string }[];
+        const priorEnd = (priorEndOf.get(paneId, flowId, registeredMs) as { prior_end: number | null }).prior_end ?? Number.MIN_SAFE_INTEGER;
         const skills: string[] = [];
         const tools: string[] = [];
-        for (const e of events) {
-          const data = parseJson<Record<string, unknown>>(e.data_json, {});
-          if (e.kind === "tool_call") {
-            const tool = [data.name, data.tool, data.toolName].find((v) => typeof v === "string" && v !== "");
-            if (typeof tool === "string" && !tools.includes(tool)) tools.push(tool);
-            continue;
+        for (const session of sessionsOf.all(paneId) as { id: string; started_at: number }[]) {
+          for (const e of activations.all(session.id, session.started_at, priorEnd, to) as { kind: string; skill_uri: string | null; data_json: string }[]) {
+            const name = skillNameOf(e.kind, e.skill_uri, parseJson<Record<string, unknown>>(e.data_json, {}));
+            if (name !== undefined && !skills.includes(name)) skills.push(name);
           }
-          const uri = e.skill_uri ?? (typeof data.uri === "string" ? data.uri : undefined);
-          const name = e.kind === "native_skill" && typeof data.name === "string" && data.name !== ""
-            ? data.name
-            : uri !== undefined ? nameFromUri(uri) : undefined;
-          if (name !== undefined && !skills.includes(name)) skills.push(name);
+          for (const e of toolCalls.all(session.id, registeredMs, to) as { data_json: string }[]) {
+            const tool = toolNameOf(parseJson<Record<string, unknown>>(e.data_json, {}));
+            if (tool !== undefined && !tools.includes(tool)) tools.push(tool);
+          }
         }
         return { paneId, skills, tools };
       });

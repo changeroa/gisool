@@ -292,14 +292,14 @@ test("a skill activated before the flow was registered still counts for its step
     db.prepare("INSERT INTO herdr_panes (id, workspace_id, created_ms) VALUES (?, ?, ?)").run("boundary-pane", "ws", 800);
     db.prepare("INSERT INTO pane_sessions (pane_id, agent_session_value, session_id, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?)")
       .run("boundary-pane", "boundary", sessionId, 800, 2000);
-    for (const [kind, ts, data] of [
-      ["prompt", 900, {}],
-      ["native_skill", 950, { name: "alpha" }],
-      ["tool_call", 1050, { toolName: "Edit", success: true }],
-      ["prompt", 1200, {}],
-      ["native_skill", 1300, { name: "omega" }],
+    for (const [kind, ts, data, turnKey] of [
+      ["prompt", 900, {}, "turn-1"],
+      ["native_skill", 950, { name: "alpha" }, "turn-1"],
+      ["tool_call", 1050, { toolName: "Edit", success: true }, "turn-1"],
+      ["prompt", 1200, {}, "turn-2"],
+      ["native_skill", 1300, { name: "omega" }, "turn-2"],
     ]) {
-      store.append({ id: `${kind}-${ts}`, kind, ts, source: "otel", ref, data, turnKey: "turn-1" }, { sessionId, method: "runtime_id" });
+      store.append({ id: `${kind}-${ts}`, kind, ts, source: "otel", ref, data, turnKey }, { sessionId, method: "runtime_id" });
     }
     const { flow } = store.createFlow({ workspaceId: "ws", specId: spec.id });
     store.mapFlowStep(flow.id, "boundary-pane", "build");
@@ -316,16 +316,78 @@ test("a skill activated before the flow was registered still counts for its step
   }
 });
 
-test("expectTools takes a list longer than 20 and only refuses an abusive one", async () => {
-  const tools = Array.from({ length: 21 }, (_, i) => `tool${i}`);
-  const ok = await post("/api/workflows", { name: "tools-21", steps: [{ id: "build", skills: [], expectTools: tools }] });
-  assert.equal(ok.status, 201, ok.text);
-  const stored = await get("/api/workflows/tools-21/versions");
-  assert.deepEqual(stored.json[0].steps[0].expectTools, tools);
+test("expectTools has no element count limit and round-trips what it was given", async () => {
+  for (const count of [21, 101, 500]) {
+    const tools = Array.from({ length: count }, (_, i) => `tool${i}`);
+    const name = `tools-${count}`;
+    const created = await post("/api/workflows", { name, steps: [{ id: "build", skills: [], expectTools: tools }] });
+    assert.equal(created.status, 201, `${count} tools: ${created.text}`);
+    const stored = await get(`/api/workflows/${name}/versions`);
+    assert.deepEqual(stored.json[0].steps[0].expectTools, tools, `${count} tools must round-trip unchanged`);
+  }
+});
 
-  const abusive = await post("/api/workflows", {
-    name: "tools-101", steps: [{ id: "build", skills: [], expectTools: Array.from({ length: 101 }, (_, i) => `tool${i}`) }],
-  });
-  assert.equal(abusive.status, 400);
-  assert.match(JSON.stringify(abusive.json.issues), /<=100 items/);
+test("a pane reused by a later flow does not inherit the earlier flow's skills or tools", () => {
+  let clock = 1000;
+  const { db, store } = openStore({ storeOpts: { now: () => clock } });
+  try {
+    const { row: spec } = store.putWorkflowSpec({
+      name: "reuse", steps: [{ id: "build", skills: ["alpha"], together: false, expectTools: ["Edit"] }],
+    });
+    const ref = { runtime: "claude-code", runtimeSessionId: "reuse" };
+    const sessionId = store.upsertSession(ref, 900);
+    db.prepare("INSERT INTO herdr_panes (id, workspace_id, created_ms) VALUES (?, ?, ?)").run("reuse-pane", "ws", 800);
+    db.prepare("INSERT INTO pane_sessions (pane_id, agent_session_value, session_id, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?)")
+      .run("reuse-pane", "reuse", sessionId, 900, 2100);
+    const append = (kind, ts, data, turnKey) =>
+      store.append({ id: `${kind}-${ts}`, kind, ts, source: "otel", ref, data, turnKey }, { sessionId, method: "runtime_id" });
+    const stepOf = (flowId) => compareFlow(store, flowId).steps[0];
+
+    append("prompt", 900, {}, "turn-1");
+    append("native_skill", 950, { name: "alpha" }, "turn-1");
+    append("tool_call", 1050, { toolName: "Edit", success: true }, "turn-1");
+    append("prompt", 1200, {}, "turn-2");
+    const { flow: first } = store.createFlow({ workspaceId: "ws", specId: spec.id });
+    store.mapFlowStep(first.id, "reuse-pane", "build");
+    clock = 1100;
+    store.endFlow(first.id);
+    const firstStep = stepOf(first.id);
+    assert.deepEqual(firstStep.usedSkills, ["alpha"], "alpha was activated at 950, before this flow was registered at 1000");
+    assert.equal(firstStep.status, "matched");
+    assert.deepEqual(firstStep.unexpectedTools, []);
+
+    append("tool_call", 1060, { toolName: "Bash", success: true }, "turn-1");
+    clock = 2000;
+    const { flow: second } = store.createFlow({ workspaceId: "ws", specId: spec.id });
+    store.mapFlowStep(second.id, "reuse-pane", "build");
+    append("tool_call", 2050, { toolName: "Edit", success: true }, "turn-2");
+    clock = 2100;
+    store.endFlow(second.id);
+    const secondStep = stepOf(second.id);
+    assert.deepEqual(secondStep.usedSkills, [], "alpha belongs to the flow that ended at 1100");
+    assert.equal(secondStep.status, "no_skill_used");
+    assert.deepEqual(secondStep.missingSkills, ["alpha"]);
+    assert.deepEqual(secondStep.unexpectedTools, [], "Bash at 1060 ran inside the earlier flow's window");
+
+    const { row: newer } = store.putWorkflowSpec({
+      name: "reuse", steps: [{ id: "build", skills: ["alpha", "beta"], together: true, expectTools: ["Edit"] }],
+    });
+    append("prompt", 2200, {}, "turn-3");
+    append("native_skill", 2950, { name: "beta" }, "turn-3");
+    clock = 3000;
+    const { flow: third } = store.createFlow({ workspaceId: "ws", specId: newer.id });
+    store.mapFlowStep(third.id, "reuse-pane", "build");
+    append("tool_call", 3050, { toolName: "Edit", success: true }, "turn-3");
+    clock = 3100;
+    store.endFlow(third.id);
+    const thirdStep = stepOf(third.id);
+    assert.deepEqual(thirdStep.usedSkills, ["beta"], "beta was activated at 2950, after the previous flow ended at 2100");
+    assert.equal(thirdStep.status, "partial");
+    assert.deepEqual(thirdStep.missingSkills, ["alpha"]);
+    assert.deepEqual(thirdStep.unexpectedTools, []);
+
+    assert.deepEqual(stepOf(first.id).usedSkills, ["alpha"], "the first flow keeps its own skill after later flows ran");
+  } finally {
+    store.close();
+  }
 });

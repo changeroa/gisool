@@ -100,7 +100,7 @@ export interface Store {
 export type WorkflowSpecRow = { id: string; name: string; version: number; digest: string; createdMs: number; spec: WorkflowSpec };
 export type FlowRow = { id: string; workspaceId: string; tabId?: string; label?: string; registeredMs: number; endedMs?: number; spec?: WorkflowSpecRow };
 export type FlowStepRow = { paneId: string; stepId: string; registeredMs: number };
-// Skills and tools observed in the sessions linked to one pane, up to the flow's end.
+// Skills and tools the sessions linked to one pane showed within one flow (window rule in store/workflow.ts).
 export type PaneUsageRow = { paneId: string; skills: string[]; tools: string[] };
 export type GisoolConfig = { port: number; captureLevel: CaptureLevel; retentionDays: number | null;
   roots: { id: string; path: string }[]; runtimes: Partial<Record<RuntimeId, { enabled: boolean }>> };

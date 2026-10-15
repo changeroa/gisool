@@ -8,8 +8,6 @@ const slug = (max: number) =>
 
 export const MAX_STEPS = 50;
 export const MAX_SKILLS_PER_STEP = 10;
-/** The plan bounds name, steps, skills and doneWhen but not expectTools or single names; these are anti-abuse bounds only. */
-export const MAX_TOOLS_PER_STEP = 100;
 export const MAX_NAME_LENGTH = 128;
 
 export const workflowStepSchema = z.strictObject({
@@ -17,7 +15,8 @@ export const workflowStepSchema = z.strictObject({
   skills: z.array(z.string().min(1).max(MAX_NAME_LENGTH)).max(MAX_SKILLS_PER_STEP),
   /** true: every intended skill is expected in the same step; false: any one of them satisfies it. */
   together: z.boolean().default(false),
-  expectTools: z.array(z.string().min(1).max(MAX_NAME_LENGTH)).max(MAX_TOOLS_PER_STEP).default([]),
+  // The plan sets no element count for expectTools; the request body limit is the bound.
+  expectTools: z.array(z.string().min(1).max(MAX_NAME_LENGTH)).default([]),
   doneWhen: z.string().max(500).optional(),
 });
 
