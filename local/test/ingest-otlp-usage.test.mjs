@@ -94,13 +94,17 @@ test("trace() describes model calls and tool runs instead of labelling them a se
   const steps = store.trace(id);
   assert.deepEqual(steps.map((s) => s.kind), ["prompt", "tool_call", "native_skill", "llm_call"]);
   const llm = steps.find((s) => s.kind === "llm_call");
-  assert.equal(llm.summary, "model call: claude-fable-5-1, 26343 tokens");
   assert.equal(llm.detail.kind, "llm_call");
+  assert.equal(llm.detail.model, "claude-fable-5-1");
   assert.equal(llm.detail.costUsd, 0.31913075);
+  const tokens = llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens;
+  assert.equal(tokens, 26343);
+  assert.ok(llm.summary.includes(llm.detail.model) && llm.summary.includes(String(tokens)), llm.summary);
   const call = steps.find((s) => s.kind === "tool_call");
-  assert.equal(call.summary, "tool: Read (4 ms, ok)");
   assert.deepEqual([call.detail.kind, call.detail.toolUseId, call.detail.args], ["tool_call", "toolu_read_1", '{"file_path":"/x/.agents/skills/db-query/SKILL.md"}']);
-  assert.ok(!steps.some((s) => s.summary === "session ended"), "no step is mislabelled");
+  assert.ok(call.summary.includes(call.detail.toolName) && call.summary.includes(String(call.detail.durationMs)), call.summary);
+  // The kind-only fallback branch would describe a step by its kind alone, which is how model calls and tool runs used to render.
+  assert.ok(steps.every((s) => Object.keys(s.detail).length > 1), "no step fell through to the kind-only branch");
 });
 
 test("trace() reports a Codex tool run with its own duration and a failed run as failed", () => {
@@ -114,7 +118,12 @@ test("trace() reports a Codex tool run with its own duration and a failed run as
   record.attributes.find((a) => a.key === "call_id").value = { stringValue: "call_def456" };
   assert.equal(ingestOtlp(failed, deps).status, 200);
   const { id } = db.prepare("SELECT id FROM sessions").get();
-  assert.deepEqual(store.trace(id).map((s) => s.summary), ["tool: exec_command (43 ms, ok)", "tool: exec_command (43 ms, failed)"]);
+  const [okCall, failedCall] = store.trace(id);
+  assert.deepEqual([okCall.detail.success, failedCall.detail.success], [true, false]);
+  assert.equal(okCall.detail.toolName, failedCall.detail.toolName);
+  assert.equal(okCall.detail.durationMs, 43);
+  assert.ok(okCall.summary.includes(okCall.detail.toolName) && okCall.summary.includes(String(okCall.detail.durationMs)), okCall.summary);
+  assert.notEqual(okCall.summary, failedCall.summary, "a failed run must not read like a successful one");
 });
 
 test("capture level metadata keeps tool arguments out of the store while full capture keeps them", () => {

@@ -26,7 +26,7 @@ export const PROMPT_FOLD_CHARS = 600;
 export const SHORT_DIGEST_CHARS = 8;
 export const TOOL_ARGS_PREVIEW_CHARS = 160;
 export type ToolArgs = { captured: true; text: string; truncated: boolean } | { captured: false; length: number };
-export const COST_UNKNOWN = "cost unknown";
+const COST_UNKNOWN = "cost unknown";
 
 export const KIND_LABEL: Record<EventKind, string> = {
   session_start: "Session started",
