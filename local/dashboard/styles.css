@@ -392,6 +392,8 @@ button, input, select { font: inherit; color: inherit; }
   align-items: center;
   gap: var(--s-1);
   height: 18px;
+  max-width: 100%;
+  min-width: 0;
   padding: 0 var(--s-2);
   border: 1px solid var(--line);
   border-radius: var(--r-full);
@@ -401,6 +403,10 @@ button, input, select { font: inherit; color: inherit; }
   font-weight: 600;
   white-space: nowrap;
 }
+
+/* A tag whose name can be long (a 64-character spec): the name truncates, the suffix after it never does. */
+.tag__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tag__suffix { flex: none; color: var(--ink-3); }
 
 .tag--dim { color: var(--ink-3); }
 .tag--ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: transparent; }

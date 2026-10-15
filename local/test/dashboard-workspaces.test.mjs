@@ -21,6 +21,7 @@ async function loadModule(relative) {
 
 const workspaces = await loadModule("dashboard/views/workspaces.tsx");
 const calls = await loadModule("dashboard/components/calls.tsx");
+const factsMod = await loadModule("dashboard/components/facts.tsx");
 const trace = await loadModule("dashboard/views/trace.tsx");
 const state = await loadModule("dashboard/state.ts");
 
@@ -124,24 +125,31 @@ before(async () => {
 });
 after(async () => { await server.stop(); });
 
-test("a list row prints the flow's structure, and an unlabelled workspace falls back to its id", () => {
+test("a list row carries the flow's structure as keyed values, and an unlabelled workspace falls back to its id", () => {
   const entry = list.flows.find((flow) => flow.id === fixture.flowId);
   const solo = list.flows.find((flow) => flow.id === "ws:ws-solo");
   assert.equal(workspaces.flowTitle(entry), entry.label);
   assert.equal(solo.label, null);
   assert.equal(workspaces.flowTitle(solo), "ws-solo");
 
-  assert.equal(workspaces.specLabel(entry.spec), `${entry.spec.name} v${entry.spec.version}`);
-  assert.notEqual(workspaces.specLabel(null), workspaces.specLabel(entry.spec));
+  assert.deepEqual(workspaces.specTagParts(entry.spec), { name: entry.spec.name, version: `v${entry.spec.version}` },
+    "the spec name and its version stay separate so the name can truncate on its own");
+  assert.equal(solo.spec, null);
+  assert.equal(workspaces.specTagParts(solo.spec).version, null);
 
-  const facts = workspaces.entryFacts(entry);
-  assert.ok(facts.includes(entry.workspaceId), facts.join(" | "));
-  assert.equal(facts.filter((fact) => /\b2 panes\b/.test(fact)).length, 1, facts.join(" | "));
   assert.deepEqual(entry.attribution, { reported: 1, inferred: 1, unlinked: 1 });
-  assert.equal(facts.filter((fact) => fact.includes("inferred")).length, 1);
-  assert.equal(facts.filter((fact) => fact.includes("unlinked")).length, 1);
-  assert.equal(workspaces.entryFacts({ ...entry, attribution: { reported: 2, inferred: 0, unlinked: 0 } })
-    .filter((fact) => /inferred|unlinked/.test(fact)).length, 0, "a zero count is left out, not printed as 0");
+  assert.deepEqual(workspaces.entryFacts(entry), [
+    { key: "workspace", value: entry.workspaceId },
+    { key: "tab", value: entry.tabId },
+    { key: "panes", value: 2 },
+    { key: "sessions", value: 2 },
+    { key: "inferred", value: 1 },
+    { key: "unlinked", value: 1 },
+  ]);
+  assert.deepEqual(workspaces.entryFacts({ ...entry, attribution: { reported: 2, inferred: 0, unlinked: 0 } }).map((fact) => fact.key),
+    ["workspace", "tab", "panes", "sessions"], "a zero count is left out, not carried as 0");
+  assert.deepEqual(workspaces.entryFacts(solo).map((fact) => [fact.key, fact.value]),
+    [["workspace", "ws-solo"], ["panes", 0], ["sessions", 0]], "a workspace with no tab carries no tab fact");
 });
 
 test("the flow summary counts turns, found-via-search and acted spans, and leaves an unreported cost null", () => {
@@ -154,15 +162,19 @@ test("the flow summary counts turns, found-via-search and acted spans, and leave
 
   const spans = report.usage.sessions.flatMap((session) => session.spans);
   assert.deepEqual(spans.map((span) => span.costUsd), [0.25, null], "Codex reports no cost, so that span stays null");
-  const facts = workspaces.summaryFacts(workspaces.flowSummary(report));
-  assert.equal(facts.filter((fact) => fact.includes(calls.UNKNOWN)).length, 1, facts.join(" | "));
+  assert.deepEqual(workspaces.summaryFacts(workspaces.flowSummary(report)), [
+    { key: "turns", value: 2 },
+    { key: "found", value: 1 },
+    { key: "spans", acted: 2, total: 2 },
+    { key: "cost", value: null },
+  ], "an unreported cost reaches the row as null, never as a number");
 
   const planOnly = {
     finding: { id: "plan", sessions: [sessionReport.finding], aggregate: sessionReport.finding.aggregate },
     usage: { id: "plan", sessions: [sessionReport.usage], skills: [] },
   };
   assert.equal(workspaces.flowSummary(planOnly).costUsd, 0.25, "a flow whose every span reported a cost sums them");
-  assert.equal(workspaces.summaryFacts(workspaces.flowSummary(planOnly)).filter((fact) => fact.includes(calls.UNKNOWN)).length, 0);
+  assert.deepEqual(workspaces.summaryFacts(workspaces.flowSummary(planOnly)).find((fact) => fact.key === "cost"), { key: "cost", value: 0.25 });
 });
 
 test("the tree index keys every turn finding and span usage the view renders", () => {
@@ -180,8 +192,17 @@ test("the tree index keys every turn finding and span usage the view renders", (
   const planUsage = usageBySpan.get(planSpan.id);
   assert.deepEqual(workspaces.attributionParts(planUsage.attribution).map((part) => part.key), ["single"],
     "a share of 0 is left out of the attribution labels");
-  assert.deepEqual(workspaces.spanFacts(planSpan, undefined, 3).length, 3, "a span with no usage row still prints its own facts");
-  assert.ok(workspaces.spanFacts(planSpan, undefined, 3).some((fact) => fact.includes(calls.UNKNOWN)));
+  assert.deepEqual(workspaces.spanFacts(planSpan, undefined, 3), [
+    { key: "active", value: planSpan.endedAt - planSpan.startedAt },
+    { key: "calls", value: 3 },
+    { key: "cost", value: null },
+  ], "a span with no usage row reports its own window and an unknown cost");
+  assert.deepEqual(workspaces.spanFacts(planSpan, planUsage, 3), [
+    { key: "active", value: planUsage.durationMs },
+    { key: "callsAfter", value: 2 },
+    { key: "failed", value: 1 },
+    { key: "cost", value: 0.25 },
+  ]);
 });
 
 test("a span's call rows carry name, duration, outcome, tokens and an unreported cost as unknown", () => {
@@ -250,7 +271,13 @@ test("skill spans fold the calls they own out of the flat timeline and keep the 
 
   const loadIndex = items.findIndex((item) => item.kind === "step" && item.step.kind === "load");
   assert.equal(items[loadIndex + 1].kind, "span", "the span sits right after the step that activated it");
-  assert.ok(trace.spanFacts(spanItems[0].span, 3, spanItems[0].finding).length >= 3);
+  assert.deepEqual(trace.spanFacts(spanItems[0].span, 3, spanItems[0].finding), [
+    { key: "active", value: spanItems[0].span.endedAt - spanItems[0].span.startedAt },
+    { key: "calls", value: 3 },
+    { key: "finding", value: "found_top1" },
+  ]);
+  assert.deepEqual(trace.spanFacts(spanItems[0].span, 3).map((fact) => fact.key), ["active", "calls"],
+    "a turn with no finding carries no finding fact");
 });
 
 test("every label map the views index into covers its whole value set", () => {
@@ -273,6 +300,29 @@ test("the workspaces routes round-trip through the hash, including an implicit w
   assert.deepEqual(state.parseHash(state.buildHash(detail)), detail);
   assert.deepEqual(state.parseHash(state.buildHash({ view: "workspace", flowId: fixture.flowId, filter: {} })),
     { view: "workspace", flowId: fixture.flowId, filter: {} });
+});
+
+test("every fact the views build is renderable, and only a finding fact carries a definition", () => {
+  const entry = list.flows.find((flow) => flow.id === fixture.flowId);
+  const { usageBySpan } = workspaces.reportIndex(report);
+  const span = report.tree.tabs.flatMap((tab) => tab.panes.flatMap((pane) => pane.sessions.flatMap((link) => link.session?.turns.flatMap((turn) => turn.skillSpans) ?? [])))[0];
+  const built = [
+    ...workspaces.entryFacts(entry),
+    ...workspaces.summaryFacts(workspaces.flowSummary(report)),
+    ...workspaces.spanFacts(span, usageBySpan.get(span.id), 3),
+    ...trace.spanFacts(span, 3, "found_top1"),
+  ];
+  assert.ok(built.length >= 12, String(built.length));
+  for (const fact of built) {
+    assert.equal(typeof factsMod.factText(fact), "string", fact.key);
+    assert.notEqual(factsMod.factText(fact).length, 0, fact.key);
+  }
+  assert.equal(new Set(built.map((fact) => fact.key)).size >= 8, true);
+  assert.equal(factsMod.factTitle({ key: "finding", value: "found_top1" }), state.FINDING_TITLE.found_top1);
+  assert.equal(factsMod.factTitle({ key: "turns", value: 1 }), undefined);
+  assert.equal(factsMod.factText({ key: "cost", value: null }), factsMod.factText({ key: "cost", value: null }));
+  assert.notEqual(factsMod.factText({ key: "cost", value: null }), factsMod.factText({ key: "cost", value: 0 }),
+    "an unknown cost never renders as a zero cost");
 });
 
 test("the list query carries only the filter keys GET /api/flows accepts", () => {

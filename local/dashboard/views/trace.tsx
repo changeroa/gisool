@@ -2,9 +2,10 @@ import { useEffect, useState } from "preact/hooks";
 import type { AbstainReason, EventKind, FindingLabel, RuntimeId, SearchMode, SessionSkillReportDto, SkillSpan, SkillUri,
   TraceStep } from "../../src/types.js";
 import { api, type SessionListRow } from "../api";
-import { CallList, callRows, formatLapse, isCall } from "../components/calls";
+import { CallList, callRows, isCall } from "../components/calls";
 import { Candidates, type CandidateLike } from "../components/candidates";
-import { ATTRIBUTION_LABEL, FINDING_LABEL, FINDING_TITLE, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
+import { Facts, type Fact } from "../components/facts";
+import { ATTRIBUTION_LABEL, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
   buildHash, skillName, type ViewProps } from "../state";
 
 // Session trace view (todo 15): header + narrative timeline + candidates panel + "Save as eval case".
@@ -98,9 +99,9 @@ export function planTimeline(steps: readonly TraceStep[], report?: Pick<SessionS
   return items;
 }
 
-export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, calls: number, finding?: FindingLabel): string[] {
-  const facts = [`active ${formatLapse(span.endedAt - span.startedAt)}`, `${calls} ${calls === 1 ? "call" : "calls"}`];
-  if (finding) facts.push(FINDING_LABEL[finding]);
+export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, calls: number, finding?: FindingLabel): Fact[] {
+  const facts: Fact[] = [{ key: "active", value: span.endedAt - span.startedAt }, { key: "calls", value: calls }];
+  if (finding) facts.push({ key: "finding", value: finding });
   return facts;
 }
 
@@ -487,7 +488,6 @@ function Step({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof ses
 
 function SpanGroup({ item, bounds }: { item: Extract<TimelineItem, { kind: "span" }>; bounds: ReturnType<typeof sessionBounds> }) {
   const rows = callRows(item.span.events);
-  const facts = spanFacts(item.span, rows.length, item.finding);
   return (
     <li class="tl__step tl__step--span" data-kind="skill_span" data-skill={item.span.skill} data-turn={item.turnId}>
       <span class="tl__dot tl__dot--hollow" aria-hidden="true" />
@@ -497,15 +497,7 @@ function SpanGroup({ item, bounds }: { item: Extract<TimelineItem, { kind: "span
         <StepTime ts={item.span.startedAt} startedAt={bounds.startedAt} />
       </div>
       <div class="tl__body">
-        <p class="facts">
-          {facts.map((fact, index) => (
-            <span key={`${index}-${fact}`} class="facts__item"
-              title={index === facts.length - 1 && item.finding ? FINDING_TITLE[item.finding] : undefined}
-              data-finding={index === facts.length - 1 && item.finding ? item.finding : undefined}>
-              {fact}
-            </span>
-          ))}
-        </p>
+        <Facts facts={spanFacts(item.span, rows.length, item.finding)} />
         <CallList rows={rows} />
       </div>
     </li>

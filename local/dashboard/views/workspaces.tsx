@@ -7,7 +7,8 @@ import type {
 import type { FlowComparison, StepComparison } from "../../src/workflow/compare.js";
 import { api, type FlowsQuery } from "../api";
 import { installStyles } from "../charts/sankey";
-import { CallList, Tokens, UNKNOWN, callRows, formatCostUsd, formatLapse, isCall, numberOf, tokenParts } from "../components/calls";
+import { CallList, Tokens, UNKNOWN, callRows, isCall, numberOf, tokenParts } from "../components/calls";
+import { Facts, type Fact } from "../components/facts";
 import {
   BASIS_LABEL, BASIS_TITLE, FINDING_LABEL, FINDING_TITLE, RUNTIME_LABEL, RUNTIME_MARK, SPAN_ATTRIBUTION_LABEL,
   STEP_STATUS_LABEL, STEP_STATUS_TITLE, buildHash, type Route, type ViewProps,
@@ -30,9 +31,17 @@ export function flowTitle(entry: Pick<FlowListEntry, "label" | "workspaceId">): 
   return entry.label ?? entry.workspaceId;
 }
 
-/** A registered flow names its spec and version; a herdr workspace nobody registered is "unregistered". */
+/**
+ * The two parts of the spec tag: a registered flow names its spec and version, a herdr workspace nobody registered
+ * has no version at all. They stay separate so a long name can truncate while its version stays on screen.
+ */
+export function specTagParts(spec: FlowSpecRef | null): { name: string; version: string | null } {
+  return spec ? { name: spec.name, version: `v${spec.version}` } : { name: "unregistered", version: null };
+}
+
 export function specLabel(spec: FlowSpecRef | null): string {
-  return spec ? `${spec.name} v${spec.version}` : "unregistered";
+  const { name, version } = specTagParts(spec);
+  return version === null ? name : `${name} ${version}`;
 }
 
 /** A time herdr never reported stays unknown instead of becoming the epoch. */
@@ -75,24 +84,23 @@ export function flowSummary(report: Pick<FlowReportDto, "finding" | "usage">): F
   };
 }
 
-export function summaryFacts(summary: FlowSummary): string[] {
-  const facts = [
-    `${summary.turns} ${summary.turns === 1 ? "turn" : "turns"}`,
-    `${summary.foundViaSearch} found via search`,
-    `${summary.spansActed}/${summary.spans} ${summary.spans === 1 ? "span" : "spans"} acted`,
+export function summaryFacts(summary: FlowSummary): Fact[] {
+  const facts: Fact[] = [
+    { key: "turns", value: summary.turns },
+    { key: "found", value: summary.foundViaSearch },
+    { key: "spans", acted: summary.spansActed, total: summary.spans },
   ];
-  if (summary.abstainedTurns > 0) facts.push(`${summary.abstainedTurns} abstained`);
-  facts.push(`cost ${summary.spans === 0 ? UNKNOWN : formatCostUsd(summary.costUsd)}`);
+  if (summary.abstainedTurns > 0) facts.push({ key: "abstained", value: summary.abstainedTurns });
+  facts.push({ key: "cost", value: summary.spans === 0 ? null : summary.costUsd });
   return facts;
 }
 
-export function entryFacts(entry: FlowListEntry): string[] {
-  const facts = [entry.workspaceId];
-  if (entry.tabId !== null) facts.push(`tab ${entry.tabId}`);
-  facts.push(`${entry.counts.panes} ${entry.counts.panes === 1 ? "pane" : "panes"}`);
-  facts.push(`${entry.counts.sessions} ${entry.counts.sessions === 1 ? "session" : "sessions"}`);
-  if (entry.attribution.inferred > 0) facts.push(`${entry.attribution.inferred} inferred`);
-  if (entry.attribution.unlinked > 0) facts.push(`${entry.attribution.unlinked} unlinked`);
+export function entryFacts(entry: FlowListEntry): Fact[] {
+  const facts: Fact[] = [{ key: "workspace", value: entry.workspaceId }];
+  if (entry.tabId !== null) facts.push({ key: "tab", value: entry.tabId });
+  facts.push({ key: "panes", value: entry.counts.panes }, { key: "sessions", value: entry.counts.sessions });
+  if (entry.attribution.inferred > 0) facts.push({ key: "inferred", value: entry.attribution.inferred });
+  if (entry.attribution.unlinked > 0) facts.push({ key: "unlinked", value: entry.attribution.unlinked });
   return facts;
 }
 
@@ -118,18 +126,18 @@ export function reportIndex(report: Pick<FlowReportDto, "finding" | "usage">): {
   return { findings, usageBySpan };
 }
 
-export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, usage: SkillSpanUsage | undefined, calls: number): string[] {
-  if (!usage) return [`active ${formatLapse(span.endedAt - span.startedAt)}`, `${calls} ${calls === 1 ? "call" : "calls"}`, `cost ${UNKNOWN}`];
-  const facts = [
-    `active ${formatLapse(usage.durationMs)}`,
-    `${usage.followThrough} ${usage.followThrough === 1 ? "call" : "calls"} after activation`,
-  ];
-  if (usage.skillToolCalls > 0) facts.push(`${usage.skillToolCalls} gisool ${usage.skillToolCalls === 1 ? "call" : "calls"}`);
-  if (usage.toolFailures > 0) facts.push(`${usage.toolFailures} failed`);
-  if (usage.supportingReads.length > 0) {
-    facts.push(`${usage.supportingReads.length} resource ${usage.supportingReads.length === 1 ? "read" : "reads"}`);
+export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, usage: SkillSpanUsage | undefined, calls: number): Fact[] {
+  if (!usage) {
+    return [{ key: "active", value: span.endedAt - span.startedAt }, { key: "calls", value: calls }, { key: "cost", value: null }];
   }
-  facts.push(`cost ${formatCostUsd(usage.costUsd)}`);
+  const facts: Fact[] = [
+    { key: "active", value: usage.durationMs },
+    { key: "callsAfter", value: usage.followThrough },
+  ];
+  if (usage.skillToolCalls > 0) facts.push({ key: "gisoolCalls", value: usage.skillToolCalls });
+  if (usage.toolFailures > 0) facts.push({ key: "failed", value: usage.toolFailures });
+  if (usage.supportingReads.length > 0) facts.push({ key: "reads", value: usage.supportingReads.length });
+  facts.push({ key: "cost", value: usage.costUsd });
   return facts;
 }
 
@@ -141,11 +149,16 @@ function Chevron() {
   );
 }
 
-function Facts({ parts, className = "facts" }: { parts: string[]; className?: string }) {
+function SpecTag({ entry }: { entry: FlowListEntry }) {
+  const { name, version } = specTagParts(entry.spec);
+  const title = entry.spec
+    ? `${specLabel(entry.spec)}: the workflow spec this flow was registered with`
+    : "no workflow spec was registered for this herdr workspace";
   return (
-    <p class={className}>
-      {parts.map((part, index) => <span key={`${index}-${part}`} class="facts__item">{part}</span>)}
-    </p>
+    <span class={entry.spec ? "tag" : "tag tag--dim"} title={title}>
+      <span class="tag__name">{name}</span>
+      {version !== null && <span class="tag__suffix">{version}</span>}
+    </span>
   );
 }
 
@@ -195,19 +208,16 @@ function FlowRow({ entry, route, summary }: { entry: FlowListEntry; route: Route
   return (
     <li class="wsrow" data-flow={entry.id}>
       <a class="wsrow__title" href={href}>{flowTitle(entry)}</a>
-      <span class={entry.spec ? "tag" : "tag tag--dim"}
-        title={entry.registered ? "a workflow spec was registered for this flow" : "no workflow spec was registered for this herdr workspace"}>
-        {specLabel(entry.spec)}
-      </span>
+      <SpecTag entry={entry} />
       <time class="wsrow__when" dateTime={entry.startedMs === null ? undefined : new Date(entry.startedMs).toISOString()}>
         {formatStarted(entry.startedMs)}
       </time>
-      <Facts parts={entryFacts(entry)} className="facts wsrow__meta" />
+      <Facts facts={entryFacts(entry)} className="facts wsrow__meta" />
       {summary === undefined || summary.status === "loading"
         ? <p class="facts wsrow__sum dim" data-summary="loading">reading skill spans{"\u2026"}</p>
         : summary.status === "error"
           ? <p class="facts wsrow__sum dim" data-summary="error">skill span summary unavailable</p>
-          : <Facts parts={summaryFacts(summary.summary)} className="facts wsrow__sum" />}
+          : <Facts facts={summaryFacts(summary.summary)} className="facts wsrow__sum" />}
     </li>
   );
 }
@@ -345,7 +355,7 @@ function Span({ span, usage }: { span: SkillSpan; usage: SkillSpanUsage | undefi
           ? <span class="tag tag--dim">no call attributed</span>
           : attribution.map((part) => <span key={part.key} class="tag" title={part.title}>{part.label} {part.value}</span>)}
       </div>
-      <Facts parts={spanFacts(span, usage, rows.length)} className="facts span__facts" />
+      <Facts facts={spanFacts(span, usage, rows.length)} className="facts span__facts" />
       <p class="span__tokens"><Tokens parts={tokenParts(usage?.tokens ?? [])} /></p>
       <CallList rows={rows} />
     </li>
@@ -497,7 +507,7 @@ function Header({ report, backHref, onRefresh, busy }: { report: FlowReportDto; 
           <dd>{report.usage.sessions.length}</dd>
         </div>
       </dl>
-      <Facts parts={summaryFacts(flowSummary(report))} className="facts ws__counts" />
+      <Facts facts={summaryFacts(flowSummary(report))} className="facts ws__counts" />
       <div class="ws__actions">
         <span class="dim">as of {clockFmt.format(report.generatedAt)}</span>
         <button type="button" class="btn" onClick={onRefresh} disabled={busy}>{busy ? "Reading\u2026" : "Refresh"}</button>
@@ -581,10 +591,10 @@ const WORKSPACES_CSS = `
 .ws__h { margin: 0; color: var(--ink-3); font-size: var(--fs-cap); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
 
 .wslist { list-style: none; margin: 0; padding: 0; }
-.wsrow { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; grid-template-areas: "title tag when" "meta meta when" "sum sum sum"; align-items: baseline; gap: var(--s-1) var(--s-3); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); transition: background-color var(--t-micro); }
+.wsrow { display: grid; grid-template-columns: minmax(min-content, auto) minmax(0, 1fr) auto; grid-template-areas: "title tag when" "meta meta when" "sum sum sum"; align-items: baseline; gap: var(--s-1) var(--s-3); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); transition: background-color var(--t-micro); }
 .wsrow:last-child { border-bottom: 0; }
 .wsrow:hover, .wsrow:has(.wsrow__title:focus-visible) { background: var(--wash); }
-.wsrow__title { grid-area: title; color: var(--ink); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.wsrow__title { grid-area: title; min-width: 0; color: var(--ink); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 .wsrow__title:hover { color: var(--ink); text-decoration: underline; }
 .wsrow .tag { grid-area: tag; align-self: center; justify-self: start; }
 .wsrow__when { grid-area: when; color: var(--ink-2); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -638,7 +648,8 @@ details[open] > summary .chev { transform: rotate(90deg); }
 @media (max-width: 639.98px) {
   .ws__head, .ws__block { padding: var(--s-4); }
   .ws__meta { gap: var(--s-3) var(--s-5); }
-  .wsrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title tag" "when when" "meta meta" "sum sum"; }
+  /* A spec name can be 64 characters, so the row stacks instead of racing the title against the tag. */
+  .wsrow { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "tag" "when" "meta" "sum"; }
   .spans, .turn__none { padding-inline-start: var(--s-3); }
 }
 `;

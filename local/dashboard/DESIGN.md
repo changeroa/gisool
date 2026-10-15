@@ -169,6 +169,17 @@ Layout
   at weight 600, never uppercased (labels are phrases, not codes).
 - Variants: default, `tag--dim` (an absent fact: "unregistered", "outcome unknown"), `tag--ok` and
   `tag--bad` (a reported tool outcome only; both drop the border for a 12% status wash).
+- Long values: a tag whose name is user-supplied splits into `tag__name` + `tag__suffix`. The tag caps
+  at `max-width: 100%`, the name truncates with an ellipsis, and the suffix (`v3`) never shrinks, so a
+  64-character workflow name still shows which version ran. The `title` carries the full value.
+
+### Facts (`components/facts.tsx` + `styles.css`)
+- A fact is a measurement, not a sentence: builders return `{ key, value }` (`panes`, `cost`,
+  `active`, `finding`, ...) and `factText` is the single place that turns a key and a number into
+  words. A measurement the runtime never reported is `null`, which renders as "unknown" and never as
+  0. Wording therefore changes in one file, and no test depends on it.
+- `Facts` renders `p.facts > span.facts__item[data-fact=<key>]`, with the finding label's definition
+  as its `title`.
 
 ### Facts (`styles.css`)
 - Structure: `p.facts` > `span.facts__item` x n - a wrapping line of dim facts separated by a middot
@@ -205,13 +216,16 @@ Layout
 ### WorkspaceRow (`views/workspaces.tsx`)
 - Structure: `li.wsrow` grid with areas `"title tag when" / "meta meta when" / "sum sum sum"`; the
   title is the flow label (falling back to the workspace id) linking to the flow detail, the Tag is
-  the spec `name v<version>` or a dim "unregistered".
+  the spec `name v<version>` or a dim "unregistered". The title column floors at `min-content` and the
+  tag column is the flexible one, so a long spec name truncates instead of squeezing the title.
 - Lines: `facts wsrow__meta` = workspace id, tab, panes, sessions, plus inferred / unlinked link
   counts when non-zero; `facts wsrow__sum` = turns, found via search, spans acted, abstained turns,
   cost. The summary needs the flow report, so until it arrives the line reads "reading skill spans…"
   and on failure "skill span summary unavailable" - never an invented 0.
 - States: hover `--wash`; `:has(.wsrow__title:focus-visible)` lifts the whole row.
-- Layout: under 640px the areas stack `"title tag" / "when when" / "meta meta" / "sum sum"`.
+- Layout: under 640px the row is one column and every part gets its own line, `"title" / "tag" /
+  "when" / "meta" / "sum"`: at 390px a 64-character spec name and a flow label cannot share a line
+  without one of them collapsing to one-character rows.
 - Empty: `section.empty` "No herdr workspaces recorded" (with `gisool doctor`) or "No workspaces in
   this range" with a Clear filters GhostButton when the time filter is set.
 

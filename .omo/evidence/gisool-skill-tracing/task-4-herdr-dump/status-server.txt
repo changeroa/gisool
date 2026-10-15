@@ -1,6 +1,0 @@
-$ herdr status server
-status: running
-version: 0.8.2
-protocol: 20
-compatible: yes
-socket: /Users/victor/.config/herdr/herdr.sock
