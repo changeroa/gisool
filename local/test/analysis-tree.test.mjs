@@ -60,9 +60,10 @@ test("ingestion fixtures join MCP and prompts by time, Claude by reported key, a
   // Then: expectations name capture values, not display text or computed expectations.
   assert.deepEqual(codex.turns.map((turn) => [turn.id, turn.startedAt]), [[CODEX_TURN, T]]);
   const turn = codex.turns[0];
-  for (const kind of ["prompt", "search", "load", "read_file", "llm_call"]) {
+  for (const kind of ["search", "load", "read_file", "llm_call"]) {
     assert.equal(turn.events.find((e) => e.kind === kind).basis, "inferred_time", kind);
   }
+  assert.equal(turn.events.find((e) => e.kind === "prompt").basis, "reported");
   const call = turn.events.find((e) => e.kind === "tool_call");
   assert.equal(call.basis, "span_join");
   assert.equal(call.callId, "call_abc123");
@@ -114,13 +115,77 @@ for (const { first, hookOffset } of [
       ["reported", "single", "claude-fable-5-1", 0.31913075]);
     assert.deepEqual(model.skills, [uri("debugging")]);
     assert.deepEqual(turn.skillSpans.map((s) => [s.uri, s.events.map((e) => e.kind)]), [[uri("debugging"), ["llm_call"]]]);
-    if (hookOffset < 0) {
-      assert.deepEqual(tree.unassignedEvents.map((e) => [e.kind, e.source]), [["prompt", "hook"]]);
-    } else {
-      assert.equal(tree.unassignedEvents.length, 0);
-      assert.equal(turn.events.find((e) => e.source === "hook").basis, "inferred_time");
-    }
+    assert.equal(tree.unassignedEvents.length, 0);
+    assert.equal(turn.events.find((e) => e.source === "hook").basis, "reported");
   });
+}
+
+for (const runtime of ["claude-code", "codex"]) {
+  for (const [capture, keyed, observed] of [
+    ["text", { text: "Inspect config" }, { text: "Inspect source" }],
+    ["length", { textLength: 14 }, { textLength: 13 }],
+    ["promptLength", { data: { promptLength: 14 } }, { data: { promptLength: 13 } }],
+    ["length despite matching text", { text: "Inspect config", textLength: 14 },
+      { text: "Inspect config", textLength: 13 }],
+  ]) {
+    test(`${runtime} excludes contradictory prompt ${capture} instead of consuming its turn`, (t) => {
+      // Given: the only nearby keyless prompt contradicts the reported observation.
+      const { store, id, append, span } = seeded(t, runtime, runtime === "codex" ? "codex-conv-1" : "claude-sess-1");
+      const turnKey = runtime === "codex" ? CODEX_TURN : "p-1";
+      if (runtime === "codex") span(turnKey, 0);
+      append("prompt", 0, { turnKey, ...keyed });
+      const distinct = append("prompt", 3000, observed);
+      const action = append("tool_call", 3001);
+      // When
+      const tree = sessionTree(store, id);
+      // Then: even without a better candidate, the distinct prompt opens its own turn.
+      assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [
+        [turnKey, T, "reported"], [`prompt:${distinct}`, T + 3000, "inferred_time"],
+      ]);
+      assert.deepEqual(tree.turns[1].events.map((e) => [e.id, e.basis]),
+        [[distinct, "inferred_time"], [action, "inferred_time"]]);
+      assert.equal(tree.unassignedEvents.length, 0);
+    });
+  }
+
+  for (const missing of ["keyed", "keyless"]) {
+    test(`${runtime} keeps nearest one-to-one pairing when ${missing} prompt text is missing`, (t) => {
+      // Given: neither side has comparable lengths, and one side lacks captured text.
+      const { store, id, append, span } = seeded(t, runtime, runtime === "codex" ? "codex-conv-1" : "claude-sess-1");
+      const turnKey = runtime === "codex" ? CODEX_TURN : "p-1";
+      if (runtime === "codex") span(turnKey, 0);
+      append("prompt", 0, { turnKey, ...(missing === "keyed" ? {} : { text: "Inspect config" }) });
+      const nearest = append("prompt", 1, missing === "keyless" ? {} : { text: "Inspect config" });
+      const surplus = append("prompt", 2, missing === "keyless" ? {} : { text: "Inspect config" });
+      // When
+      const tree = sessionTree(store, id);
+      // Then
+      assert.deepEqual(tree.turns.map((turn) => turn.id), [turnKey, `prompt:${surplus}`]);
+      assert.equal(tree.turns[0].events.find((e) => e.id === nearest).basis, "reported");
+      assert.equal(tree.turns[1].events[0].id, surplus);
+    });
+  }
+
+  for (const previous of [false, true]) {
+    test(`${runtime} keeps an early paired prompt in its reported turn (${previous ? "previous turn" : "first turn"})`, (t) => {
+      // Given: a matching hook is one millisecond before its reported boundary.
+      const { store, id, append, span } = seeded(t, runtime, runtime === "codex" ? "codex-conv-1" : "claude-sess-1");
+      const turnKey = runtime === "codex" ? CODEX_TURN : "p-1";
+      const earlier = previous ? append("prompt", -10000, { text: "Earlier task" }) : null;
+      const hook = append("prompt", -1, { text: "Inspect config" });
+      if (runtime === "codex") span(turnKey, 0);
+      const keyed = append("prompt", 0, { turnKey, text: "Inspect config", source: "otel" });
+      // When
+      const tree = sessionTree(store, id);
+      // Then: pairing wins over timestamp assignment without moving the reported boundary.
+      assert.deepEqual(tree.turns.map((turn) => turn.id), previous ? [`prompt:${earlier}`, turnKey] : [turnKey]);
+      const turn = tree.turns.at(-1);
+      assert.equal(turn.startedAt, T);
+      assert.deepEqual(turn.events.map((e) => [e.id, e.basis]), [[hook, "reported"], [keyed, "reported"]]);
+      if (previous) assert.deepEqual(tree.turns[0].events.map((e) => e.id), [earlier]);
+      assert.equal(tree.unassignedEvents.length, 0);
+    });
+  }
 }
 
 for (const first of ["span", "prompt"]) {
@@ -215,7 +280,7 @@ for (const runtime of ["claude-code", "codex"]) {
       // Then
       assert.deepEqual(tree.turns.map((turn) => turn.id), runtime === "codex" ? [CODEX_TURN, "second-turn"] : ["p-1", "p-2"]);
       assert.deepEqual(tree.turns.map((turn) => turn.events.filter((e) => e.source === "hook").map((e) => [e.text, e.basis])),
-        [[["First task", "inferred_time"]], [["Second task", "inferred_time"]]]);
+        [[["First task", "reported"]], [["Second task", "reported"]]]);
       assert.deepEqual(tree.turns[0].skillSpans.map((s) => s.uri), [uri("debugging")]);
       const model = tree.turns[1].events.find((e) => e.kind === "llm_call");
       assert.deepEqual([model.attribution, model.skills], ["no_skill", []]);
@@ -253,7 +318,7 @@ for (const runtime of ["claude-code", "codex"]) {
       // Then
       assert.deepEqual(tree.turns.map((turn) => turn.id), [`prompt:${wrong}`, "reported"]);
       assert.equal(tree.turns[0].events[0].id, wrong);
-      assert.equal(tree.turns[1].events.find((e) => e.id === matched).basis, "inferred_time");
+      assert.equal(tree.turns[1].events.find((e) => e.id === matched).basis, "reported");
     });
   }
 }
@@ -285,7 +350,8 @@ for (const first of ["span", "prompt"]) {
     assert.deepEqual(tree.turns.map((turn) => [turn.id, turn.startedAt, turn.basis]), [
       [CODEX_TURN, T + 1, "reported"], [`prompt:${hookId}`, T + 2, "inferred_time"],
     ]);
-    assert.deepEqual(tree.unassignedEvents.map((e) => [e.kind, e.source]), [["prompt", "otel"]]);
+    assert.equal(tree.unassignedEvents.length, 0);
+    assert.equal(tree.turns[0].events.find((e) => e.kind === "prompt").basis, "reported");
     const fallback = tree.turns[1];
     assert.equal(fallback.events.find((e) => e.source === "hook").basis, "inferred_time");
     assert.equal(fallback.events.find((e) => e.kind === "load").basis, "inferred_time");
@@ -335,7 +401,7 @@ for (const runtime of ["claude-code", "codex"]) {
     const tree = sessionTree(store, id);
     // Then
     assert.deepEqual(tree.turns.map((turn) => turn.id), ["reported", `prompt:${later}`]);
-    assert.equal(tree.turns[0].events.find((e) => e.id === near).basis, "inferred_time");
+    assert.equal(tree.turns[0].events.find((e) => e.id === near).basis, "reported");
     assert.equal(tree.turns[1].events[0].id, later);
     assert.equal(tree.turns[1].basis, "inferred_time");
   });
