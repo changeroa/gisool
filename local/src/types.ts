@@ -106,7 +106,10 @@ export interface Store {
   mapFlowStep(flowId: string, paneId: string, stepId: string): { created: boolean };
   endFlow(flowId: string): { endedMs: number; alreadyEnded: boolean } | undefined;
   flowPaneUsage(flowId: string): PaneUsageRow[];
-  close(): void }
+  close(): void;
+  treeSessionData(sessionId: string): TreeSessionData | undefined;
+  treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
+  outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[] }
 // One row of otel_spans: the whole whitelist the traces ingest may store. No other span attribute is kept.
 export type OtelSpanRow = { traceId: string; spanId: string; parentSpanId?: string; name: string; runtime: RuntimeId;
   conversationId?: string; turnKey?: string; callId?: string; startMs?: number; endMs?: number; receivedAt: number };
@@ -128,3 +131,28 @@ export interface RuntimePack { id: RuntimeId; detect(ctx: { home: string; env: N
 export type CliDeps = { config: GisoolConfig; home: string; gisoolHome: string; env: NodeJS.ProcessEnv; openStore(): Store };
 export type ExportImportApi = { runExport(dir: string, opts: { withHistory: boolean }, deps: CliDeps): Promise<number>;
   runImport(dir: string, opts: { dryRun: boolean }, deps: CliDeps): Promise<number> };
+
+export type TurnBasis = "reported" | "span_join" | "inferred_time";
+export type TreeEvent = { readonly id: string; readonly ts: number; readonly kind: EventKind; readonly source: CanonicalEvent["source"];
+  readonly turnKey: string | null; readonly callId: string | null; readonly spanId: string | null;
+  readonly skillUri: string | null; readonly text: string | null; readonly textLength: number | null;
+  readonly data: Readonly<Record<string, unknown>> };
+export type TreeSessionData = { readonly id: string; readonly runtime: RuntimeId; readonly startedAt: number; readonly endedAt: number | null;
+  readonly events: readonly TreeEvent[]; readonly spans: readonly OtelSpanRow[] };
+export type AssignedTreeEvent = TreeEvent & { readonly basis: TurnBasis; readonly attribution: "reported" | "single" | "co_active" | "no_skill";
+  readonly skills: readonly string[] };
+export type SkillSpan = { readonly id: string; readonly skill: string; readonly uri: string | null; readonly name: string;
+  readonly startedAt: number; readonly endedAt: number; readonly activation: AssignedTreeEvent; readonly events: readonly AssignedTreeEvent[] };
+export type TurnTree = { readonly id: string; readonly startedAt: number; readonly endedAt: number; readonly basis: TurnBasis;
+  readonly events: readonly AssignedTreeEvent[]; readonly skillSpans: readonly SkillSpan[] };
+export type SessionTree = { readonly id: string; readonly runtime: RuntimeId; readonly startedAt: number; readonly endedAt: number | null;
+  readonly turns: readonly TurnTree[]; readonly unassignedEvents: readonly TreeEvent[] };
+export type TreeTopologyNode = { readonly id: string; readonly label: string | null; readonly createdMs: number | null; readonly closedMs: number | null };
+export type TreePaneLink = { readonly paneId: string; readonly sessionId: string | null; readonly agentSessionValue: string;
+  readonly source: string | null; readonly firstSeenMs: number | null; readonly lastSeenMs: number | null };
+export type TreeFlowData = { readonly id: string; readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
+  readonly tabs: readonly TreeTopologyNode[]; readonly panes: readonly (TreeTopologyNode & { readonly tabId: string })[];
+  readonly links: readonly TreePaneLink[] };
+export type FlowTree = { readonly id: string; readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
+  readonly tabs: readonly (TreeTopologyNode & { readonly panes: readonly (TreeTopologyNode & {
+    readonly sessions: readonly (TreePaneLink & { readonly basis: "reported" | "inferred"; readonly session: SessionTree | null })[] })[] })[] };

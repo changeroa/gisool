@@ -196,7 +196,7 @@ function claudeRecord(name: string, attrs: Attrs, ts: number): Derived[] | "igno
           cacheReadTokens: num(attrs.cache_read_tokens), cacheCreationTokens: num(attrs.cache_creation_tokens),
           // Claude reports input_tokens without the cached ones, so the buckets add up; Codex reports them included.
           inputIncludesCache: false, costUsd: num(attrs.cost_usd), durationMs: num(attrs.duration_ms), ttftMs: num(attrs.ttft_ms),
-          requestId: str(attrs.request_id),
+          requestId: str(attrs.request_id), skillName: str(attrs["skill.name"]),
         }),
       }))];
     case "claude_code.skill_activated": {
