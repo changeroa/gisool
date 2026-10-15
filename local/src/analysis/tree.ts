@@ -2,7 +2,7 @@ import type { AssignedTreeEvent, FlowTree, SessionTree, SkillSpan, Store, TreeEv
 
 const PROMPT_JOIN_WINDOW_MS = 5_000;
 
-/** Pure assembly: timestamps decide keyless membership; row order breaks equal-time event ties.
+/** Pure assembly: prompt pairs precede keyless timestamp membership; row order breaks equal-time event ties.
  * A boundary at the same timestamp wins over the preceding turn, independent of ingest order.
  */
 export function assembleSession(data: TreeSessionData): SessionTree {
@@ -25,25 +25,27 @@ export function assembleSession(data: TreeSessionData): SessionTree {
     if (prompt.turnKey !== null && !boundaries.has(prompt.turnKey)) add(prompt.turnKey, prompt.ts, "reported");
   }
   const reportedBoundaries = [...boundaries.values()].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
-  const pairedPrompts = new Set<string>();
+  const pairedPrompts = new Map<string, string>();
   if (data.runtime === "claude-code" || data.runtime === "codex") {
     for (const boundary of reportedBoundaries) {
       const reference = prompts.find((p) => p.turnKey === boundary.id);
       const strength = (prompt: TreeEvent): number => {
         if (!reference) return 0; // Codex turn_input spans carry identity and time, not prompt content.
-        if (reference.text !== null && prompt.text !== null) return reference.text === prompt.text ? 2 : 0;
+        if (reference.text !== null && prompt.text !== null && reference.text !== prompt.text) return -1;
         const length = reference.textLength ?? reference.data.promptLength;
         const observedLength = prompt.textLength ?? prompt.data.promptLength;
+        if (typeof length === "number" && typeof observedLength === "number" && length !== observedLength) return -1;
+        if (reference.text !== null && prompt.text !== null) return 2;
         return typeof length === "number" && length === observedLength ? 1 : 0;
       };
       // Each boundary consumes one observation, and each observation can be consumed only once.
-      // Prefer captured identity, then nearest timestamp; ties choose the earlier observation.
+      // Exclude contradictory capture; prefer captured identity, then nearest time, with earlier ties.
       const match = prompts.filter((p) => p.turnKey === null && !pairedPrompts.has(p.id) &&
-        Math.abs(boundary.startedAt - p.ts) <= PROMPT_JOIN_WINDOW_MS)
+        Math.abs(boundary.startedAt - p.ts) <= PROMPT_JOIN_WINDOW_MS && strength(p) >= 0)
         .sort((a, b) => strength(b) - strength(a) ||
           Math.abs(boundary.startedAt - a.ts) - Math.abs(boundary.startedAt - b.ts) ||
           a.ts - b.ts || a.id.localeCompare(b.id))[0];
-      if (match) pairedPrompts.add(match.id);
+      if (match) pairedPrompts.set(match.id, boundary.id);
     }
   }
   for (const prompt of prompts) {
@@ -56,7 +58,7 @@ export function assembleSession(data: TreeSessionData): SessionTree {
   const byTurn = new Map<string, { event: TreeEvent; basis: TurnBasis }[]>();
   const unassignedEvents: TreeEvent[] = [];
   for (const event of data.events) {
-    let key = event.turnKey;
+    let key = event.turnKey ?? pairedPrompts.get(event.id) ?? null;
     let basis: TurnBasis = "reported";
     if (key === null && event.kind === "tool_call") {
       const joined = data.spans.filter((s) => s.turnKey !== undefined &&
