@@ -1,11 +1,11 @@
 import type { Attribution, CanonicalEvent, CaptureLevel, HookPayload, RuntimeId, Store } from "../types.js";
-import { attribute, createAttributionState, remember, type AttributionState } from "./attribution.js";
+import { attribute, createAttributionState, remember, WINDOW_MS, type AttributionState } from "./attribution.js";
 import { normalizeHook } from "./hooks.js";
 import { parseOtlpLogs } from "./otlp.js";
 import { applyCapture } from "./redact.js";
 
 export type IngestChange = { sessionId: string; attribution: Attribution; event?: CanonicalEvent };
-export type IngestStore = Pick<Store, "append" | "hasSourceKey" | "upsertSession" | "openSessions" | "traceSession" | "reattribute" | "findEventByToolUseId" | "countIngest">;
+export type IngestStore = Pick<Store, "append" | "hasSourceKey" | "upsertSession" | "openSessions" | "traceSession" | "reattribute" | "findEventByToolUseId" | "countIngest" | "reconcileLoads">;
 export type IngestDeps = {
   store: IngestStore;
   captureLevel: CaptureLevel | (() => CaptureLevel);
@@ -61,12 +61,19 @@ export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | u
     if (event.sourceKey !== undefined && deps.store.hasSourceKey(event.sourceKey)) return undefined;
     const level = typeof deps.captureLevel === "function" ? deps.captureLevel() : deps.captureLevel;
     const captured = capture(event, level);
-    const attribution = attribute(captured, deps.store, nowOf(deps), deps.state);
+    const now = nowOf(deps);
+    const attribution = attribute(captured, deps.store, now, deps.state);
+    if (captured.kind === "load" && attribution.reason === "ambiguous") {
+      captured.data = { ...captured.data, attributionCandidates: deps.store.openSessions(captured.ref.runtime, 0)
+        .filter((session) => session.ref.runtime === captured.ref.runtime && now - session.lastActivityAt <= WINDOW_MS)
+        .map((session) => session.id) };
+    }
     // Attribution can upsert a session even when append later rejects a replay.
     if (attribution.sessionId !== "unattributed") deps.sessionChanged?.();
     const inserted = deps.store.append(captured, attribution);
     if (captured.loadId && attribution.sessionId !== "unattributed") remember(deps.state.loadSessions, captured.loadId, attribution.sessionId);
     if (!inserted) return undefined;
+    if (captured.kind === "load" || (captured.kind === "tool_call" && captured.source === "otel")) deps.store.reconcileLoads();
     count(deps, "accepted");
     if (deps.publish && attribution.sessionId !== "unattributed") deps.publish({ sessionId: attribution.sessionId, attribution, event: captured });
     return attribution;

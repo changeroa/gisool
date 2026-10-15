@@ -67,5 +67,7 @@ export function memoryStore() {
       counts[kind] += 1;
       if (code) counts.codes.push(code);
     },
+    // URI recovery is covered against the real SQLite Store in ingest-f3.test.mjs.
+    reconcileLoads() { return { count: 0, uris: [] }; },
   };
 }

@@ -119,7 +119,9 @@ export interface Store {
   close(): void;
   treeSessionData(sessionId: string): TreeSessionData | undefined;
   treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
-  outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[] }
+  outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[];
+  // Reconcile ambiguous MCP loads from persisted OTLP URI evidence; return unresolved loads in the requested scope.
+  reconcileLoads(opts?: { from?: number; to?: number; sessionIds?: readonly string[] }): UnattributedLoads }
 // One row of otel_spans: the whole whitelist the traces ingest may store. No other span attribute is kept.
 export type OtelSpanRow = { traceId: string; spanId: string; parentSpanId?: string; name: string; runtime: RuntimeId;
   conversationId?: string; turnKey?: string; callId?: string; startMs?: number; endMs?: number; receivedAt: number };
@@ -239,13 +241,17 @@ export type FlowReportDto = { readonly generatedAt: number; readonly id: string;
   readonly flow: { readonly registeredMs: number | null; readonly endedMs: number | null; readonly tabId: string | null } | null;
   readonly spec: FlowSpecRef | null; readonly automated: AutomatedMode; readonly tree: FlowTree;
   readonly finding: FlowFindingDto; readonly usage: FlowUsage; readonly comparison: FlowComparison | null;
-  readonly excludedSessions: readonly ExcludedSession[] };
+  readonly excludedSessions: readonly ExcludedSession[];
+  readonly unattributedLoads: UnattributedLoads };
 // GET /api/sessions/:id/skill-report. `automated` carries the automation rule id when a harness drove the session.
 export type SessionSkillReportDto = { readonly generatedAt: number; readonly sessionId: string; readonly runtime: RuntimeId;
   readonly startedAt: number; readonly endedAt: number | null; readonly automated: string | null;
-  readonly tree: SessionTree; readonly finding: SessionFindingDto; readonly usage: SessionUsage };
+  readonly tree: SessionTree; readonly finding: SessionFindingDto; readonly usage: SessionUsage;
+  readonly unattributedLoads: UnattributedLoads };
 // GET /api/skills/usage. `skills` covers every session of the range; `sessions` is the detail list `detailLimit`
 // bounds, and `truncated` says it was shortened.
 export type SkillsUsageDto = { readonly generatedAt: number; readonly from: number; readonly to: number;
   readonly automated: AutomatedMode; readonly detailLimit: number; readonly sessionCount: number;
   readonly truncated: boolean; readonly skills: readonly SkillUsageAggregate[]; readonly sessions: readonly SessionUsage[] };
+
+export type UnattributedLoads = { readonly count: number; readonly uris: readonly string[] };
