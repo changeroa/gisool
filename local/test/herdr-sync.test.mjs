@@ -200,12 +200,12 @@ test("binding-only hook links reported and cwd sessions before any ordinary even
   const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
     body: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__gisool__search_skills",
       tool_use_id: "unseen-tool", session_id: "binding-first", cwd: "/binding" }) });
-  // Then both links exist despite no event publication, new snapshot, or SessionStart.
+  // Then the reported identity wins despite no event publication, new snapshot, or SessionStart.
   assert.equal(res.status, 202);
   const row = db.prepare("SELECT id FROM sessions WHERE runtime_session_id = 'binding-first'").get();
   assert.ok(row);
   assert.deepEqual(db.prepare("SELECT pane_id, session_id FROM pane_sessions ORDER BY pane_id").all().map((r) => ({ ...r })),
-    [{ pane_id: "cwd", session_id: row.id }, { pane_id: "reported", session_id: row.id }]);
+    [{ pane_id: "reported", session_id: row.id }]);
   assert.equal(db.prepare("SELECT count(*) n FROM events").get().n, 0);
   assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
 });
@@ -333,6 +333,104 @@ test("any agent without usable identity links by cwd within lifetime, never with
   ]);
   assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions WHERE pane_id = 'no-cwd'").get().n, 0);
   assert.equal(db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = 'reported'").get().session_id, null);
+});
+
+const linkedPairs = (db) => db.prepare("SELECT pane_id, session_id, source FROM pane_sessions WHERE session_id IS NOT NULL ORDER BY pane_id, session_id")
+  .all().map((row) => ({ ...row }));
+const reportedIdentity = (value) => ({ agent: "codex", kind: "id", source: "hook", value });
+
+for (const order of [[0, 1], [1, 0]]) {
+  test(`same-cwd sessions stay exclusive when reported identities arrive ${order.join(" then ")}`, async (t) => {
+    // Given two same-cwd panes and overlapping sessions started three seconds apart.
+    const base = Date.now() - 20_000;
+    const panes = [
+      pane("r2:p1", { cwd: "/r2", created_ms: base }),
+      pane("r2:p2", { cwd: "/r2", created_ms: base + 3_000 }),
+    ];
+    const fake = await fakeHerdr(t, topology(panes));
+    const { db, sync } = await follower(t, fake);
+    session(db, "session-one", { cwd: "/r2", start: base + 6_000, runtimeId: "runtime-one" });
+    sync.linkSessions();
+    session(db, "session-two", { cwd: "/r2", start: base + 9_000, conversation: "runtime-two" });
+    sync.linkSessions();
+    assert.deepEqual(linkedPairs(db), [
+      { pane_id: "r2:p1", session_id: "session-two", source: "inferred:cwd_time" },
+      { pane_id: "r2:p2", session_id: "session-one", source: "inferred:cwd_time" },
+    ]);
+    // When reported identities correct the initially plausible but wrong inference, in either order.
+    for (const index of order) {
+      panes[index].agent_session = reportedIdentity(index === 0 ? "runtime-one" : "runtime-two");
+      fake.snapshot = topology(panes);
+      await sync.reconcile();
+      const pairs = linkedPairs(db);
+      assert.equal(pairs.filter((r) => r.session_id === (index === 0 ? "session-one" : "session-two")).length, 1);
+      assert.equal(pairs.filter((r) => r.pane_id === panes[index].pane_id).length, 1);
+    }
+    // Then only fixture-known reported pairs remain across repeated reconcile and late ingest passes.
+    const expected = [
+      { pane_id: "r2:p1", session_id: "session-one", source: "herdr:hook" },
+      { pane_id: "r2:p2", session_id: "session-two", source: "herdr:hook" },
+    ];
+    assert.deepEqual(linkedPairs(db), expected);
+    await sync.reconcile();
+    sync.linkSessions();
+    assert.deepEqual(linkedPairs(db), expected);
+  });
+}
+
+test("sequential sessions reuse one pane but overlapping sessions stay unlinked", async (t) => {
+  // Given one pane, an ended session, its successor, and an overlapping third session.
+  const fake = await fakeHerdr(t, topology([pane("sequential", { cwd: "/seq", created_ms: 100 })]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "first", { cwd: "/seq", start: 101 });
+  db.prepare("UPDATE sessions SET ended_at = 200 WHERE id = 'first'").run();
+  session(db, "second", { cwd: "/seq", start: 200 });
+  session(db, "overlapping", { cwd: "/seq", start: 201 });
+  // When linking is repeated after all sessions have arrived.
+  sync.linkSessions();
+  sync.linkSessions();
+  // Then sequential history remains and the overlapping session has no pane.
+  assert.deepEqual(linkedPairs(db), [
+    { pane_id: "sequential", session_id: "first", source: "inferred:cwd_time" },
+    { pane_id: "sequential", session_id: "second", source: "inferred:cwd_time" },
+  ]);
+  assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions WHERE session_id = 'overlapping'").get().n, 0);
+});
+
+test("equally close panes leave a session unlinked rather than guess", async (t) => {
+  // Given two equally close candidates, including a pane first observed without a creation time.
+  const clock = t.mock.method(Date, "now", () => 100);
+  const fake = await fakeHerdr(t, topology([
+    pane("tie:p1", { cwd: "/tie", created_ms: 100 }), pane("tie:p2", { cwd: "/tie" }),
+  ]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "tie-session", { cwd: "/tie", start: 101 });
+  // When a late ingest pass and subsequent snapshot retry the ambiguous attribution.
+  clock.mock.mockImplementation(() => 200);
+  sync.linkSessions();
+  await sync.reconcile();
+  // Then no guessed relation is stored, and first-observed time remains stable.
+  assert.deepEqual(linkedPairs(db), []);
+  assert.equal(db.prepare("SELECT created_ms FROM herdr_panes WHERE id = 'tie:p2'").get().created_ms, 100);
+});
+
+test("late earlier session is assigned before a concurrently open later session", async (t) => {
+  // Given a later session ingested first in the newer pane.
+  const fake = await fakeHerdr(t, topology([
+    pane("late:p1", { cwd: "/late-order", created_ms: 100 }),
+    pane("late:p2", { cwd: "/late-order", created_ms: 200 }),
+  ]));
+  const { db, sync } = await follower(t, fake);
+  session(db, "later", { cwd: "/late-order", start: 400 });
+  sync.linkSessions();
+  // When an earlier session arrives late.
+  session(db, "earlier", { cwd: "/late-order", start: 300 });
+  sync.linkSessions();
+  // Then chronological inference is deterministic regardless of ingest order.
+  assert.deepEqual(linkedPairs(db), [
+    { pane_id: "late:p1", session_id: "later", source: "inferred:cwd_time" },
+    { pane_id: "late:p2", session_id: "earlier", source: "inferred:cwd_time" },
+  ]);
 });
 
 test("pane.closed is applied before a subsequent snapshot can answer", async (t) => {

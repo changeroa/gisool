@@ -44,21 +44,44 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
       OR (pane_sessions.source = 'inferred:cwd_time' AND id = pane_sessions.agent_session_value)
     ORDER BY started_at, id LIMIT 1)
     WHERE session_id IS NULL`);
-  // Only panes without a usable reported identity are eligible for cwd inference.
   const infer = db.prepare(`INSERT INTO pane_sessions
     (pane_id, agent, source, agent_session_value, session_id, first_seen_ms, last_seen_ms)
-    SELECT p.id, ?, 'inferred:cwd_time', s.id, s.id, ?, ? FROM herdr_panes p JOIN sessions s ON s.cwd = p.cwd
-    WHERE p.id = ? AND p.cwd <> '' AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
-    ON CONFLICT(pane_id, agent_session_value) DO UPDATE SET last_seen_ms = excluded.last_seen_ms`);
+    VALUES (?, ?, 'inferred:cwd_time', ?, ?, ?, ?)`);
+  const inferSessions = db.prepare(`SELECT s.id FROM sessions s
+    WHERE s.cwd IS NOT NULL AND s.cwd <> ''
+      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id)
+    ORDER BY s.started_at, s.id`);
+  const candidates = db.prepare(`SELECT p.id, p.created_ms FROM herdr_panes p JOIN sessions s ON s.cwd = p.cwd
+    WHERE s.id = ? AND s.started_at >= p.created_ms AND s.started_at <= COALESCE(p.closed_ms, ?)
+      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.pane_id = p.id AND ps.source <> 'inferred:cwd_time')
+      AND NOT EXISTS (SELECT 1 FROM pane_sessions ps JOIN sessions other ON other.id = ps.session_id
+        WHERE ps.pane_id = p.id AND other.started_at < COALESCE(s.ended_at, 9223372036854775807)
+          AND s.started_at < COALESCE(other.ended_at, 9223372036854775807))
+    ORDER BY p.created_ms DESC, p.id LIMIT 2`);
   // Latest snapshot is retained only to retry linking when ingest creates sessions later.
   let panes: z.infer<typeof paneSchema>[] = [];
   const usable = (pane: z.infer<typeof paneSchema>) => pane.agent_session?.kind === "id" && pane.agent_session.value.trim() !== "";
   const linkSessions = () => {
     if (stopped) return;
-    linkPending.run();
     const now = Date.now();
-    for (const pane of panes) {
-      if (!usable(pane) && pane.cwd) infer.run(pane.agent ?? null, now, now, pane.pane_id, now);
+    db.exec("SAVEPOINT herdr_links");
+    try {
+      linkPending.run();
+      // Rebuild in session-start order so late ingest and old many-to-many rows
+      // cannot bias ownership. Reported rows survive and reserve both endpoints.
+      const previous = db.prepare("SELECT * FROM pane_sessions WHERE source = 'inferred:cwd_time'").all();
+      db.exec("DELETE FROM pane_sessions WHERE source = 'inferred:cwd_time'");
+      for (const session of inferSessions.all()) {
+        const [first, second] = candidates.all(session.id, now);
+        if (!first || first.created_ms === second?.created_ms) continue;
+        const old = previous.find((row) => row.pane_id === first.id && row.session_id === session.id);
+        const pane = panes.find((p) => p.pane_id === first.id);
+        infer.run(first.id, pane?.agent ?? old?.agent ?? null, session.id, session.id, old?.first_seen_ms ?? now, now);
+      }
+      db.exec("RELEASE herdr_links");
+    } catch (error) {
+      db.exec("ROLLBACK TO herdr_links; RELEASE herdr_links");
+      throw error;
     }
   };
   const applySnapshot = (snapshot: z.infer<typeof snapshotSchema>["snapshot"]) => {
