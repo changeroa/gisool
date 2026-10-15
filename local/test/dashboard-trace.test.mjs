@@ -59,17 +59,21 @@ test("model and tool steps carry the store's summary plus the facts their bodies
   const steps = fixtures.traces[ALL_KINDS_SESSION];
   const llm = steps.find((step) => step.kind === "llm_call");
   assert.equal(llm.detail.kind, "llm_call");
-  const tokens = llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens;
-  assert.ok(llm.summary.includes(llm.detail.model) && llm.summary.includes(String(tokens)), llm.summary);
-  assert.ok(trace.formatCost(llm.detail.costUsd).includes(llm.detail.costUsd.toFixed(4)));
+  assert.equal(llm.detail.model, "claude-fable-5-1");
+  assert.equal(llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens, 26343);
+  assert.ok(llm.summary.includes("claude-fable-5-1") && llm.summary.includes("26343"), llm.summary);
+  assert.equal(llm.detail.costUsd, 0.31913075);
+  assert.ok(trace.formatCost(llm.detail.costUsd).includes("0.3191"));
   assert.ok(!/\d/.test(trace.formatCost(undefined)), "a runtime that reports no cost shows no number");
   assert.ok(!/\d/.test(trace.formatCost(Number.NaN)));
   assert.notEqual(trace.formatCost(undefined), trace.formatCost(0), "unknown cost and zero cost differ");
   assert.ok(trace.formatCost(0).includes("0.0000"));
 
   const tool = steps.find((step) => step.kind === "tool_call");
-  assert.ok(tool.summary.includes(tool.detail.toolName) && tool.summary.includes(String(tool.detail.durationMs)), tool.summary);
   assert.equal(tool.detail.kind, "tool_call");
+  assert.deepEqual([tool.detail.toolName, tool.detail.durationMs, tool.detail.success], ["Bash", 267, true]);
+  assert.ok(tool.summary.includes("Bash"), tool.summary);
+  assert.match(tool.summary, /(^|\D)267(\D|$)/, "the summary carries the reported duration");
   assert.deepEqual(trace.toolArgsPreview(tool.detail), { captured: true, text: tool.detail.args, truncated: false });
   assert.equal(tool.detail.argsLength, tool.detail.args.length);
   const long = { kind: "tool_call", args: "가".repeat(trace.TOOL_ARGS_PREVIEW_CHARS + 40) };
