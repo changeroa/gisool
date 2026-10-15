@@ -160,7 +160,8 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
           if (typeof previousPane?.cwd === "string" && previousPane.cwd !== "") changedCwds.add(previousPane.cwd);
           if (p.cwd) changedCwds.add(p.cwd);
         }
-        if (p.agent_status === "exited" || (previousPane?.agent && p.agent === null && !p.agent_session)) {
+        // A complete snapshot omits these fields for a shell after agent exit. Partial events below do not.
+        if (p.agent_status === "exited" || (previousPane?.agent && p.agent == null && !p.agent_session)) {
           endPaneSessions.run(now, p.pane_id);
         }
         upsertPane.run(p.pane_id, p.workspace_id, p.tab_id, p.label ?? p.title ?? null, p.cwd ?? null, p.created_ms ?? now,
