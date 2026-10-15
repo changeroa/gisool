@@ -13,6 +13,7 @@ const messageSchema = z.object({
 export type HerdrMethod = "ping" | "session.snapshot" | "events.subscribe";
 export type HerdrClient = {
   request(method: HerdrMethod, params?: Record<string, unknown>): Promise<unknown>;
+  subscribePane(paneId: string): Promise<() => void>;
   close(): void;
 };
 
@@ -40,6 +41,7 @@ export function createHerdrClient(opts: {
   let socket: Socket | undefined;
   let socketPath: string | undefined;
   const sockets = new Set<Socket>();
+  const paneStreams = new Set<Socket>();
   let stopped = false;
   let retry: NodeJS.Timeout | undefined;
   let backoff = 1_000;
@@ -66,19 +68,38 @@ export function createHerdrClient(opts: {
     retry.unref();
     backoff = Math.min(backoff * 2, 30_000);
   };
+  const requestOn = (active: Socket, method: HerdrMethod, params: Record<string, unknown>): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const id = String(++seq);
+      const timer = setTimeout(() => active.destroy(new Error(`herdr ${method} timed out`)), 5_000);
+      timer.unref();
+      pending.set(id, { socket: active, resolve, reject, timer });
+      active.write(`${JSON.stringify({ id, method, params })}\n`);
+    });
   const client: HerdrClient = {
     request(method, params = {}) {
       if (stopped || !socketPath || !socket || socket.destroyed) return Promise.reject(new Error("herdr disconnected"));
       // herdr closes one-shot RPC sockets after their reply. Only subscriptions persist.
       const active = method === "events.subscribe" ? socket : createConnection(socketPath);
       if (active !== socket) attach(active);
-      return new Promise((resolve, reject) => {
-        const id = String(++seq);
-        const timer = setTimeout(() => active.destroy(new Error(`herdr ${method} timed out`)), 5_000);
-        timer.unref();
-        pending.set(id, { socket: active, resolve, reject, timer });
-        active.write(`${JSON.stringify({ id, method, params })}\n`);
-      });
+      return requestOn(active, method, params);
+    },
+    async subscribePane(paneId) {
+      if (stopped || !socketPath || !socket || socket.destroyed) throw new Error("herdr disconnected");
+      const active = createConnection(socketPath);
+      paneStreams.add(active);
+      attach(active);
+      try {
+        z.object({ type: z.literal("subscription_started") }).parse(await requestOn(active, "events.subscribe", {
+          subscriptions: [{ type: "pane.agent_status_changed", pane_id: paneId }],
+        }));
+      } catch (error) {
+        paneStreams.delete(active);
+        active.destroy();
+        throw error;
+      }
+      // Herdr subscriptions belong to their socket; closing it is the unsubscribe operation.
+      return () => { paneStreams.delete(active); active.destroy(); };
     },
     close() {
       stopped = true;
@@ -103,12 +124,14 @@ export function createHerdrClient(opts: {
     });
     active.on("close", () => {
       sockets.delete(active);
+      const paneStream = paneStreams.delete(active);
       for (const [id, p] of pending) {
         if (p.socket !== active) continue;
         clearTimeout(p.timer);
         p.reject(new Error("herdr disconnected"));
         pending.delete(id);
       }
+      if (!stopped && paneStream) socket?.destroy(new Error("herdr pane subscription disconnected"));
       if (stopped || active !== socket) return;
       for (const other of sockets) other.destroy();
       opts.onDisconnect();
@@ -137,8 +160,8 @@ export function createHerdrClient(opts: {
           clearTimeout(p.timer);
           if (message.error !== undefined) p.reject(new Error(`herdr error: ${JSON.stringify(message.error)}`));
           else p.resolve(message.result);
-          if (active !== socket) active.destroy();
-        } else if (message.event && active === socket) opts.onEvent(message.event, message.data);
+          if (active !== socket && !paneStreams.has(active)) active.destroy();
+        } else if (message.event && (active === socket || paneStreams.has(active))) opts.onEvent(message.event, message.data);
       }
       if (buffer.length > 8 * 1024 * 1024) active.destroy(new Error("herdr line exceeds 8 MB"));
     });

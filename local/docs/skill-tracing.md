@@ -45,8 +45,10 @@ are separate observations, not tool-result guesses.
 ## Pane and turn joins
 
 The tree is workspace > tab > pane > session > turn > skill span > tool/model calls. A pane can contain
-successive sessions. Sync subscribes to herdr lifecycle events and reconciles snapshots, including after
-reconnection.
+successive sessions. Sync subscribes globally to herdr topology events and opens a separate
+`pane.agent_status_changed` stream with the required `pane_id` for each live pane from snapshots or
+pane-creation reconciliation. Closing a pane or removing it from its workspace closes that stream
+(herdr subscriptions are socket-scoped). Reconnection restores subscriptions from a fresh snapshot.
 
 Reported identity wins: a usable herdr `agent_session` ID matches a session's runtime session ID or
 conversation ID. These links retain their `herdr:` source. Without usable identity, any agent, including
@@ -66,7 +68,7 @@ An old open pane's entire completed session history is not deleted and recreated
 
 The Claude pack installs both SessionStart and SessionEnd hooks using the same `hook-post.mjs` command.
 A SessionEnd becomes a `session_end` event and sets `sessions.ended_at` to its event timestamp. A herdr
-`pane.exited`, exited agent status, or snapshot showing a previously detected agent removed also ends
+`pane.exited`, pane status reporting `agent:null`, or a snapshot showing a previously detected agent removed also ends
 linked open sessions. Historical links survive these end signals, but no longer reserve the pane forever.
 An idle or `done` interactive agent is not a process exit.
 

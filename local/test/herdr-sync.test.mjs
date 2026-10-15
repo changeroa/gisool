@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
 import { distImport, makeSandbox } from "./_helpers.mjs";
 import { http, jsonHeaders } from "./helpers/api.mjs";
@@ -46,6 +46,7 @@ async function fakeHerdr(t, snapshot) {
   const events = new EventEmitter();
   const sockets = new Set();
   const requests = [];
+  const subscriptions = new Map();
   let server;
   let current = snapshot;
   let corrupt = false;
@@ -59,7 +60,13 @@ async function fakeHerdr(t, snapshot) {
   const start = async () => {
     server = createServer((socket) => {
       sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
+      socket.on("close", () => {
+        sockets.delete(socket);
+        for (const subscription of subscriptions.get(socket) ?? []) {
+          if (subscription.type === "pane.agent_status_changed") events.emit("unsubscribe", subscription.pane_id);
+        }
+        subscriptions.delete(socket);
+      });
       socket.on("error", () => {});
       let buffer = "";
       socket.setEncoding("utf8");
@@ -72,9 +79,16 @@ async function fakeHerdr(t, snapshot) {
           requests.push(req);
           switch (req.method) {
             case "ping": send(socket, req.id, { type: "pong" }); break;
-            case "events.subscribe":
+            case "events.subscribe": {
+              const entries = req.params.subscriptions;
+              if (entries.some((s) => s.type === "pane.agent_status_changed" && typeof s.pane_id !== "string")) {
+                socket.end(`${JSON.stringify({ id: "", error: { code: "invalid_request", message: "missing field pane_id" } })}\n`);
+                break;
+              }
+              subscriptions.set(socket, entries);
               send(socket, req.id, { type: "subscription_started" });
               break;
+            }
             case "session.snapshot": {
               const result = { type: "session_snapshot", snapshot: structuredClone(current) };
               if (hold) held.push(() => send(socket, req.id, result));
@@ -106,7 +120,16 @@ async function fakeHerdr(t, snapshot) {
     set corrupt(value) { corrupt = value; },
     set hold(value) { hold = value; },
     release() { for (const sendHeld of held.splice(0)) sendHeld(); },
-    push(event, data) { for (const socket of sockets) socket.write(`${JSON.stringify({ event, data })}\n`); },
+    subscriptionCount(paneId) {
+      return [...subscriptions.values()].flat().filter((s) => s.type === "pane.agent_status_changed" && s.pane_id === paneId).length;
+    },
+    push(event, data) {
+      for (const [socket, entries] of subscriptions) {
+        if (entries.some((s) => s.type === "pane.agent_status_changed"
+          ? event === s.type && data.pane_id === s.pane_id
+          : s.type.replaceAll(".", "_") === event)) socket.write(`${JSON.stringify({ event, data })}\n`);
+      }
+    },
   };
 }
 
@@ -130,6 +153,51 @@ function session(db, id, { runtime = "codex", runtimeId = null, conversation = n
   db.prepare("INSERT INTO sessions (id, runtime, runtime_session_id, conversation_id, cwd, started_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(id, runtime, runtimeId, conversation, cwd, start);
 }
+
+test("herdr rejects an agent-status subscription without its required pane_id", { timeout: 8_000 }, async (t) => {
+  // Given the real protocol's required pane_id validation on the fake server.
+  const fake = await fakeHerdr(t, topology([]));
+  const socket = createConnection(fake.path);
+  t.after(() => socket.destroy());
+  const received = once(socket, "data");
+  const closed = once(socket, "close");
+  // When a client sends the rejected global shape from the verifier's reproduction.
+  socket.write(`${JSON.stringify({ id: "invalid", method: "events.subscribe",
+    params: { subscriptions: [{ type: "pane.agent_status_changed" }] } })}\n`);
+  const [bytes] = await received;
+  // Then the request is rejected and the subscription socket is closed.
+  assert.equal(JSON.parse(String(bytes)).error.code, "invalid_request");
+  await closed;
+});
+
+test("pane status streams follow snapshots and pane creation, then unsubscribe on close and workspace removal", async (t) => {
+  // Given one live pane and a server that rejects invalid global status subscriptions.
+  const fake = await fakeHerdr(t, topology([pane("first", { created_ms: 0 })]));
+  const { sync, messages } = await follower(t, fake);
+  assert.equal(fake.subscriptionCount("first"), 1);
+  // When creation, pane closure, and workspace removal change the live pane population.
+  fake.snapshot = topology([pane("first", { created_ms: 0 }), pane("second", { created_ms: 0 })]);
+  await signal(fake.events, "request", (req) => req.method === "events.subscribe"
+    && req.params.subscriptions.some((s) => s.pane_id === "second"),
+  () => fake.push("pane_created", { pane_id: "second", workspace_id: "w1" }));
+  await sync.reconcile();
+  assert.equal(fake.subscriptionCount("second"), 1);
+  fake.snapshot = topology([pane("second", { created_ms: 0 })]);
+  await signal(fake.events, "unsubscribe", (id) => id === "first",
+    () => fake.push("pane_closed", { pane_id: "first", workspace_id: "w1" }));
+  await sync.reconcile();
+  assert.equal(fake.subscriptionCount("first"), 0);
+  fake.snapshot = { workspaces: [], tabs: [], panes: [] };
+  await signal(fake.events, "unsubscribe", (id) => id === "second",
+    () => fake.push("workspace_closed", { workspace_id: "w1" }));
+  await sync.reconcile();
+  // Then only the global topology stream remains, without leaking a removed pane subscription or disconnecting.
+  assert.equal(fake.subscriptionCount("second"), 0);
+  assert.equal(messages.includes("herdr unreachable"), false);
+  const statusRequests = fake.requests.filter((r) => r.method === "events.subscribe")
+    .flatMap((r) => r.params.subscriptions).filter((s) => s.type === "pane.agent_status_changed");
+  assert.deepEqual(statusRequests.map((s) => s.pane_id), ["first", "second"]);
+});
 
 async function followedServer(t, fake, discoveryDir) {
   const sb = makeSandbox();
@@ -315,8 +383,12 @@ test("snapshot stores two panes and links a reported identity arriving after the
   // Then the foreign key points at the gisool session, not the herdr identity.
   assert.deepEqual({ ...db.prepare("SELECT session_id, source FROM pane_sessions").get() }, { session_id: "gisool-id", source: "herdr:otel" });
   const subs = fake.requests.find((r) => r.method === "events.subscribe").params.subscriptions;
-  assert.equal(subs.length, 13);
-  assert.ok(subs.some((s) => s.type === "pane.agent_status_changed"));
+  assert.equal(subs.length, 12);
+  assert.ok(subs.every((s) => s.type !== "pane.agent_status_changed"));
+  assert.deepEqual(fake.requests.filter((r) => r.method === "events.subscribe").slice(1).map((r) => r.params.subscriptions), [
+    [{ type: "pane.agent_status_changed", pane_id: "w1:p1" }],
+    [{ type: "pane.agent_status_changed", pane_id: "w1:p2" }],
+  ]);
   assert.ok(subs.every((s) => !["pane.output_matched", "pane.scroll_changed"].includes(s.type)));
 });
 
@@ -400,7 +472,7 @@ test("SessionEnd ingestion sets ended_at and releases the inferred reservation",
   assert.equal(db.prepare("SELECT count(*) n FROM pane_sessions").get().n, 1);
 });
 
-for (const exit of ["pane_exited", "pane_agent_status_changed", "snapshot-agent-removed"]) {
+for (const exit of ["pane_exited", "pane.agent_status_changed", "snapshot-agent-removed"]) {
   test(`${exit} ends the old session and frees the pane for later telemetry`, async (t) => {
     // Given an inferred session with no SessionEnd hook.
     const fake = await fakeHerdr(t, topology([pane("exit", { agent: "claude", cwd: "/exit", created_ms: 0 })]));
@@ -413,7 +485,7 @@ for (const exit of ["pane_exited", "pane_agent_status_changed", "snapshot-agent-
       await sync.reconcile();
     } else {
       await signal(changes, "change", () => db.prepare("SELECT ended_at FROM sessions WHERE id = 'old'").get().ended_at !== null,
-        () => fake.push(exit, { pane_id: "exit", agent_status: "exited" }));
+        () => fake.push(exit, { pane_id: "exit", agent_status: "unknown", agent: null }));
       await sync.reconcile();
     }
     const ended = db.prepare("SELECT ended_at FROM sessions WHERE id = 'old'").get().ended_at;

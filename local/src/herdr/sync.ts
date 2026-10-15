@@ -5,7 +5,7 @@ import { createHerdrClient, type HerdrClient } from "./client.js";
 const subscriptions = [
   "workspace.created", "workspace.renamed", "workspace.closed",
   "tab.created", "tab.renamed", "tab.closed",
-  "pane.created", "pane.updated", "pane.moved", "pane.closed", "pane.exited", "pane.agent_detected", "pane.agent_status_changed",
+  "pane.created", "pane.updated", "pane.moved", "pane.closed", "pane.exited", "pane.agent_detected",
 ] as const;
 const workspaceSchema = z.object({ workspace_id: z.string(), label: z.string().nullish(), created_ms: z.number().nullish() });
 const tabSchema = z.object({ tab_id: z.string(), workspace_id: z.string(), label: z.string().nullish(), created_ms: z.number().nullish() });
@@ -21,7 +21,7 @@ const snapshotSchema = z.object({
   snapshot: z.object({ workspaces: z.array(workspaceSchema), tabs: z.array(tabSchema), panes: z.array(paneSchema) }),
 });
 const closedSchema = z.object({ workspace_id: z.string().optional(), tab_id: z.string().optional(), pane_id: z.string().optional(),
-  agent_status: z.string().optional() });
+  agent_status: z.string().optional(), agent: z.string().nullish() });
 const RECENT_PANE_MS = 24 * 60 * 60 * 1000;
 const runtimeOf = (agent: unknown) => agent === "claude" ? "claude-code" : agent;
 
@@ -33,6 +33,11 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
   let running: Promise<void> | undefined;
   let again = false;
   const changedCwds = new Set<string>();
+  const paneSubscriptions = new Map<string, { workspaceId: string; stop: () => void }>();
+  const unsubscribePane = (paneId: string) => {
+    paneSubscriptions.get(paneId)?.stop();
+    paneSubscriptions.delete(paneId);
+  };
   const upsertWorkspace = db.prepare(`INSERT INTO herdr_workspaces (id, label, created_ms) VALUES (?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET label = excluded.label, closed_ms = NULL`);
   const upsertTab = db.prepare(`INSERT INTO herdr_tabs (id, workspace_id, label, created_ms) VALUES (?, ?, ?, ?)
@@ -200,7 +205,26 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         if (stopped || generation !== connection) return;
         // Do not resurrect a pane from a response overtaken by a close/update event.
         if (before !== revision) again = true;
-        else applySnapshot(snapshot.snapshot);
+        else {
+          applySnapshot(snapshot.snapshot);
+          const panes = new Map(snapshot.snapshot.panes
+            .filter((pane) => snapshot.snapshot.workspaces.some((workspace) => workspace.workspace_id === pane.workspace_id))
+            .map((pane) => [pane.pane_id, pane]));
+          for (const [paneId, subscription] of paneSubscriptions) {
+            if (panes.get(paneId)?.workspace_id !== subscription.workspaceId) unsubscribePane(paneId);
+          }
+          for (const [paneId, pane] of panes) {
+            if (paneSubscriptions.has(paneId)) continue;
+            const stop = await client.subscribePane(paneId);
+            if (stopped || generation !== connection) {
+              stop();
+              again = true;
+              break;
+            }
+            paneSubscriptions.set(paneId, { workspaceId: pane.workspace_id, stop });
+            if (before !== revision) { again = true; break; }
+          }
+        }
       } while (again && !stopped);
     })().finally(() => { running = undefined; });
     return running;
@@ -215,6 +239,7 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
     onDisconnect() {
       ready = false;
       connection += 1;
+      for (const paneId of paneSubscriptions.keys()) unsubscribePane(paneId);
     },
     async onConnect(active) {
       ready = false;
@@ -237,6 +262,9 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
         switch (event) {
           case "workspace_closed":
             if (workspace) {
+              for (const row of db.prepare("SELECT id FROM herdr_panes WHERE workspace_id = ?").all(workspace)) {
+                if (typeof row.id === "string") unsubscribePane(row.id);
+              }
               db.prepare("UPDATE herdr_workspaces SET closed_ms = ? WHERE id = ?").run(now, workspace);
               db.prepare("UPDATE herdr_tabs SET closed_ms = ? WHERE workspace_id = ?").run(now, workspace);
               db.prepare("UPDATE herdr_panes SET closed_ms = ? WHERE workspace_id = ?").run(now, workspace);
@@ -244,6 +272,9 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
             break;
           case "tab_closed":
             if (tab) {
+              for (const row of db.prepare("SELECT id FROM herdr_panes WHERE tab_id = ?").all(tab)) {
+                if (typeof row.id === "string") unsubscribePane(row.id);
+              }
               db.prepare("UPDATE herdr_tabs SET closed_ms = ? WHERE id = ?").run(now, tab);
               db.prepare("UPDATE herdr_panes SET closed_ms = ? WHERE tab_id = ?").run(now, tab);
             }
@@ -251,12 +282,13 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
           case "pane_closed":
           case "pane_exited":
             if (pane) {
+              unsubscribePane(pane);
               endPaneSessions.run(now, pane);
               db.prepare("UPDATE herdr_panes SET closed_ms = ? WHERE id = ?").run(now, pane);
             }
             break;
-          case "pane_agent_status_changed":
-            if (pane && parsed.data.agent_status === "exited") endPaneSessions.run(now, pane);
+          case "pane.agent_status_changed":
+            if (pane && parsed.data.agent === null) endPaneSessions.run(now, pane);
             break;
         }
       }
@@ -271,6 +303,7 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
     close() {
       stopped = true;
       clearInterval(interval);
+      for (const paneId of paneSubscriptions.keys()) unsubscribePane(paneId);
       client.close();
     },
   };
