@@ -130,7 +130,7 @@ function sessionIdsOf(tree: FlowTree): string[] {
 }
 
 /** Drops the links to sessions the automated filter excludes; the pane stays, and the report says what was left out. */
-function filterTree(tree: FlowTree, automation: Record<string, string>, mode: AutomatedMode): { tree: FlowTree; excluded: ExcludedSession[] } {
+function filterTree(tree: FlowTree, automation: Record<string, string>, mode: AutomatedMode): { tree: FlowTree; excluded: Map<string, ExcludedSession> } {
   const excluded = new Map<string, ExcludedSession>();
   const tabs = tree.tabs.map((tab) => ({
     ...tab,
@@ -143,7 +143,7 @@ function filterTree(tree: FlowTree, automation: Record<string, string>, mode: Au
       }),
     })),
   }));
-  return { tree: { ...tree, tabs }, excluded: [...excluded.values()] };
+  return { tree: { ...tree, tabs }, excluded };
 }
 
 function sessionsOf(tree: FlowTree): SessionTree[] {
@@ -189,7 +189,15 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const id = ref.startsWith(WORKSPACE_PREFIX) ? ref.slice(WORKSPACE_PREFIX.length) : ref;
     const full = flowTree(store, id);
     if (!full) return deny(res, 404, "flow_not_found", { message: `no flow or herdr workspace ${ref}` });
-    const { tree, excluded } = filterTree(full, store.sessionAutomation(sessionIdsOf(full)), automated);
+    // The comparison reads a wider population than the tree renders: a step can map a pane herdr placed on another
+    // tab. Classifying that population too keeps a hidden session from crediting a step it never ran.
+    const comparisonSessionIds = full.registered ? store.flowSessionIds(full.id) : [];
+    const automation = store.sessionAutomation([...sessionIdsOf(full), ...comparisonSessionIds]);
+    const { tree, excluded } = filterTree(full, automation, automated);
+    for (const sessionId of comparisonSessionIds) {
+      if (keepSession(sessionId, automation, automated)) continue;
+      excluded.set(sessionId, { sessionId, reason: automation[sessionId] ?? "not_automated" });
+    }
     const sessions = sessionsOf(tree);
     const digestOf = loadedDigests(store);
     const findings = sessions.map((session) => analyzeSession(session, digestOf));
@@ -206,8 +214,8 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       automated, tree,
       finding: { id: tree.id, sessions: findings.map(findingDto), aggregate: aggregateFindings(findings.flatMap((f) => f.turns)) },
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
-      comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: excluded.map((row) => row.sessionId) }) ?? null : null,
-      excludedSessions: excluded,
+      comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()] }) ?? null : null,
+      excludedSessions: [...excluded.values()],
     });
   }));
 

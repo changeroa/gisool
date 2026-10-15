@@ -109,6 +109,8 @@ export interface Store {
   endFlow(flowId: string): { endedMs: number; alreadyEnded: boolean } | undefined;
   // excludeSessions leaves those sessions out of the pane usage, so a filtered report compares against what it shows.
   flowPaneUsage(flowId: string, opts?: { excludeSessions?: readonly string[] }): PaneUsageRow[];
+  // Every session flowPaneUsage can read for this flow, so a caller can filter that population before comparing.
+  flowSessionIds(flowId: string): string[];
   // Read-API list: registered flows plus the herdr workspaces that have none, newest first, one page at a time.
   listFlows(q: FlowListQuery): FlowListRow[];
   // Automation id per session id for the ids given, automated sessions only (rules in store/automation.ts).

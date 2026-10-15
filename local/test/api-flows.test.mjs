@@ -5,6 +5,9 @@ import { distImport } from "./_helpers.mjs";
 import { bearer, http, startTestServer } from "./helpers/api.mjs";
 import { DAY, NOW as T, uri } from "./helpers/store.mjs";
 
+// The gate-review fixture lives ten days before the main one, so each test's range covers only its own sessions.
+const G = T - 10 * DAY;
+
 const { openDb } = await distImport("store/db.js");
 const { createStore } = await distImport("store/index.js");
 
@@ -100,11 +103,78 @@ function seedStore(gisoolHome) {
   }
 }
 
+/**
+ * The gate review's R1 scenario, seeded ten days before the main fixture so the range-scoped assertions above stay
+ * about their own data: a flow registered for one tab of a workspace whose other tab runs an automated session, a
+ * step mapped to a pane herdr placed on that other tab, and a model call that reports only two of its measurements.
+ */
+function seedGateFixture(gisoolHome) {
+  let clock = G;
+  const db = openDb(join(gisoolHome, "gisool.db"));
+  const store = createStore(db, { now: () => clock });
+  const ids = {};
+  try {
+    const session = (key, startedAt, events) => {
+      const ref = { runtime: "claude-code", runtimeSessionId: key };
+      const id = store.upsertSession(ref, startedAt);
+      for (const { kind, ts, ...rest } of events) {
+        seq += 1;
+        store.append({ id: `gate-${seq}`, kind, ts, source: rest.source ?? "otel", data: {}, ...rest, ref }, { sessionId: id, method: "runtime_id" });
+      }
+      ids[key] = id;
+    };
+    session("gate-human", G - 5_000, [
+      { kind: "prompt", ts: G - 4_900, text: "implement alpha", textLength: 15, turnKey: "gate-turn", source: "hook" },
+      { kind: "native_skill", ts: G - 4_800, turnKey: "gate-turn", data: { name: "alpha", via: "otel" } },
+      { kind: "llm_call", ts: G - 4_700, turnKey: "gate-turn", data: { model: "test-model", inputTokens: 11, outputTokens: 7, inputIncludesCache: false } },
+      { kind: "llm_call", ts: G - 4_600, turnKey: "gate-turn", data: { model: "test-model", totalTokens: 42, inputIncludesCache: false } },
+    ]);
+    session("gate-auto-b", G - 4_000, [
+      { kind: "prompt", ts: G - 3_900, text: AUTOMATED_PROMPT, textLength: AUTOMATED_PROMPT.length, turnKey: "gate-turn-b", source: "hook" },
+      { kind: "native_skill", ts: G - 3_800, turnKey: "gate-turn-b", data: { name: "secret-auto-skill", via: "otel" } },
+    ]);
+    session("gate-auto-c", G - 3_000, [
+      { kind: "prompt", ts: G - 2_900, text: AUTOMATED_PROMPT, textLength: AUTOMATED_PROMPT.length, turnKey: "gate-turn-c", source: "hook" },
+      { kind: "native_skill", ts: G - 2_800, turnKey: "gate-turn-c", data: { name: "mapped-auto-skill", via: "otel" } },
+    ]);
+
+    db.prepare("INSERT INTO herdr_workspaces (id, label, created_ms, closed_ms) VALUES (?, ?, ?, ?)").run("ws-gate", "Gate workspace", G - 10_000, null);
+    const tab = db.prepare("INSERT INTO herdr_tabs (id, workspace_id, label, created_ms, closed_ms) VALUES (?, ?, ?, ?, ?)");
+    tab.run("gate-a", "ws-gate", "a", G - 10_000, null);
+    tab.run("gate-b", "ws-gate", "b", G - 9_000, null);
+    const pane = db.prepare("INSERT INTO herdr_panes (id, workspace_id, tab_id, label, cwd, created_ms, closed_ms) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    pane.run("pane-a", "ws-gate", "gate-a", "a", "/tmp/gate", G - 8_000, null);
+    pane.run("pane-b", "ws-gate", "gate-b", "b", "/tmp/gate", G - 7_000, null);
+    pane.run("pane-c", "ws-gate", "gate-b", "c", "/tmp/gate", G - 6_000, null);
+    const link = db.prepare("INSERT INTO pane_sessions (pane_id, agent, source, agent_session_value, session_id, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    link.run("pane-a", "claude", "herdr:reported", "gate-human", ids["gate-human"], G - 5_000, G - 4_600);
+    link.run("pane-b", "claude", "herdr:reported", "gate-auto-b", ids["gate-auto-b"], G - 4_000, G - 3_800);
+    link.run("pane-c", "claude", "herdr:reported", "gate-auto-c", ids["gate-auto-c"], G - 3_000, G - 2_800);
+
+    const { row: spec } = store.putWorkflowSpec({
+      name: "gate-flow",
+      steps: [
+        { id: "a", skills: ["alpha"], together: false, expectTools: [] },
+        { id: "c", skills: ["mapped-auto-skill"], together: false, expectTools: [] },
+      ],
+    });
+    clock = G - 2_000;
+    const { flow } = store.createFlow({ workspaceId: "ws-gate", tabId: "gate-a", specId: spec.id, label: "gate flow" });
+    store.mapFlowStep(flow.id, "pane-a", "a");
+    store.mapFlowStep(flow.id, "pane-c", "c");
+    return { ids, flowId: flow.id };
+  } finally {
+    store.close();
+  }
+}
+
 let s;
 let fixture;
+let gate;
 before(async () => {
   s = await startTestServer();
   fixture = seedStore(s.gisoolHome);
+  gate = seedGateFixture(s.gisoolHome);
 });
 after(async () => { await s.stop(); });
 
@@ -113,12 +183,12 @@ const RANGE = () => `from=${T - DAY}&to=${T + DAY}`;
 
 test("the flows list pairs registered flows with the herdr workspaces that have none, newest first", async () => {
   const { ids, flowId, specId } = fixture;
-  const res = await get("/api/flows");
+  const res = await get(`/api/flows?from=${T - DAY}`);
   assert.equal(res.status, 200);
   assert.equal(typeof res.json.generatedAt, "number");
   assert.equal(res.json.automated, "exclude");
   assert.equal(res.json.limit, 20);
-  assert.deepEqual([res.json.from, res.json.to, res.json.nextCursor], [null, null, null]);
+  assert.deepEqual([res.json.from, res.json.to, res.json.nextCursor], [T - DAY, null, null]);
   assert.deepEqual(res.json.flows.map((f) => f.id), ["ws:ws-loose", flowId]);
 
   assert.deepEqual(res.json.flows[0], {
@@ -152,11 +222,11 @@ test("the automated session is left out of the list unless automated=include or 
 
 test("the list pages by cursor and refuses a limit, range or cursor it did not issue", async () => {
   const { flowId } = fixture;
-  const first = await get("/api/flows?limit=1");
+  const first = await get(`/api/flows?limit=1&from=${T - DAY}`);
   assert.deepEqual(first.json.flows.map((f) => f.id), ["ws:ws-loose"]);
   assert.equal(typeof first.json.nextCursor, "string");
 
-  const second = await get(`/api/flows?limit=1&cursor=${encodeURIComponent(first.json.nextCursor)}`);
+  const second = await get(`/api/flows?limit=1&from=${T - DAY}&cursor=${encodeURIComponent(first.json.nextCursor)}`);
   assert.deepEqual(second.json.flows.map((f) => f.id), [flowId]);
   assert.equal(second.json.nextCursor, null);
 
@@ -222,7 +292,10 @@ test("a flow report joins tree, finding, usage and spec comparison for the sessi
     { spans: research.spans, followThrough: research.followThrough, toolFailures: research.toolFailures, llmCalls: research.llmCalls, costUsd: research.costUsd },
     { spans: 1, followThrough: 1, toolFailures: 0, llmCalls: 1, costUsd: 0.25 },
   );
-  assert.deepEqual(research.tokens, [{ inputIncludesCache: false, calls: 1, inputTokens: 100, outputTokens: 20, cacheReadTokens: 5, cacheCreationTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 }]);
+  assert.deepEqual(research.tokens, [{ inputIncludesCache: false, calls: 1, inputTokens: 100, outputTokens: 20, cacheReadTokens: 5,
+    cacheCreationTokens: null, cacheWriteTokens: null, reasoningTokens: null, totalTokens: null,
+    unknownCalls: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 1, cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 1 } }],
+    "a measurement the runtime never reported stays null instead of reading as a measured 0");
   assert.deepEqual(
     { followThrough: docs.followThrough, llmCalls: docs.llmCalls, costUsd: docs.costUsd, costUnknownCalls: docs.costUnknownCalls },
     { followThrough: 1, llmCalls: 1, costUsd: null, costUnknownCalls: 1 },
@@ -335,4 +408,53 @@ test("the read APIs take the same bearer auth as the other /api routes", async (
     assert.equal(res.status, 401, path);
     assert.equal(res.json.error, "unauthorized", path);
   }
+});
+
+test("a tab-scoped flow keeps another tab's automated session out of its comparison", async () => {
+  const { ids, flowId } = gate;
+  const res = await get(`/api/flows/${flowId}`);
+  assert.equal(res.status, 200);
+  // The flow was registered for tab gate-a, so tab gate-b's unmapped pane is outside the scope it reports on.
+  assert.deepEqual(res.json.tree.tabs.map((tab) => tab.id), ["gate-a"]);
+  assert.deepEqual(res.json.tree.tabs[0].panes.map((pane) => pane.id), ["pane-a"]);
+  assert.ok(!res.text.includes("secret-auto-skill"), `another tab's skill reached the report: ${res.text.slice(0, 500)}`);
+  assert.ok(!res.text.includes(ids["gate-auto-b"]), "another tab's session must not appear anywhere in the report");
+  // pane-c is mapped to a step, so its automated session can reach the comparison and must be filtered there too.
+  assert.deepEqual(res.json.excludedSessions, [{ sessionId: ids["gate-auto-c"], reason: "codex_title" }]);
+  assert.deepEqual(res.json.comparison.steps.map((step) => [step.stepId, step.status, step.usedSkills]),
+    [["a", "matched", ["alpha"]], ["c", "no_skill_used", []]]);
+  assert.deepEqual(res.json.comparison.unplanned, []);
+
+  const included = await get(`/api/flows/${flowId}?automated=include`);
+  assert.deepEqual(included.json.excludedSessions, []);
+  assert.deepEqual(included.json.comparison.steps.map((step) => [step.stepId, step.status, step.usedSkills]),
+    [["a", "matched", ["alpha"]], ["c", "matched", ["mapped-auto-skill"]]]);
+  assert.ok(!included.text.includes("secret-auto-skill"), "the tab scope holds even when automated sessions are included");
+
+  const only = await get(`/api/flows/${flowId}?automated=only`);
+  assert.deepEqual(only.json.excludedSessions.map((row) => row.sessionId), [ids["gate-human"]]);
+  assert.deepEqual(only.json.comparison.steps.map((step) => [step.stepId, step.status]), [["a", "no_skill_used"], ["c", "matched"]]);
+});
+
+test("a measurement a model call never reported stays null in the flow, session and range reports", async () => {
+  const { ids, flowId } = gate;
+  // One span, two calls: the first reports input and output only, the second only a runtime total.
+  const expected = [{
+    inputIncludesCache: false, calls: 2, inputTokens: 11, outputTokens: 7,
+    cacheReadTokens: null, cacheCreationTokens: null, cacheWriteTokens: null, reasoningTokens: null, totalTokens: 42,
+    unknownCalls: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 2, cacheCreationTokens: 2, cacheWriteTokens: 2, reasoningTokens: 2, totalTokens: 1 },
+  }];
+
+  const report = await get(`/api/flows/${flowId}`);
+  const alpha = report.json.usage.skills.find((skill) => skill.skill === "alpha");
+  assert.deepEqual(alpha.tokens, expected);
+  assert.deepEqual([alpha.llmCalls, alpha.costUsd, alpha.costUnknownCalls], [2, null, 2]);
+
+  const session = await get(`/api/sessions/${ids["gate-human"]}/skill-report`);
+  assert.deepEqual(session.json.usage.spans.map((span) => span.tokens), [expected]);
+
+  const range = await get(`/api/skills/usage?from=${G - DAY}&to=${G + DAY}`);
+  assert.equal(range.json.sessionCount, 1);
+  assert.deepEqual(range.json.skills.map((skill) => skill.skill), ["alpha"]);
+  assert.deepEqual(range.json.skills[0].tokens, expected);
 });

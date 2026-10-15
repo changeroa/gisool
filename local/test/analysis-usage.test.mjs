@@ -103,8 +103,10 @@ test("a Codex span sums its reported tokens and leaves cost unknown", (t) => {
   const [span] = sessionUsage(sessionTree(store, id)).spans;
   // Then: the fixture's own numbers, with the cache semantics kept on the bucket.
   assert.deepEqual([span.turnId, span.name], [CODEX_TURN, "db-query"]);
+  // Codex reports cache_write and reasoning as 0 and never reports a cache-creation count, so that one stays unknown.
   assert.deepEqual(span.tokens, [{ inputIncludesCache: true, calls: 1, inputTokens: 19567, outputTokens: 5, cacheReadTokens: 13056,
-    cacheCreationTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 19572 }]);
+    cacheCreationTokens: null, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 19572,
+    unknownCalls: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 1, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 } }]);
   assert.deepEqual([span.llmCalls, span.costUsd, span.costUnknownCalls], [1, null, 1]);
 });
 
@@ -122,9 +124,11 @@ test("one span over two runtimes keeps the cache semantics apart and the cost un
   // Then: no bucket mixes the two conventions and the partially reported cost is null, not 0.25.
   assert.deepEqual(span.tokens, [
     { inputIncludesCache: false, calls: 1, inputTokens: 2, outputTokens: 4, cacheReadTokens: 10_523, cacheCreationTokens: 15_814,
-      cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 },
-    { inputIncludesCache: true, calls: 1, inputTokens: 19_567, outputTokens: 5, cacheReadTokens: 13_056, cacheCreationTokens: 0,
-      cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 19_572 },
+      cacheWriteTokens: null, reasoningTokens: null, totalTokens: null,
+      unknownCalls: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 1 } },
+    { inputIncludesCache: true, calls: 1, inputTokens: 19_567, outputTokens: 5, cacheReadTokens: 13_056, cacheCreationTokens: null,
+      cacheWriteTokens: null, reasoningTokens: null, totalTokens: 19_572,
+      unknownCalls: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 1, cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 0 } },
   ]);
   assert.deepEqual([span.llmCalls, span.costUsd, span.costUnknownCalls], [2, null, 1]);
 });
@@ -318,8 +322,10 @@ test("aggregates sum spans per skill and keep an unknown cost unknown", (t) => {
   assert.deepEqual([aggregate.skill, aggregate.spans, aggregate.spansWithoutFollowThrough], [uri("database-query"), 2, 0]);
   assert.deepEqual([aggregate.followThrough, aggregate.toolFailures, aggregate.llmCalls], [2, 1, 2]);
   assert.deepEqual([aggregate.costUsd, aggregate.costUnknownCalls], [null, 1]);
-  assert.deepEqual(aggregate.tokens, [{ inputIncludesCache: false, calls: 2, inputTokens: 17, outputTokens: 5, cacheReadTokens: 0,
-    cacheCreationTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 }]);
+  // Neither call reported a cache, reasoning or total count: those stay unknown for both calls instead of summing to 0.
+  assert.deepEqual(aggregate.tokens, [{ inputIncludesCache: false, calls: 2, inputTokens: 17, outputTokens: 5, cacheReadTokens: null,
+    cacheCreationTokens: null, cacheWriteTokens: null, reasoningTokens: null, totalTokens: null,
+    unknownCalls: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 2, cacheCreationTokens: 2, cacheWriteTokens: 2, reasoningTokens: 2, totalTokens: 2 } }]);
   assert.deepEqual(aggregate.corrections, { correction: 0, no_correction: 1, unknown: 1 });
 });
 

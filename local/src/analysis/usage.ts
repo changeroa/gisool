@@ -3,13 +3,23 @@ import { flowTree, sessionTree } from "./tree.js";
 
 /** "Used the skill?" per skill span, computed on read from reported events only; an unknown is `null`, never 0. */
 
-/** Token buckets stay separated by cache semantics: Claude reports input without the cached tokens, Codex includes them. */
+/** The measurements a model call can report. A runtime that omits one measured nothing, which is never a zero. */
+export const TOKEN_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens", "cacheWriteTokens",
+  "reasoningTokens", "totalTokens"] as const;
+export type UsageTokenKey = (typeof TOKEN_KEYS)[number];
+
+/**
+ * Token buckets stay separated by cache semantics: Claude reports input without the cached tokens, Codex includes them.
+ * Each measurement sums the calls that reported it and stays null while none did; `unknownCalls` says how many of
+ * `calls` reported nothing for it, so a partial sum is never read as a complete count. `totalTokens` is the
+ * runtime-reported total, summed as reported and never derived from the other buckets.
+ */
 export type UsageTokens = {
   readonly inputIncludesCache: boolean; readonly calls: number;
-  readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number;
-  readonly cacheCreationTokens: number; readonly cacheWriteTokens: number; readonly reasoningTokens: number;
-  // Runtime-reported total, summed as reported; never derived from the other buckets.
-  readonly totalTokens: number;
+  readonly inputTokens: number | null; readonly outputTokens: number | null; readonly cacheReadTokens: number | null;
+  readonly cacheCreationTokens: number | null; readonly cacheWriteTokens: number | null; readonly reasoningTokens: number | null;
+  readonly totalTokens: number | null;
+  readonly unknownCalls: Readonly<Record<UsageTokenKey, number>>;
 };
 
 /** A read of the skill's own files: `reported` comes from gisool MCP, `heuristic` from a tool argument path. */
@@ -116,19 +126,27 @@ export function nextPromptAfterTurn(session: SessionTree, turnIndex: number): Tr
 }
 
 function callTokens(data: Readonly<Record<string, unknown>>): UsageTokens {
-  const bucket = (key: string): number => numberOf(data[key]) ?? 0;
-  return { inputIncludesCache: data.inputIncludesCache === true, calls: 1,
-    inputTokens: bucket("inputTokens"), outputTokens: bucket("outputTokens"), cacheReadTokens: bucket("cacheReadTokens"),
-    cacheCreationTokens: bucket("cacheCreationTokens"), cacheWriteTokens: bucket("cacheWriteTokens"),
-    reasoningTokens: bucket("reasoningTokens"), totalTokens: bucket("totalTokens") };
+  const measured = {} as Record<UsageTokenKey, number | null>;
+  const unknownCalls = {} as Record<UsageTokenKey, number>;
+  for (const key of TOKEN_KEYS) {
+    const value = numberOf(data[key]);
+    measured[key] = value ?? null;
+    unknownCalls[key] = value === undefined ? 1 : 0;
+  }
+  return { inputIncludesCache: data.inputIncludesCache === true, calls: 1, ...measured, unknownCalls };
 }
 
+/** An unreported measurement adds nothing: the sum covers the calls that reported it, unknownCalls counts the rest. */
 function sumTokens(a: UsageTokens, b: UsageTokens): UsageTokens {
-  return { inputIncludesCache: a.inputIncludesCache, calls: a.calls + b.calls,
-    inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens,
-    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens, cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
-    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens, reasoningTokens: a.reasoningTokens + b.reasoningTokens,
-    totalTokens: a.totalTokens + b.totalTokens };
+  const measured = {} as Record<UsageTokenKey, number | null>;
+  const unknownCalls = {} as Record<UsageTokenKey, number>;
+  for (const key of TOKEN_KEYS) {
+    const left = a[key];
+    const right = b[key];
+    measured[key] = left === null ? right : right === null ? left : left + right;
+    unknownCalls[key] = a.unknownCalls[key] + b.unknownCalls[key];
+  }
+  return { inputIncludesCache: a.inputIncludesCache, calls: a.calls + b.calls, ...measured, unknownCalls };
 }
 
 function mergeTokens(into: Map<boolean, UsageTokens>, buckets: Iterable<UsageTokens>): void {

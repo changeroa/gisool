@@ -4,13 +4,14 @@ import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, Pan
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
+type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
 type FlowDbRow = {
   id: string; workspace_id: string | null; tab_id: string | null; label: string | null; registered_ms: number | null; ended_ms: number | null;
   spec_id: string | null; spec_name: string | null; spec_version: number | null; spec_digest: string | null; spec_body: string | null; spec_created_ms: number | null;
 };
 
 type WorkflowStore = Pick<Store, "putWorkflowSpec" | "workflowSpecs" | "workflowSpecVersions" | "workflowSpec" | "createFlow" | "getFlow"
-  | "flowSteps" | "mapFlowStep" | "endFlow" | "flowPaneUsage" | "listFlows">;
+  | "flowSteps" | "mapFlowStep" | "endFlow" | "flowPaneUsage" | "flowSessionIds" | "listFlows">;
 
 type FlowListDbRow = {
   id: string; kind: "flow" | "workspace"; workspace_id: string; tab_id: string | null; label: string | null;
@@ -71,6 +72,11 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
   const selectFlow = db.prepare(`SELECT ${FLOW_COLUMNS} FROM flows f LEFT JOIN workflow_specs s ON s.id = f.spec_id WHERE f.id = ?`);
   const selectOpenFlow = db.prepare(`SELECT ${FLOW_COLUMNS} FROM flows f LEFT JOIN workflow_specs s ON s.id = f.spec_id
     WHERE f.workspace_id = ? AND COALESCE(f.tab_id, '') = ? AND f.ended_ms IS NULL ORDER BY f.registered_ms, f.rowid LIMIT 1`);
+  const selectFlowScope = db.prepare("SELECT workspace_id, tab_id, registered_ms, ended_ms FROM flows WHERE id = ?");
+  // The panes one flow covers: its workspace's panes, narrowed to its tab when it was registered for one - the same
+  // scope its report renders - plus every pane an orchestrator mapped to a step, wherever herdr later put it.
+  const selectFlowPanes = db.prepare(`SELECT id AS pane_id FROM herdr_panes WHERE workspace_id = ? AND (? IS NULL OR tab_id = ?)
+    UNION SELECT pane_id FROM flow_steps WHERE flow_id = ? ORDER BY pane_id`);
 
   return {
     putWorkflowSpec(spec: WorkflowSpec) {
@@ -175,6 +181,22 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       });
     },
 
+    /**
+     * Every session that can reach this flow's comparison, which is wider than the tree the report renders: a step
+     * can map a pane herdr placed on another tab. The read API classifies this population, so a session it hides
+     * cannot credit a step through the comparison.
+     */
+    flowSessionIds(flowId: string): string[] {
+      const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
+      if (!flow) return [];
+      const panes = selectFlowPanes.all(flow.workspace_id ?? "", flow.tab_id, flow.tab_id, flowId) as { pane_id: string }[];
+      if (panes.length === 0) return [];
+      const rows = db.prepare(`SELECT DISTINCT session_id FROM pane_sessions
+        WHERE pane_id IN (${panes.map(() => "?").join(",")}) AND session_id IS NOT NULL ORDER BY session_id`)
+        .all(...panes.map((p) => p.pane_id)) as { session_id: string }[];
+      return rows.map((row) => row.session_id);
+    },
+
     endFlow(flowId: string) {
       const row = db.prepare("SELECT ended_ms FROM flows WHERE id = ?").get(flowId) as { ended_ms: number | null } | undefined;
       if (!row) return undefined;
@@ -194,11 +216,9 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
      * report never compares against sessions it hid everywhere else.
      */
     flowPaneUsage(flowId: string, opts: { excludeSessions?: readonly string[] } = {}): PaneUsageRow[] {
-      const flow = db.prepare("SELECT workspace_id, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowId) as
-        { workspace_id: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
+      const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
       if (!flow) return [];
-      const panes = db.prepare(`SELECT id AS pane_id FROM herdr_panes WHERE workspace_id = ?
-        UNION SELECT pane_id FROM flow_steps WHERE flow_id = ? ORDER BY pane_id`).all(flow.workspace_id ?? "", flowId) as { pane_id: string }[];
+      const panes = selectFlowPanes.all(flow.workspace_id ?? "", flow.tab_id, flow.tab_id, flowId) as { pane_id: string }[];
       const registeredMs = flow.registered_ms ?? 0;
       const to = flow.ended_ms ?? Number.MAX_SAFE_INTEGER;
       const priorEndOf = db.prepare(`SELECT MAX(f.ended_ms) AS prior_end FROM flows f JOIN flow_steps fs ON fs.flow_id = f.id
