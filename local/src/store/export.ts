@@ -24,7 +24,7 @@ const HISTORY_TABLES: Record<string, string[]> = {
   flows: ["id"],
   flow_steps: ["flow_id", "pane_id"],
 };
-const HISTORY_VERSIONS = [1, 2, 3];
+const HISTORY_VERSIONS = [1, 2, 3, 4];
 
 type ExportedEvalCase = { query: string; expectedUri?: string; fromTraceId?: string };
 export type ExportDoc = { version: 1; config: Record<string, unknown>; roots: { id: string; path: string }[]; evalCases: ExportedEvalCase[];
@@ -96,6 +96,10 @@ export function createPortable(ctx: StoreCtx): Portable {
     for (const { table, key, columns } of historyShape()) {
       const cols = columns.join(", ");
       db.prepare(`INSERT INTO main.${table} (${cols}) SELECT ${cols} FROM hist.${table} WHERE NOT ${keyIn(table, key)}`).run();
+      // Legacy loads have no snapshot: insert triggers may run before later-received activity rows.
+      // Complete their candidate index once the whole events table is available, not on report reads.
+      if (table === "events") db.exec(`INSERT OR IGNORE INTO load_candidates
+        SELECT * FROM load_candidate_rows WHERE load_id IN (SELECT id FROM hist.events)`);
     }
   }
 

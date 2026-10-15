@@ -73,7 +73,7 @@ export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | u
     const inserted = deps.store.append(captured, attribution);
     if (captured.loadId && attribution.sessionId !== "unattributed") remember(deps.state.loadSessions, captured.loadId, attribution.sessionId);
     if (!inserted) return undefined;
-    if (captured.kind === "load" || (captured.kind === "tool_call" && captured.source === "otel")) deps.store.reconcileLoads();
+    if (captured.kind === "load" || (captured.kind === "tool_call" && captured.source === "otel")) deps.store.reconcileLoads({ eventId: captured.id });
     count(deps, "accepted");
     if (deps.publish && attribution.sessionId !== "unattributed") deps.publish({ sessionId: attribution.sessionId, attribution, event: captured });
     return attribution;

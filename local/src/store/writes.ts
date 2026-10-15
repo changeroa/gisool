@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
-import { toolCallReferencesUri, URI_WINDOW_MS, WINDOW_MS } from "../ingest/attribution.js";
+import { toolCallReferencesUri, URI_WINDOW_MS } from "../ingest/attribution.js";
 import type { Attribution, CanonicalEvent, GisoolConfig, OtelSpanRow, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
 
 /**
@@ -96,6 +96,33 @@ export function createWrites(ctx: StoreCtx): Writes {
   const addIngestCount = db.prepare(`INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(? AS INTEGER) AS TEXT)`);
   const setFirstPrompt = db.prepare("UPDATE sessions SET first_prompt = ? WHERE id = ? AND first_prompt IS NULL");
   const setEnded = db.prepare("UPDATE sessions SET ended_at = MAX(COALESCE(ended_at, 0), ?) WHERE id = ?");
+  type LoadRow = {
+    id: string; ts: number; runtime: RuntimeId; skill_uri: string | null; data_json: string;
+    session_id: string; attribution_method: string; attribution_reason: string | null;
+  };
+  type ToolRow = { session_id: string; text: string | null; gisoolMcp: number | null };
+  const pending = `e.source = 'mcp' AND e.kind = 'load' AND e.session_id = 'unattributed' AND e.attribution_reason = 'ambiguous'`;
+  const recoverable = `e.source = 'mcp' AND e.kind = 'load' AND ((${pending})
+    OR (e.attribution_method = 'trace_handle' AND json_extract(e.data_json, '$.attributionBasis') = 'tool_call_uri'))`;
+  const pendingInRange = db.prepare(`SELECT e.* FROM events e INDEXED BY events_pending_load_ts WHERE ${pending} AND e.ts >= ? AND e.ts < ?`);
+  const pendingInSessions = db.prepare(`SELECT DISTINCT e.* FROM json_each(?) s
+    CROSS JOIN load_candidates c ON c.session_id = s.value AND c.ts >= ? AND c.ts < ?
+    CROSS JOIN events e ON e.id = c.load_id WHERE ${pending}`);
+  const eventById = db.prepare(`SELECT *, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp,
+    json_extract(data_json, '$.success') AS success FROM events WHERE id = ?`);
+  const loadById = db.prepare(`SELECT e.* FROM events e WHERE e.id = ? AND ${recoverable}`);
+  const loadsForTool = db.prepare(`SELECT e.* FROM events e INDEXED BY events_reconcile_load_uri
+    WHERE ${recoverable} AND e.runtime = ? AND e.skill_uri = ? AND e.ts BETWEEN ? AND ?
+      AND EXISTS (SELECT 1 FROM load_candidates c WHERE c.load_id = e.id AND c.session_id = ?)`);
+  const toolUris = db.prepare(`SELECT DISTINCT value FROM json_tree(CASE WHEN json_valid(?) THEN ? ELSE '{}' END)
+    WHERE type = 'text' AND value LIKE 'skill://%'`);
+  const loadCandidates = db.prepare("SELECT session_id FROM load_candidates WHERE load_id = ? ORDER BY session_id");
+  const toolsForCandidate = db.prepare(`SELECT session_id, text, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp
+    FROM events INDEXED BY events_uri_tools WHERE source = 'otel' AND kind = 'tool_call'
+      AND runtime = ? AND session_id = ? AND ts BETWEEN ? AND ? AND session_id != 'unattributed'
+      AND json_extract(data_json, '$.success') IS NOT 0`);
+  const updateLoad = db.prepare(`UPDATE events SET session_id = ?, attribution_method = ?, attribution_reason = ?, data_json = ?
+    WHERE id = ? AND (session_id IS NOT ? OR attribution_method IS NOT ? OR attribution_reason IS NOT ? OR data_json IS NOT ?)`);
 
   function sessionSideEffects(sessionId: string, kind: string, ts: number, text: string | null): void {
     if (sessionId === "unattributed") return;
@@ -105,43 +132,69 @@ export function createWrites(ctx: StoreCtx): Writes {
 
   return {
     reconcileLoads(opts = {}) {
-      const loads = db.prepare(`SELECT id, ts, runtime, skill_uri, data_json FROM events WHERE source = 'mcp' AND kind = 'load'
-        AND ((session_id = 'unattributed' AND attribution_reason = 'ambiguous')
-          OR (attribution_method = 'trace_handle' AND json_extract(data_json, '$.attributionBasis') = 'tool_call_uri'))`).all() as
-        { id: string; ts: number; runtime: RuntimeId; skill_uri: string | null; data_json: string }[];
-      const tools = db.prepare(`SELECT DISTINCT session_id, text, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp
-        FROM events WHERE source = 'otel' AND kind = 'tool_call'
-        AND runtime = ? AND ts BETWEEN ? AND ? AND session_id != 'unattributed'
-        AND json_extract(data_json, '$.success') IS NOT 0`);
-      const update = db.prepare(`UPDATE events SET session_id = ?, attribution_method = ?, attribution_reason = ?, data_json = ? WHERE id = ?`);
+      const from = opts.from ?? Number.MIN_SAFE_INTEGER;
+      const to = opts.to ?? Number.MAX_SAFE_INTEGER;
+      let loads: LoadRow[];
+      if (opts.eventId !== undefined) {
+        const event = eventById.get(opts.eventId) as
+          (LoadRow & { source: string; kind: string; text: string | null; gisoolMcp: number | null; success: number | null }) | undefined;
+        if (!event) return { count: 0, uris: [] };
+        if (event.kind === "load") {
+          const load = loadById.get(event.id) as LoadRow | undefined;
+          loads = load ? [load] : [];
+        } else {
+          if (event.source !== "otel" || event.kind !== "tool_call" || event.session_id === "unattributed" || event.success === 0) {
+            return { count: 0, uris: [] };
+          }
+          // Extract only from captured text. Metadata capture cannot create evidence from discarded arguments.
+          const uris = toolUris.all(event.text, event.text) as { value: string }[];
+          loads = uris.filter(({ value }) => toolCallReferencesUri(event.text, value, event.gisoolMcp === 1))
+            .flatMap(({ value }) => loadsForTool.all(event.runtime, value, event.ts - URI_WINDOW_MS,
+              event.ts + URI_WINDOW_MS, event.session_id) as LoadRow[]);
+        }
+      } else {
+        loads = (opts.sessionIds === undefined ? pendingInRange.all(from, to)
+          : pendingInSessions.all(JSON.stringify(opts.sessionIds), from, to)) as LoadRow[];
+      }
       let count = 0;
       const uris = new Set<string>();
-      for (const load of loads) {
-        const uri = load.skill_uri;
-        if (uri === null) continue;
-        const data = parseJson<Record<string, unknown>>(load.data_json, {});
-        // Older ambiguous rows have no snapshot. Reconstruct only sessions open and active at the load timestamp.
-        const candidates = Array.isArray(data.attributionCandidates)
-          ? data.attributionCandidates.filter((id): id is string => typeof id === "string")
-          : (db.prepare(`SELECT s.id FROM sessions s WHERE s.runtime = ? AND s.started_at <= ?
-              AND (s.ended_at IS NULL OR s.ended_at >= ?)
-              AND MAX(s.started_at, COALESCE((SELECT MAX(e.ts) FROM events e WHERE e.session_id = s.id AND e.ts <= ?), s.started_at)) >= ?`)
-            .all(load.runtime, load.ts, load.ts, load.ts, load.ts - WINDOW_MS) as { id: string }[]).map((session) => session.id);
-        data.attributionCandidates = candidates;
-        const matches = new Set((tools.all(load.runtime, load.ts - URI_WINDOW_MS, load.ts + URI_WINDOW_MS) as
-          { session_id: string; text: string | null; gisoolMcp: number | null }[])
-          .filter((tool) => candidates.includes(tool.session_id) && toolCallReferencesUri(tool.text, uri, tool.gisoolMcp === 1))
-          .map((tool) => tool.session_id));
-        const sessionId = matches.size === 1 ? matches.values().next().value : undefined;
-        if (sessionId !== undefined) data.attributionBasis = "tool_call_uri";
-        else delete data.attributionBasis;
-        update.run(sessionId ?? "unattributed", sessionId === undefined ? "none" : "trace_handle",
-          sessionId === undefined ? "ambiguous" : null, JSON.stringify(data), load.id);
-        if (sessionId !== undefined || (opts.from !== undefined && load.ts < opts.from)
-          || (opts.to !== undefined && load.ts >= opts.to)
-          || (opts.sessionIds !== undefined && !candidates.some((id) => opts.sessionIds?.includes(id)))) continue;
-        count += 1;
-        uris.add(uri);
+      if (!opts.readOnly && loads.length > 0) db.exec("SAVEPOINT reconcile_loads");
+      try {
+        for (const load of loads) {
+          const uri = load.skill_uri;
+          if (uri === null) continue;
+          let sessionId: string | undefined = load.session_id === "unattributed" ? undefined : load.session_id;
+          if (!opts.readOnly) {
+            const data = parseJson<Record<string, unknown>>(load.data_json, {});
+            const candidates = (loadCandidates.all(load.id) as { session_id: string }[]).map((row) => row.session_id);
+            if (!Array.isArray(data.attributionCandidates)) data.attributionCandidates = candidates;
+            // Minimal durable proof: candidate session ids that actually matched this load's URI/window.
+            // Expired text cannot erase that proof; later evidence for another candidate still retracts uniqueness.
+            const matches = new Set(Array.isArray(data.attributionMatches)
+              ? data.attributionMatches.filter((id): id is string => typeof id === "string" && candidates.includes(id))
+              : data.attributionBasis === "tool_call_uri" && sessionId !== undefined ? [sessionId] : []);
+            for (const candidate of candidates) {
+              const tools = toolsForCandidate.all(load.runtime, candidate, load.ts - URI_WINDOW_MS, load.ts + URI_WINDOW_MS) as ToolRow[];
+              if (tools.some((tool) => toolCallReferencesUri(tool.text, uri, tool.gisoolMcp === 1))) matches.add(candidate);
+            }
+            if (matches.size > 0) data.attributionMatches = [...matches].sort();
+            sessionId = matches.size === 1 ? matches.values().next().value : undefined;
+            if (sessionId !== undefined) data.attributionBasis = "tool_call_uri";
+            else delete data.attributionBasis;
+            const nextId = sessionId ?? "unattributed";
+            const method = sessionId === undefined ? "none" : "trace_handle";
+            const reason = sessionId === undefined ? "ambiguous" : null;
+            const json = JSON.stringify(data);
+            updateLoad.run(nextId, method, reason, json, load.id, nextId, method, reason, json);
+          }
+          if (sessionId !== undefined) continue;
+          count += 1;
+          uris.add(uri);
+        }
+        if (!opts.readOnly && loads.length > 0) db.exec("RELEASE reconcile_loads");
+      } catch (error) {
+        if (!opts.readOnly && loads.length > 0) db.exec("ROLLBACK TO reconcile_loads; RELEASE reconcile_loads");
+        throw error;
       }
       return { count, uris: [...uris].sort() };
     },

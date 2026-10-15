@@ -205,6 +205,63 @@ test("D3 reconciliation preserves a later authoritative vendor binding", () => {
   } finally { store.close(); }
 });
 
+test("D3 retention preserves proven linkage but later conflicting evidence retracts it", () => {
+  let clock = T;
+  const { db, store } = openStore({ storeOpts: { now: () => clock } });
+  try {
+    const { ids, deps, load } = ambiguousFixture(store);
+    ingest(load, deps);
+    ingestOtlp(toolLog("codex", "read_mcp_resource", { server: "gisool", uri: URI }, T + 2), deps);
+    clock += 40 * 86_400_000;
+    // When retention expires the tool text, explicit reconciliation must not erase its proven match.
+    store.retention(30);
+    store.reconcileLoads({ from: T, to: T + 1, sessionIds: ids });
+    assert.equal(db.prepare("SELECT text FROM events WHERE kind = 'tool_call'").get().text, null);
+    assert.equal(db.prepare("SELECT session_id FROM events WHERE id = ?").get(load.id).session_id, ids[1]);
+    // A delayed record still has its original event time, not the time it was received.
+    ingestOtlp(toolLog("codex", "read_mcp_resource", { server: "gisool", uri: URI }, T + 3, "previous"),
+      createIngestDeps(store, { now: () => clock }));
+    assert.deepEqual(store.reconcileLoads({ sessionIds: ids, readOnly: true }), { count: 1, uris: [URI] });
+    assert.equal(db.prepare("SELECT session_id FROM events WHERE id = ?").get(load.id).session_id, "unattributed");
+  } finally { store.close(); }
+});
+
+for (const order of ["load-first", "tool-first"]) test(`D3 metadata capture stores no URI evidence or argument secrets (${order})`, () => {
+  const { db, store } = openStore();
+  try {
+    const { deps, load } = ambiguousFixture(store);
+    deps.captureLevel = "metadata";
+    const tool = toolLog("codex", "read_mcp_resource", { server: "gisool", uri: URI, token: "secret-probe-token" }, T + 2);
+    if (order === "tool-first") ingestOtlp(tool, deps);
+    ingest(load, deps);
+    if (order === "load-first") ingestOtlp(tool, deps);
+    const toolRow = db.prepare("SELECT text, data_json FROM events WHERE kind = 'tool_call'").get();
+    assert.equal(toolRow.text, null);
+    assert.equal(toolRow.data_json.includes("secret-probe-token"), false);
+    assert.equal(toolRow.data_json.includes(URI), false);
+    const row = db.prepare("SELECT session_id, data_json FROM events WHERE id = ?").get(load.id);
+    assert.equal(row.session_id, "unattributed");
+    assert.equal(JSON.parse(row.data_json).attributionMatches, undefined);
+  } finally { store.close(); }
+});
+
+test("D3 redacted capture retains only session proof after retention, never secret arguments", () => {
+  const secret = `sk-${"x".repeat(24)}`;
+  const { db, store } = openStore({ storeOpts: { now: () => T + 40 * 86_400_000 } });
+  try {
+    const { ids, deps, load } = ambiguousFixture(store);
+    deps.captureLevel = "redacted";
+    ingest(load, deps);
+    ingestOtlp(toolLog("codex", "read_mcp_resource", { server: "gisool", uri: URI, token: secret }, T + 2), deps);
+    assert.equal(db.prepare("SELECT text FROM events WHERE kind = 'tool_call'").get().text.includes(secret), false);
+    store.retention(30);
+    const row = db.prepare("SELECT session_id, data_json FROM events WHERE id = ?").get(load.id);
+    assert.equal(row.session_id, ids[1]);
+    assert.deepEqual(JSON.parse(row.data_json).attributionMatches, [ids[1]]);
+    assert.ok(db.prepare("SELECT text, data_json FROM events").all().every((row) => row.text === null && !row.data_json.includes(secret)));
+  } finally { store.close(); }
+});
+
 test("D3 unresolved loads are exposed by real session and flow report endpoints", async () => {
   const server = await startTestServer();
   let store;
@@ -228,10 +285,12 @@ test("D3 unresolved loads are exposed by real session and flow report endpoints"
     ingest(load, deps);
     // When reports are requested without any uniquely matching evidence.
     for (const path of [`/api/sessions/${ids[1]}/skill-report`, `/api/flows/${flow.id}`]) {
+      const version = db.prepare("PRAGMA data_version").get().data_version;
       const response = await http(server.port, { path, headers: bearer(server.token) });
       // Then the no-use finding is accompanied by visible unresolved evidence.
       assert.equal(response.status, 200, response.text);
       assert.deepEqual(response.json.unattributedLoads, { count: 1, uris: [URI] });
+      assert.equal(db.prepare("PRAGMA data_version").get().data_version, version, "GET must not commit writes");
     }
     ingestOtlp(toolLog("codex", "read_mcp_resource", { server: "gisool", uri: URI }, at + 2), deps);
     const recovered = await http(server.port, { path: `/api/flows/${flow.id}`, headers: bearer(server.token) });

@@ -185,7 +185,6 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
 
   /** One flow: the tree (todo 6), per-turn finding (7), per-span usage (8) and the spec comparison (9). */
   app.get("/api/flows/:id", handle(log, (req, res) => {
-    store.reconcileLoads();
     const automated = automatedOf(req.query);
     const ref = String(req.params.id);
     const id = ref.startsWith(WORKSPACE_PREFIX) ? ref.slice(WORKSPACE_PREFIX.length) : ref;
@@ -224,8 +223,9 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const usages = sessions.map((session) => sessionUsage(session));
     const spec = flow?.spec;
     const unattributedLoads = store.reconcileLoads({
+      readOnly: true,
       from: flow?.registeredMs ?? (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
-        : Math.min(...sessions.map((session) => session.startedAt))),
+        : sessions.length === 0 ? 0 : Math.min(...sessions.map((session) => session.startedAt))),
       // Execution trees include the end timestamp; reconcileLoads uses an exclusive upper bound.
       to: flow?.endedMs !== undefined ? flow.endedMs + 1
         : (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
@@ -254,7 +254,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
   app.get("/api/sessions/:id/skill-report", handle(log, (req, res) => {
     const automated = automatedOf(req.query);
     const id = String(req.params.id);
-    const unattributedLoads = store.reconcileLoads({ sessionIds: [id] });
+    const unattributedLoads = store.reconcileLoads({ sessionIds: [id], readOnly: true });
     const tree = sessionTree(store, id);
     if (!tree) return deny(res, 404, "session_not_found", { message: `no session ${id}` });
     const automation = store.sessionAutomation([id])[id];

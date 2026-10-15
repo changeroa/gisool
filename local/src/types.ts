@@ -120,8 +120,9 @@ export interface Store {
   treeSessionData(sessionId: string): TreeSessionData | undefined;
   treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
   outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[];
-  // Reconcile ambiguous MCP loads from persisted OTLP URI evidence; return unresolved loads in the requested scope.
-  reconcileLoads(opts?: { from?: number; to?: number; sessionIds?: readonly string[] }): UnattributedLoads }
+  // Ingest uses eventId to revisit only affected loads (including earlier resolutions).
+  // Explicit reconciliation repairs pending history in scope; readOnly reports never mutate it.
+  reconcileLoads(opts?: { from?: number; to?: number; sessionIds?: readonly string[]; eventId?: string; readOnly?: boolean }): UnattributedLoads }
 // One row of otel_spans: the whole whitelist the traces ingest may store. No other span attribute is kept.
 export type OtelSpanRow = { traceId: string; spanId: string; parentSpanId?: string; name: string; runtime: RuntimeId;
   conversationId?: string; turnKey?: string; callId?: string; startMs?: number; endMs?: number; receivedAt: number };
