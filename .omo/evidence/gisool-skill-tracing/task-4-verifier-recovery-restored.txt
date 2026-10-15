@@ -1,0 +1,15 @@
+status: completed exit_code: 0
+
+> gisool@0.1.0 build
+> tsc -p tsconfig.json && node build-dashboard.mjs
+
+Built dashboard: /Users/victor/projects/gisul-wt/gst-w1-t4/local/dist/dashboard/
+✔ discovery recovers when herdr appears after startup and resolves a new socket on reconnect (409.226083ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 641.605375

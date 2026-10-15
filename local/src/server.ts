@@ -122,8 +122,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
 
     const ingestDeps = createIngestDeps(ownStore, {
       captureLevel: config.captureLevel,
-      publish: (change) => {
-        sse.notify(change.sessionId);
+      publish: (change) => sse.notify(change.sessionId),
+      sessionChanged: () => {
         // Ingest batches are synchronous; coalesce their notifications into one linking pass.
         if (!herdr || linkQueued) return;
         linkQueued = true;

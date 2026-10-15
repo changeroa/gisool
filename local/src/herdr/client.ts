@@ -16,7 +16,7 @@ export type HerdrClient = {
   close(): void;
 };
 
-/** Status is a bounded, one-time discovery, never part of the reconnect loop. */
+/** Every connection attempt discovers the current socket with a bounded command. */
 export function resolveHerdrSocket(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<string> {
   if (env.GISOOL_HERDR_SOCKET) return Promise.resolve(env.GISOOL_HERDR_SOCKET);
   return new Promise((resolve, reject) => {
@@ -50,6 +50,13 @@ export function createHerdrClient(opts: {
     if (state === next) return;
     state = next;
     opts.log(`herdr ${next}`);
+  };
+  const scheduleReconnect = () => {
+    if (stopped) return;
+    transition("unreachable");
+    retry = setTimeout(connect, backoff);
+    retry.unref();
+    backoff = Math.min(backoff * 2, 30_000);
   };
   const client: HerdrClient = {
     request(method, params = {}) {
@@ -96,10 +103,7 @@ export function createHerdrClient(opts: {
       if (stopped || active !== socket) return;
       for (const other of sockets) other.destroy();
       opts.onDisconnect();
-      transition("unreachable");
-      retry = setTimeout(connect, backoff);
-      retry.unref();
-      backoff = Math.min(backoff * 2, 30_000);
+      scheduleReconnect();
     });
     active.on("data", (chunk: string) => {
       buffer += chunk;
@@ -131,20 +135,22 @@ export function createHerdrClient(opts: {
     });
   };
   const connect = () => {
-    if (stopped || !socketPath) return;
-    const active = createConnection(socketPath);
-    socket = active;
-    attach(active);
-    active.once("connect", () => {
-      void opts.onConnect(client).then(() => {
-        if (stopped || active.destroyed) return;
-        backoff = 1_000;
-        transition("connected");
-      }, (error: unknown) => active.destroy(error instanceof Error ? error : new Error(String(error))));
-    });
+    if (stopped) return;
+    void resolveHerdrSocket(opts.env, abort.signal).then((path) => {
+      if (stopped) return;
+      socketPath = path;
+      const active = createConnection(path);
+      socket = active;
+      attach(active);
+      active.once("connect", () => {
+        void opts.onConnect(client).then(() => {
+          if (stopped || active.destroyed) return;
+          backoff = 1_000;
+          transition("connected");
+        }, (error: unknown) => active.destroy(error instanceof Error ? error : new Error(String(error))));
+      });
+    }, scheduleReconnect);
   };
-  void resolveHerdrSocket(opts.env, abort.signal).then((path) => { socketPath = path; connect(); }, () => {
-    if (!stopped) transition("unreachable");
-  });
+  connect();
   return client;
 }

@@ -150,3 +150,86 @@ Assumptions and residual limits
   link the same session, as the required heuristic allows.
   Socket discovery runs once. If status cannot supply a path, the daemon keeps
   serving; supplying GISOOL_HERDR_SOCKET or restarting allows discovery again.
+
+Verifier follow-up: T4-RECOVERY and T4-LATE-INGEST (2026-10-15)
+  This section supersedes the original discovery limitation above.
+  Base for this correction: 33a0cd6, branch gst-w1-t4; worktree initially clean.
+  Read-only report:
+    /Users/victor/projects/gisul/.omo/evidence/gisool-skill-tracing-todo-4-gate-review.md
+  Main checkout and task-5-owned files remain unmodified; no delegation.
+
+  Both new regressions were run against unchanged implementation before fixing:
+    cd local && node --test --test-name-pattern="discovery recovers|binding-only hook" test/herdr-sync.test.mjs
+  Exit 1, 2 tests failed:
+    recovery: no connected signal after exposing working discovery and advancing
+      the controlled clock 120000 ms; health remains 200.
+    binding-only: HTTP 202 creates the matching session but the reported link
+      remains NULL and no cwd-inferred link is made.
+  Raw output: task-4-verifier-before-fix.txt.
+
+  T4-RECOVERY correction:
+    Each connect attempt now resolves GISOOL_HERDR_SOCKET or runs bounded
+    herdr status server anew. Discovery rejection and socket disconnection use
+    the same reconnect scheduler: 1/2/4/8/16/30 seconds, capped at 30 seconds.
+    No failed discovery is terminal; connectivity logs remain state transitions.
+    The existing 5-second command timeout, abort signal, shutdown guard, and
+    cleanup of retry timers and sockets remain in force.
+    Regression uses a real disposable executable and real Unix sockets with
+    mocked production timers, and subscribes to readiness before advancing time.
+    It verifies initial discovery failure, health 200, recovery without restart,
+    and rediscovery of a different socket after the first socket disappears.
+
+  T4-LATE-INGEST correction:
+    Added an ingest sessionChanged notification distinct from event publication.
+    Common event attribution notifies for hooks, OTLP and MCP, even if a replay
+    later makes append return false; binding-only upserts notify independently.
+    The daemon coalesces these notifications into its existing microtask linking
+    pass. Binding-only hooks do not invent events or unnecessary SSE publication.
+    Periodic snapshot reconciliation also retries every NULL pane_sessions link,
+    including reported identities for panes absent from the new snapshot and
+    inferred rows whose stored value is the gisool session id.
+    Coverage verifies binding-only session creation, existing-session cwd updates,
+    actual OTLP and MCP HTTP ingestion, and 30-second reconciliation without any
+    ingest notification or push. Tests freeze reconciliation when proving prompt
+    linking, and assert exactly one initial snapshot and no SessionStart control.
+
+  Focused checks after the fix:
+    npm run build && node --test --test-name-pattern="discovery recovers|binding-only hook" test/herdr-sync.test.mjs
+    Exit 0, both reproductions pass (task-4-verifier-fixed-reproductions.txt).
+    node --test test/herdr-sync.test.mjs test/ingest-pipeline.test.mjs
+    Exit 0, 23 passed, 0 failed/skipped (task-4-verifier-focused-tests.txt).
+    TypeScript diagnostics for herdr/, server.ts and ingest/pipeline.ts: clean.
+    Timed behavior uses fake clocks; bounded deadlines stay real. No sleeps or
+    polling were added. Disposable daemons, sockets, databases, PATH changes and
+    discovery executables are cleaned by test teardown.
+
+  Required mutation checks, generated output only:
+    T4-RECOVERY: replaced dist/herdr/client.js discovery-rejection scheduler with
+      a log-only transition. Ran node --test --test-name-pattern="discovery recovers" test/herdr-sync.test.mjs.
+      Exit 1, recovery test fails with no connected signal. npm run build restores
+      output, then the same test passes (1 passed, 0 failed).
+      task-4-verifier-recovery-mutation.txt and
+      task-4-verifier-recovery-restored.txt contain both receipts.
+    T4-LATE-INGEST: removed only the binding-upsert sessionChanged call from
+      dist/ingest/pipeline.js. Ran node --test --test-name-pattern="binding-only hook links reported" test/herdr-sync.test.mjs.
+      Exit 1, reported session_id NULL and missing inferred row versus two
+      expected session links. task-4-verifier-ingest-mutation.txt has the failure.
+      npm run build restores output and the same test passes.
+    No mutation was made in tracked source or committed dist output.
+
+  Final gates and restored-output proof:
+    cd local && npm run build &&
+      node --test --test-name-pattern="binding-only hook links reported" test/herdr-sync.test.mjs &&
+      npm run typecheck && npm test
+    Exit 0: restored regression 1/1; complete suite 291/291 passed,
+    0 failed, 0 cancelled, 0 skipped. Build and typecheck passed.
+    Raw output: task-4-verifier-final-gates.txt.
+    git diff --check and node --check local/test/herdr-sync.test.mjs passed.
+    Final diagnostics: herdr/client.ts, herdr/sync.ts, ingest/pipeline.ts and
+    server.ts have zero TypeScript diagnostics.
+    No pre-existing tests were skipped, weakened, or edited to hide failures.
+    No additional live herdr workspaces, panes, agents or real configuration
+    were mutated during this correction. Only disposable fake servers and real
+    HTTP sandbox daemons were used for the new lifecycle reproductions.
+    Both verifier blockers are fixed; the first-observed lifetime and explicitly
+    heuristic cwd attribution limits described above remain unchanged.

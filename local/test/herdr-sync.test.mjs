@@ -6,16 +6,20 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { distImport, makeSandbox } from "./_helpers.mjs";
 import { http, jsonHeaders } from "./helpers/api.mjs";
+import { modernClient } from "./helpers/mcp.mjs";
 
 const { openDb } = await distImport("store/db.js");
 const { startHerdrSync } = await distImport("herdr/sync.js");
 const { resolveHerdrSocket } = await distImport("herdr/client.js");
 const { startServer } = await distImport("server.js");
+// Deadlines remain real when recovery tests advance the production retry clock.
+const deadlineTimeout = globalThis.setTimeout;
+const cancelDeadline = globalThis.clearTimeout;
 
 function signal(emitter, event, predicate = () => true, action = () => {}) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error(`No ${event} signal`)); }, 8_000);
-    const cleanup = () => { clearTimeout(timer); emitter.off(event, listener); };
+    const timer = deadlineTimeout(() => { cleanup(); reject(new Error(`No ${event} signal`)); }, 8_000);
+    const cleanup = () => { cancelDeadline(timer); emitter.off(event, listener); };
     const listener = (...args) => {
       try {
         if (!predicate(...args)) return;
@@ -126,6 +130,155 @@ function session(db, id, { runtime = "codex", runtimeId = null, conversation = n
   db.prepare("INSERT INTO sessions (id, runtime, runtime_session_id, conversation_id, cwd, started_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(id, runtime, runtimeId, conversation, cwd, start);
 }
+
+async function followedServer(t, fake, discoveryDir) {
+  const sb = makeSandbox();
+  const previous = Object.fromEntries(["GISOOL_HERDR", "GISOOL_HERDR_SOCKET", "PATH"].map((key) => [key, process.env[key]]));
+  process.env.GISOOL_HERDR = "on";
+  if (discoveryDir) {
+    process.env.PATH = discoveryDir;
+    delete process.env.GISOOL_HERDR_SOCKET;
+  } else process.env.GISOOL_HERDR_SOCKET = fake.path;
+  let server, db;
+  t.after(async () => {
+    db?.close();
+    await server?.close();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    sb.cleanup();
+  });
+  const logs = new EventEmitter(), messages = [];
+  const ready = signal(logs, "log", (message) => message === (discoveryDir ? "herdr unreachable" : "herdr connected"));
+  server = await startServer({ port: 0, captureLevel: "full", retentionDays: null, roots: [], runtimes: {} }, {
+    gisoolHome: sb.env.GISOOL_HOME, handleSignals: false, fsWatchdog: { intervalMs: 1e9 },
+    log(message) { messages.push(message); logs.emit("log", message); },
+  });
+  await ready;
+  db = openDb(join(sb.env.GISOOL_HOME, "gisool.db"));
+  const token = readFileSync(join(sb.env.GISOOL_HOME, "token"), "utf8").trim();
+  return { server, db, token, logs, messages };
+}
+
+test("discovery recovers when herdr appears after startup and resolves a new socket on reconnect", async (t) => {
+  // Given a healthy daemon with no override and no discoverable executable.
+  const fake = await fakeHerdr(t, topology([pane("late")]));
+  const dir = mkdtempSync("/tmp/gst-discovery-");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { server, db, logs, messages } = await followedServer(t, fake, dir);
+  assert.equal((await http(server.port, { path: "/healthz" })).status, 200);
+  assert.equal(fake.requests.length, 0);
+  // When discovery becomes available without restarting the daemon.
+  const executable = join(dir, "herdr");
+  writeFileSync(executable, `#!/bin/sh\nprintf 'socket: ${fake.path}\\n'\n`, { mode: 0o700 });
+  assert.equal(await resolveHerdrSocket(), fake.path);
+  await signal(logs, "log", (message) => message === "herdr connected", () => t.mock.timers.tick(120_000));
+  // Then the recovered snapshot is stored, and the next reconnect rediscovers a moved socket.
+  assert.equal(db.prepare("SELECT id FROM herdr_panes WHERE closed_ms IS NULL").get().id, "late");
+  const moved = await fakeHerdr(t, topology([pane("moved")]));
+  writeFileSync(executable, `#!/bin/sh\nprintf 'socket: ${moved.path}\\n'\n`, { mode: 0o700 });
+  const unreachable = signal(logs, "log", (message) => message === "herdr unreachable");
+  await fake.stop();
+  await unreachable;
+  await signal(logs, "log", (message) => message === "herdr connected", () => t.mock.timers.tick(1_000));
+  assert.equal(db.prepare("SELECT id FROM herdr_panes WHERE closed_ms IS NULL").get().id, "moved");
+  assert.deepEqual(messages.filter((message) => message.startsWith("herdr ")),
+    ["herdr unreachable", "herdr connected", "herdr unreachable", "herdr connected"]);
+});
+
+test("binding-only hook links reported and cwd sessions before any ordinary event", async (t) => {
+  // Given a reported identity and a cwd-only pane, with reconciliation frozen.
+  const fake = await fakeHerdr(t, topology([
+    pane("reported", { agent_session: { agent: "claude", kind: "id", source: "hook", value: "binding-first" } }),
+    pane("cwd", { agent: "claude", cwd: "/binding", created_ms: 0 }),
+  ]));
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const { server, db, token } = await followedServer(t, fake);
+  // When a supported binding-only PostToolUse arrives before its MCP event.
+  const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
+    body: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__gisool__search_skills",
+      tool_use_id: "unseen-tool", session_id: "binding-first", cwd: "/binding" }) });
+  // Then both links exist despite no event publication, new snapshot, or SessionStart.
+  assert.equal(res.status, 202);
+  const row = db.prepare("SELECT id FROM sessions WHERE runtime_session_id = 'binding-first'").get();
+  assert.ok(row);
+  assert.deepEqual(db.prepare("SELECT pane_id, session_id FROM pane_sessions ORDER BY pane_id").all().map((r) => ({ ...r })),
+    [{ pane_id: "cwd", session_id: row.id }, { pane_id: "reported", session_id: row.id }]);
+  assert.equal(db.prepare("SELECT count(*) n FROM events").get().n, 0);
+  assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
+});
+
+test("binding-only hook links cwd when it updates an existing session", async (t) => {
+  // Given a session whose cwd has not arrived yet and a matching cwd-only pane.
+  const fake = await fakeHerdr(t, topology([pane("cwd", { cwd: "/updated", created_ms: 0 })]));
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const { server, db, token } = await followedServer(t, fake);
+  session(db, "existing", { runtime: "claude-code", runtimeId: "binding-first", start: 1 });
+  // When a binding supplies the missing cwd but publishes no event.
+  const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
+    body: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__gisool__search_skills",
+      tool_use_id: "unseen-tool", session_id: "binding-first", cwd: "/updated" }) });
+  // Then the existing session, not a replacement session, is linked immediately.
+  assert.equal(res.status, 202);
+  assert.equal(db.prepare("SELECT count(*) n FROM sessions").get().n, 1);
+  assert.equal(db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = 'cwd'").get().session_id, "existing");
+  assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
+});
+
+for (const channel of ["otlp", "mcp"]) {
+  test(`${channel} ingest links a new session without waiting for reconciliation`, async (t) => {
+    // Given an unlinked reported identity and no clock-driven reconciliations.
+    const id = `${channel}-session`;
+    const fake = await fakeHerdr(t, topology([pane("reported", {
+      agent_session: { agent: "claude", kind: "id", source: "hook", value: id },
+    })]));
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const { server, db, token } = await followedServer(t, fake);
+    // When a session is created through the actual HTTP ingestion surface.
+    if (channel === "otlp") {
+      const body = JSON.parse(readFileSync(new URL("./fixtures/ingest/claude-otlp-user-prompt.json", import.meta.url), "utf8"));
+      body.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find((a) => a.key === "session.id").value.stringValue = id;
+      const res = await http(server.port, { method: "POST", path: "/ingest/otlp/v1/logs", headers: jsonHeaders(token), body: JSON.stringify(body) });
+      assert.equal(res.status, 202);
+    } else {
+      const result = await modernClient(server.port, token, "claude-code").callTool({
+        name: "search_skills", arguments: { query: "review", mode: "discovery" }, _meta: { sessionId: id },
+      });
+      assert.notEqual(result.isError, true);
+    }
+    // Then the link exists without another snapshot or an unrelated hook.
+    const row = db.prepare("SELECT s.runtime_session_id FROM pane_sessions ps JOIN sessions s ON s.id = ps.session_id").get();
+    assert.equal(row?.runtime_session_id, id);
+    assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
+  });
+}
+
+test("30 second reconcile repairs all pending links even for panes absent from the new snapshot", async (t) => {
+  // Given stored pending reported and inferred links, and a cwd-only live pane.
+  const fake = await fakeHerdr(t, topology([
+    pane("reported", { agent_session: { agent: "claude", kind: "id", source: "hook", value: "later" } }),
+    pane("inferred", { cwd: "/inferred", created_ms: 0 }),
+    pane("live-cwd", { cwd: "/live", created_ms: 0 }),
+  ]));
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const { db, changes } = await follower(t, fake);
+  db.prepare("INSERT INTO pane_sessions (pane_id, source, agent_session_value) VALUES ('inferred', 'inferred:cwd_time', 'later-inferred')").run();
+  session(db, "later-reported", { runtimeId: "later" });
+  session(db, "later-inferred", { cwd: "/inferred", start: 1 });
+  session(db, "later-cwd", { cwd: "/live", start: 1 });
+  fake.snapshot = topology([pane("live-cwd", { cwd: "/live", created_ms: 0 })]);
+  // When reconciliation runs without any ingest notification or pushed event.
+  await signal(changes, "change", () => db.prepare("SELECT count(*) n FROM pane_sessions WHERE session_id IS NOT NULL").get().n === 3,
+    () => t.mock.timers.tick(30_000));
+  // Then historical pending rows and the live cwd fallback are all linked.
+  assert.deepEqual(db.prepare("SELECT pane_id, session_id FROM pane_sessions ORDER BY pane_id").all().map((r) => ({ ...r })), [
+    { pane_id: "inferred", session_id: "later-inferred" },
+    { pane_id: "live-cwd", session_id: "later-cwd" },
+    { pane_id: "reported", session_id: "later-reported" },
+  ]);
+});
 
 test("snapshot stores two panes and links a reported identity arriving after the snapshot", async (t) => {
   // Given two live panes, only one reports a usable session id.

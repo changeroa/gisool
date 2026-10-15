@@ -1,0 +1,49 @@
+status: exited_1 exit_code: 1
+✖ discovery recovers when herdr appears after startup and resolves a new socket on reconnect (8456.444625ms)
+✖ binding-only hook links reported and cwd sessions before any ordinary event (27.160958ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8696.149875
+
+✖ failing tests:
+
+test at test/herdr-sync.test.mjs:163:1
+✖ discovery recovers when herdr appears after startup and resolves a new socket on reconnect (8456.444625ms)
+  Error: No log signal
+      at Timeout.<anonymous> (file:///Users/victor/projects/gisul-wt/gst-w1-t4/local/test/herdr-sync.test.mjs:20:61)
+      at listOnTimeout (node:internal/timers:605:17)
+      at process.processTimers (node:internal/timers:541:7)
+
+test at test/herdr-sync.test.mjs:190:1
+✖ binding-only hook links reported and cwd sessions before any ordinary event (27.160958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+      {
+  -     pane_id: 'cwd',
+  -     session_id: 'ab1b7a41-e67b-419c-a714-853bed90b070'
+  -   },
+  -   {
+        pane_id: 'reported',
+  +     session_id: null
+  -     session_id: 'ab1b7a41-e67b-419c-a714-853bed90b070'
+      }
+    ]
+
+      at TestContext.<anonymous> (file:///Users/victor/projects/gisul-wt/gst-w1-t4/local/test/herdr-sync.test.mjs:206:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { pane_id: 'reported', session_id: null } ],
+    expected: [ { pane_id: 'cwd', session_id: 'ab1b7a41-e67b-419c-a714-853bed90b070' }, { pane_id: 'reported', session_id: 'ab1b7a41-e67b-419c-a714-853bed90b070' } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

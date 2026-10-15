@@ -1,0 +1,32 @@
+status: completed exit_code: 0
+✔ discovery recovers when herdr appears after startup and resolves a new socket on reconnect (435.231459ms)
+✔ binding-only hook links reported and cwd sessions before any ordinary event (16.358041ms)
+✔ binding-only hook links cwd when it updates an existing session (7.466709ms)
+✔ otlp ingest links a new session without waiting for reconciliation (8.286542ms)
+✔ mcp ingest links a new session without waiting for reconciliation (19.306791ms)
+✔ 30 second reconcile repairs all pending links even for panes absent from the new snapshot (4.514333ms)
+✔ snapshot stores two panes and links a reported identity arriving after the snapshot (2.144292ms)
+✔ preseeded runtime identity links on the first snapshot (2.237625ms)
+✔ any agent without usable identity links by cwd within lifetime, never without cwd (2.922541ms)
+✔ pane.closed is applied before a subsequent snapshot can answer (2.356792ms)
+✔ garbage and fragmented NDJSON do not prevent a valid snapshot (2.307209ms)
+✔ reconnect takes a fresh snapshot and closes rows missing during the outage (1005.775292ms)
+✔ a snapshot overtaken by pane.updated cannot overwrite the newer state (5.6335ms)
+✔ 30 second reconciliation recovers a missed topology event (4.538ms)
+✔ daemon stays healthy while herdr is down and disables discovery when off (13.836291ms)
+✔ server ingest links a stored reported identity without waiting for reconciliation (10.442875ms)
+✔ socket resolution uses override, rejects misleading success, and bounds hung status commands (5400.712625ms)
+✔ QA happy: Claude OTLP user_prompt -> one session row and one prompt event with full text (2.273084ms)
+✔ QA failure: malformed OTLP (missing resourceLogs) -> 400 bad_otlp, nothing stored (0.09825ms)
+✔ unknown OTLP events and unknown hook events are counted as dropped (0.341958ms)
+✔ capture level metadata drops prompt text; redacted masks secrets in search queries (0.527625ms)
+✔ each runtime hook fixture flows through the pipeline with runtime_id attribution (1.078875ms)
+✔ store errors are logged and swallowed per event (0.170583ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7151.360334

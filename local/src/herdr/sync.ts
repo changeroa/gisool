@@ -38,10 +38,12 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
   const upsertReported = db.prepare(`INSERT INTO pane_sessions
     (pane_id, agent, source, agent_session_value, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(pane_id, agent_session_value) DO UPDATE SET agent = excluded.agent, source = excluded.source, last_seen_ms = excluded.last_seen_ms`);
-  const linkReported = db.prepare(`UPDATE pane_sessions SET session_id = (
+  const linkPending = db.prepare(`UPDATE pane_sessions SET session_id = (
     SELECT id FROM sessions WHERE runtime_session_id = pane_sessions.agent_session_value
-      OR conversation_id = pane_sessions.agent_session_value ORDER BY started_at, id LIMIT 1)
-    WHERE session_id IS NULL AND source LIKE 'herdr:%'`);
+      OR conversation_id = pane_sessions.agent_session_value
+      OR (pane_sessions.source = 'inferred:cwd_time' AND id = pane_sessions.agent_session_value)
+    ORDER BY started_at, id LIMIT 1)
+    WHERE session_id IS NULL`);
   // Only panes without a usable reported identity are eligible for cwd inference.
   const infer = db.prepare(`INSERT INTO pane_sessions
     (pane_id, agent, source, agent_session_value, session_id, first_seen_ms, last_seen_ms)
@@ -53,7 +55,7 @@ export function startHerdrSync(db: Db, opts: { readonly env?: NodeJS.ProcessEnv;
   const usable = (pane: z.infer<typeof paneSchema>) => pane.agent_session?.kind === "id" && pane.agent_session.value.trim() !== "";
   const linkSessions = () => {
     if (stopped) return;
-    linkReported.run();
+    linkPending.run();
     const now = Date.now();
     for (const pane of panes) {
       if (!usable(pane) && pane.cwd) infer.run(pane.agent ?? null, now, now, pane.pane_id, now);

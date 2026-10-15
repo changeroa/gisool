@@ -1,0 +1,41 @@
+status: exited_1 exit_code: 1
+✖ binding-only hook links reported and cwd sessions before any ordinary event (32.921208ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 244.200792
+
+✖ failing tests:
+
+test at test/herdr-sync.test.mjs:191:1
+✖ binding-only hook links reported and cwd sessions before any ordinary event (32.921208ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+      {
+  -     pane_id: 'cwd',
+  -     session_id: 'b93250c8-7787-445e-b5c4-4418b3c0418b'
+  -   },
+  -   {
+        pane_id: 'reported',
+  +     session_id: null
+  -     session_id: 'b93250c8-7787-445e-b5c4-4418b3c0418b'
+      }
+    ]
+
+      at TestContext.<anonymous> (file:///Users/victor/projects/gisul-wt/gst-w1-t4/local/test/herdr-sync.test.mjs:207:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { pane_id: 'reported', session_id: null } ],
+    expected: [ { pane_id: 'cwd', session_id: 'b93250c8-7787-445e-b5c4-4418b3c0418b' }, { pane_id: 'reported', session_id: 'b93250c8-7787-445e-b5c4-4418b3c0418b' } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
