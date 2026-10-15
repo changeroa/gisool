@@ -185,6 +185,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
 
   /** One flow: the tree (todo 6), per-turn finding (7), per-span usage (8) and the spec comparison (9). */
   app.get("/api/flows/:id", handle(log, (req, res) => {
+    store.reconcileLoads();
     const automated = automatedOf(req.query);
     const ref = String(req.params.id);
     const id = ref.startsWith(WORKSPACE_PREFIX) ? ref.slice(WORKSPACE_PREFIX.length) : ref;
@@ -222,6 +223,12 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const findings = sessions.map((session) => analyzeSession(session, digestOf));
     const usages = sessions.map((session) => sessionUsage(session));
     const spec = flow?.spec;
+    const unattributedLoads = store.reconcileLoads({
+      from: flow?.registeredMs ?? (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
+        : Math.min(...sessions.map((session) => session.startedAt))),
+      to: flow?.endedMs ?? (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
+      sessionIds: [...sessions.map((session) => session.id), ...comparisonSessionIds.filter((id) => !excluded.has(id))],
+    });
     res.json({
       generatedAt: Date.now(),
       id: ref === "outside" ? "outside" : tree.registered ? tree.id : `${WORKSPACE_PREFIX}${tree.workspaceId}`,
@@ -237,6 +244,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
       comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()] }) ?? null : null,
       excludedSessions: [...excluded.values()],
+      unattributedLoads,
     });
   }));
 
@@ -244,6 +252,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
   app.get("/api/sessions/:id/skill-report", handle(log, (req, res) => {
     const automated = automatedOf(req.query);
     const id = String(req.params.id);
+    const unattributedLoads = store.reconcileLoads({ sessionIds: [id] });
     const tree = sessionTree(store, id);
     if (!tree) return deny(res, 404, "session_not_found", { message: `no session ${id}` });
     const automation = store.sessionAutomation([id])[id];
@@ -259,6 +268,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       generatedAt: Date.now(), sessionId: tree.id, runtime: tree.runtime, startedAt: tree.startedAt, endedAt: tree.endedAt,
       automated: automation ?? null, tree,
       finding: findingDto(analyzeSession(tree, loadedDigests(store))), usage: sessionUsage(tree),
+      unattributedLoads,
     });
   }));
 

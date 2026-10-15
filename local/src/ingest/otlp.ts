@@ -156,8 +156,9 @@ function claudeSkillReads(attrs: Attrs, ref: SessionRef, ts: number, extra: Part
 function claudeToolResult(attrs: Attrs, ref: SessionRef, ts: number, turnKey: string | undefined): Derived[] {
   const toolName = str(attrs.tool_name);
   const params = parseJsonObject(attrs.tool_parameters) ?? {};
+  const input = parseJsonObject(attrs.tool_input) ?? {};
   const mcpServer = str(attrs.mcp_server_name) ?? str(params.mcp_server_name) ?? "";
-  const gisoolMcp = mcpServer.toLowerCase().includes("gisool") || (toolName?.startsWith("mcp__gisool__") ?? false);
+  const gisoolMcp = mcpServer.toLowerCase() === "gisool" || isGisoolCall(toolName, input) || isGisoolCall(toolName, params);
   const toolUseId = str(attrs.tool_use_id);
   const extra: Partial<CanonicalEvent> = { ...(toolUseId ? { toolUseId } : {}), ...(turnKey ? { turnKey } : {}) };
   // The arguments go in `text` so applyCapture, redaction and retention treat them exactly like prompt content.
@@ -174,6 +175,10 @@ function claudeToolResult(attrs: Attrs, ref: SessionRef, ts: number, turnKey: st
   // Claude-side view of that tool run and derives no skill reads of its own.
   if (gisoolMcp) return [derive(call)];
   return [derive(call), ...claudeSkillReads(attrs, ref, ts, extra)];
+}
+
+function isGisoolCall(toolName: string | undefined, args: Attrs): boolean {
+  return (toolName?.startsWith("mcp__gisool__") ?? false) || str(args.server)?.toLowerCase() === "gisool";
 }
 
 function claudeRecord(name: string, attrs: Attrs, ts: number): Derived[] | "ignored" | "unknown" {
@@ -239,9 +244,13 @@ function codexRecord(name: string, attrs: Attrs, ts: number): Derived[] | "ignor
     case "codex.tool_result": {
       const callId = str(attrs.call_id);
       const args = str(attrs.arguments);
+      const toolName = str(attrs.tool_name);
+      const gisoolMcp = isGisoolCall(toolName, parseJsonObject(args) ?? {})
+        || str(attrs.mcp_server_name)?.toLowerCase() === "gisool";
       return [derive(makeEvent("tool_call", "otel", ref, ts, {
         ...turn, ...(callId ? { callId } : {}), ...(args !== undefined ? { text: args } : {}),
-        data: compact({ toolName: str(attrs.tool_name) ?? "unknown", success: bool(attrs.success), durationMs: num(attrs.duration_ms) }),
+        data: compact({ toolName: toolName ?? "unknown", success: bool(attrs.success), durationMs: num(attrs.duration_ms),
+          ...(gisoolMcp ? { gisoolMcp: true } : {}) }),
       }))];
     }
     case "codex.skill_invocation": {

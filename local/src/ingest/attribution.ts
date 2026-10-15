@@ -1,6 +1,7 @@
 import type { Attribution, CanonicalEvent, Store } from "../types.js";
 
 export const WINDOW_MS = 120_000;
+export const URI_WINDOW_MS = 10_000;
 const MAX_TRACKED = 10_000;
 
 type AttributionStore = Pick<Store, "upsertSession" | "openSessions" | "traceSession">;
@@ -29,6 +30,26 @@ export function remember(map: Map<string, string>, key: string, value: string): 
 
 function attributed(sessionId: string | undefined): sessionId is string {
   return sessionId !== undefined && sessionId !== "unattributed";
+}
+
+/** Exact JSON string values only: a URI mentioned in shell/exec source is not a resource-read argument. */
+export function toolCallReferencesUri(text: string | null, uri: string, gisoolMcp: boolean): boolean {
+  if (text === null) return false;
+  let args: unknown;
+  try {
+    args = JSON.parse(text);
+  } catch {
+    return false; // Truncated or non-JSON arguments cannot prove a URI match.
+  }
+  // Historical OTLP resource calls predate gisoolMcp; their explicit server argument is equally strong evidence.
+  const server = args !== null && typeof args === "object" && "server" in args ? args.server : undefined;
+  if (!gisoolMcp && !(typeof server === "string" && server.toLowerCase() === "gisool")) return false;
+  const references = (value: unknown): boolean => {
+    if (typeof value === "string") return value === uri;
+    if (Array.isArray(value)) return value.some(references);
+    return value !== null && typeof value === "object" && Object.values(value).some(references);
+  };
+  return references(args);
 }
 
 export function attribute(event: CanonicalEvent, store: AttributionStore, now: number, state: AttributionState = createAttributionState()): Attribution {

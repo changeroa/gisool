@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
+import { toolCallReferencesUri, URI_WINDOW_MS, WINDOW_MS } from "../ingest/attribution.js";
 import type { Attribution, CanonicalEvent, GisoolConfig, OtelSpanRow, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
 
 /**
@@ -77,7 +78,7 @@ export function writeAliasesOverrides(db: Db, value: Record<string, string[]>): 
 }
 
 type Writes = Pick<Store, "append" | "hasSourceKey" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
-  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention" | "putSpans">;
+  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention" | "putSpans" | "reconcileLoads">;
 
 export function createWrites(ctx: StoreCtx): Writes {
   const { db } = ctx;
@@ -103,6 +104,48 @@ export function createWrites(ctx: StoreCtx): Writes {
   }
 
   return {
+    reconcileLoads(opts = {}) {
+      const loads = db.prepare(`SELECT id, ts, runtime, skill_uri, data_json FROM events WHERE source = 'mcp' AND kind = 'load'
+        AND ((session_id = 'unattributed' AND attribution_reason = 'ambiguous')
+          OR (attribution_method = 'trace_handle' AND json_extract(data_json, '$.attributionBasis') = 'tool_call_uri'))`).all() as
+        { id: string; ts: number; runtime: RuntimeId; skill_uri: string | null; data_json: string }[];
+      const tools = db.prepare(`SELECT DISTINCT session_id, text, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp
+        FROM events WHERE source = 'otel' AND kind = 'tool_call'
+        AND runtime = ? AND ts BETWEEN ? AND ? AND session_id != 'unattributed'
+        AND json_extract(data_json, '$.success') IS NOT 0`);
+      const update = db.prepare(`UPDATE events SET session_id = ?, attribution_method = ?, attribution_reason = ?, data_json = ? WHERE id = ?`);
+      let count = 0;
+      const uris = new Set<string>();
+      for (const load of loads) {
+        const uri = load.skill_uri;
+        if (uri === null) continue;
+        const data = parseJson<Record<string, unknown>>(load.data_json, {});
+        // Older ambiguous rows have no snapshot. Reconstruct only sessions open and active at the load timestamp.
+        const candidates = Array.isArray(data.attributionCandidates)
+          ? data.attributionCandidates.filter((id): id is string => typeof id === "string")
+          : (db.prepare(`SELECT s.id FROM sessions s WHERE s.runtime = ? AND s.started_at <= ?
+              AND (s.ended_at IS NULL OR s.ended_at >= ?)
+              AND MAX(s.started_at, COALESCE((SELECT MAX(e.ts) FROM events e WHERE e.session_id = s.id AND e.ts <= ?), s.started_at)) >= ?`)
+            .all(load.runtime, load.ts, load.ts, load.ts, load.ts - WINDOW_MS) as { id: string }[]).map((session) => session.id);
+        data.attributionCandidates = candidates;
+        const matches = new Set((tools.all(load.runtime, load.ts - URI_WINDOW_MS, load.ts + URI_WINDOW_MS) as
+          { session_id: string; text: string | null; gisoolMcp: number | null }[])
+          .filter((tool) => candidates.includes(tool.session_id) && toolCallReferencesUri(tool.text, uri, tool.gisoolMcp === 1))
+          .map((tool) => tool.session_id));
+        const sessionId = matches.size === 1 ? matches.values().next().value : undefined;
+        if (sessionId !== undefined) data.attributionBasis = "tool_call_uri";
+        else delete data.attributionBasis;
+        update.run(sessionId ?? "unattributed", sessionId === undefined ? "none" : "trace_handle",
+          sessionId === undefined ? "ambiguous" : null, JSON.stringify(data), load.id);
+        if (sessionId !== undefined || (opts.from !== undefined && load.ts < opts.from)
+          || (opts.to !== undefined && load.ts >= opts.to)
+          || (opts.sessionIds !== undefined && !candidates.some((id) => opts.sessionIds?.includes(id)))) continue;
+        count += 1;
+        uris.add(uri);
+      }
+      return { count, uris: [...uris].sort() };
+    },
+
     append(event: CanonicalEvent, attribution: Attribution): boolean {
       const text = event.text ?? null;
       const result = insertEvent.run(event.id, event.ts, event.kind, event.source, attribution.sessionId, attribution.method, attribution.reason ?? null,
