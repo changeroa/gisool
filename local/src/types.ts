@@ -82,7 +82,13 @@ export interface Store {
   countIngest(kind: "accepted" | "rejected" | "dropped", code?: string): void;
   addEvalCase(c: { query: string; expectedUri?: SkillUri; fromTraceId?: string }): void; evalCases(): { query: string; expectedUri?: SkillUri }[];
   exportTo(dir: string, opts: { withHistory: boolean }): void; importFrom(dir: string, opts: { merge: boolean }): { added: number; skipped: number };
-  retention(days: number): number; close(): void }
+  retention(days: number): number; close(): void;
+  // Stores the spans the traces ingest kept (INSERT OR IGNORE) and records the batch with the ingest counters inside the
+  // same transaction: one `accepted` per new row, `dropped` for the spans the join filter rejected. Returns new rows.
+  putSpans(spans: OtelSpanRow[], dropped?: number): number }
+// One row of otel_spans: the whole whitelist the traces ingest may store. No other span attribute is kept.
+export type OtelSpanRow = { traceId: string; spanId: string; parentSpanId?: string; name: string; runtime: RuntimeId;
+  conversationId?: string; turnKey?: string; callId?: string; startMs?: number; endMs?: number; receivedAt: number };
 export type GisoolConfig = { port: number; captureLevel: CaptureLevel; retentionDays: number | null;
   roots: { id: string; path: string }[]; runtimes: Partial<Record<RuntimeId, { enabled: boolean }>> };
 export type PackPlanFile = { path: string; before: string | null; after: string; mode: number };

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
-import type { Attribution, CanonicalEvent, GisoolConfig, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
+import type { Attribution, CanonicalEvent, GisoolConfig, OtelSpanRow, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
 
 /**
  * Optional wiring for createStore. `createStore(db)` alone serves ingest and queries;
@@ -77,7 +77,7 @@ export function writeAliasesOverrides(db: Db, value: Record<string, string[]>): 
 }
 
 type Writes = Pick<Store, "append" | "hasSourceKey" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
-  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention">;
+  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention" | "putSpans">;
 
 export function createWrites(ctx: StoreCtx): Writes {
   const { db } = ctx;
@@ -87,6 +87,12 @@ export function createWrites(ctx: StoreCtx): Writes {
      source_key, turn_key, call_id, span_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const selectSourceKey = db.prepare("SELECT 1 AS hit FROM events WHERE source_key = ?");
+  const insertSpan = db.prepare(`INSERT OR IGNORE INTO otel_spans
+    (trace_id, span_id, parent_span_id, name, runtime, conversation_id, turn_key, call_id, start_ms, end_ms, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  // One statement per counter: a Codex trace batch drops thousands of spans, which countIngest would commit one by one.
+  // The bound amount is cast to INTEGER so the counter stays the plain integer string countIngest writes, not "793.0".
+  const addIngestCount = db.prepare(`INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(? AS INTEGER) AS TEXT)`);
   const setFirstPrompt = db.prepare("UPDATE sessions SET first_prompt = ? WHERE id = ? AND first_prompt IS NULL");
   const setEnded = db.prepare("UPDATE sessions SET ended_at = MAX(COALESCE(ended_at, 0), ?) WHERE id = ?");
 
@@ -215,6 +221,27 @@ export function createWrites(ctx: StoreCtx): Writes {
     evalCases() {
       const rows = db.prepare("SELECT query, expected_uri FROM eval_cases ORDER BY created_at, rowid").all() as { query: string; expected_uri: string | null }[];
       return rows.map((r) => (r.expected_uri === null ? { query: r.query } : { query: r.query, expectedUri: r.expected_uri }));
+    },
+
+    putSpans(spans: OtelSpanRow[], dropped = 0): number {
+      if (spans.length === 0 && dropped === 0) return 0;
+      let inserted = 0;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const s of spans) {
+          const result = insertSpan.run(s.traceId, s.spanId, s.parentSpanId ?? null, s.name, s.runtime, s.conversationId ?? null,
+            s.turnKey ?? null, s.callId ?? null, s.startMs ?? null, s.endMs ?? null, s.receivedAt);
+          inserted += Number(result.changes);
+        }
+        if (inserted > 0) addIngestCount.run("ingest.accepted", String(inserted), inserted);
+        // No error code: a span the join filter rejected is the normal case for a trace batch, not a failure to report.
+        if (dropped > 0) addIngestCount.run("ingest.dropped", String(dropped), dropped);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      return inserted;
     },
 
     retention(days: number): number {
