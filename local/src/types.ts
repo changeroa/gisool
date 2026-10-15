@@ -156,3 +156,24 @@ export type TreeFlowData = { readonly id: string; readonly workspaceId: string; 
 export type FlowTree = { readonly id: string; readonly workspaceId: string; readonly label: string | null; readonly registered: boolean;
   readonly tabs: readonly (TreeTopologyNode & { readonly panes: readonly (TreeTopologyNode & {
     readonly sessions: readonly (TreePaneLink & { readonly basis: "reported" | "inferred"; readonly session: SessionTree | null })[] })[] })[] };
+
+// "Found the skill?" analysis (analysis/finding.ts): descriptive labels over recorded search, load and native-skill events.
+// They say where a used skill came from; none of them claims the skill was the right one.
+export type FindingLabel = "found_top1" | "found_lower" | "loaded_outside_results" | "native_without_search" | "searched_none_used" | "no_search";
+// rank collapses candidates that are identical copies (same SKILL.md digest) into one rank; rawRank is the rank the search reported.
+export type FindingCandidate = { readonly uri: SkillUri; readonly name: string; readonly rank: number; readonly rawRank: number; readonly copies: number };
+// One skill a turn put to work: a gisool load ("load") or a native skill activation ("native", whose uri is unknown unless reported).
+// rankInSearch is the collapsed rank in the latest search before that use, null when no search preceded it or it was not among the candidates.
+export type FindingUsedSkill = { readonly uri: SkillUri | null; readonly name: string; readonly via: "load" | "native"; readonly ts: number;
+  readonly rankInSearch: number | null };
+// A skill a LATER turn of the same session used while this turn searched without surfacing it.
+export type FindingMiss = { readonly uri: SkillUri | null; readonly name: string; readonly via: "load" | "native"; readonly turnId: string; readonly ts: number };
+export type TurnFinding = { readonly turnId: string; readonly searched: boolean; readonly queries: readonly string[];
+  readonly candidates: readonly FindingCandidate[]; readonly loadedSkills: readonly FindingUsedSkill[];
+  readonly abstained: { readonly reason: AbstainReason; readonly hint: string } | null;
+  readonly nativeWithoutSearch: boolean; readonly missedLater: readonly FindingMiss[]; readonly label: FindingLabel };
+// meanRank averages rankInSearch over the used skills that carry one; null when none did, which is never the same as 0.
+export type FindingAggregate = { readonly turns: number; readonly labels: Readonly<Record<FindingLabel, number>>;
+  readonly meanRank: number | null; readonly abstentions: number };
+export type SessionFinding = { readonly sessionId: string; readonly turns: readonly TurnFinding[]; readonly aggregate: FindingAggregate };
+export type FlowFinding = { readonly id: string; readonly sessions: readonly SessionFinding[]; readonly aggregate: FindingAggregate };
