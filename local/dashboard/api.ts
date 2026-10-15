@@ -1,6 +1,7 @@
 import type { Attribution, AutomatedMode, Filter, FlowDto, FlowListDto, FlowReportDto, HeatmapDto, SessionRow, SessionSkillReportDto,
   SkillEntry, SkillWeekDto, Store, TraceStep } from "../src/types.js";
 import { matchesFilter, serializeFilter } from "./state";
+import type { WorkflowSpec } from "../src/workflow/spec.js";
 
 export type Stats = ReturnType<Store["stats"]>;
 /** The API may attach the attribution reason for unattributed rows; SessionRow itself does not carry it. */
@@ -21,6 +22,7 @@ export type Api = {
   flows(query?: FlowsQuery): Promise<FlowListDto>;
   /** One flow: tree, per-turn finding, per-span usage and the spec comparison. `ws:<id>` addresses a workspace. */
   flowReport(id: string, opts?: FlowsQuery): Promise<FlowReportDto>;
+  workflowVersions(name: string): Promise<{ version: number; steps: WorkflowSpec["steps"] }[]>;
   /** The same finding and usage analysis for one session; rejects with 404 on a daemon that predates it. */
   skillReport(sessionId: string, opts?: { automated?: AutomatedMode }): Promise<SessionSkillReportDto>;
   heatmap(filter: Filter, opts?: { tz?: string; weekStart?: 0 | 1; bucket?: 1 | 2 | 4 }): Promise<HeatmapDto>;
@@ -77,6 +79,7 @@ const httpApi: Api = {
   flowReport: (id, opts = {}) => request(withQuery(`/api/flows/${encodeURIComponent(id)}`, {}, {
     automated: opts.automated, from: opts.from, to: opts.to, limit: opts.limit,
   })),
+  workflowVersions: (name) => request(`/api/workflows/${encodeURIComponent(name)}/versions`),
   skillReport: (sessionId, opts = {}) =>
     request(withQuery(`/api/sessions/${encodeURIComponent(sessionId)}/skill-report`, {}, { automated: opts.automated })),
   heatmap: (filter, opts = {}) => request(withQuery("/api/heatmap", filter, { tz: opts.tz, weekStart: opts.weekStart, bucket: opts.bucket })),
@@ -151,6 +154,7 @@ function fixtureApi(variant: FixtureVariant): Api {
         automated: query.automated ?? "exclude", flows: [], nextCursor: null,
       }),
     flowReport: (id) => Promise.reject(new ApiError(404, "flow_not_found", `no flow or herdr workspace ${id}`)),
+    workflowVersions: () => Promise.resolve([]),
     skillReport: (sessionId) => Promise.reject(new ApiError(404, "session_not_found", `no session ${sessionId}`)),
     flow: (_filter, opts = {}) =>
       settle((data) => {

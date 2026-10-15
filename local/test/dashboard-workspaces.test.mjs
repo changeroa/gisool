@@ -170,10 +170,11 @@ test("the flow summary counts turns, found-via-search and acted spans, and leave
   ], "an unreported cost reaches the row as null, never as a number");
 
   const planOnly = {
+    flow: null, tree: { tabs: [], sessions: [sessionReport.tree] },
     finding: { id: "plan", sessions: [sessionReport.finding], aggregate: sessionReport.finding.aggregate },
     usage: { id: "plan", sessions: [sessionReport.usage], skills: [] },
   };
-  assert.equal(workspaces.flowSummary(planOnly).costUsd, 0.25, "a flow whose every span reported a cost sums them");
+  assert.equal(workspaces.flowSummary(planOnly).costUsd, 0.25, "a flow whose unique calls reported costs sums them");
   assert.deepEqual(workspaces.summaryFacts(workspaces.flowSummary(planOnly)).find((fact) => fact.key === "cost"), { key: "cost", value: 0.25 });
 });
 

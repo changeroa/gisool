@@ -230,6 +230,22 @@ Layout
   this range" with a Clear filters GhostButton when the time filter is set.
 
 ### FlowHeader / Steps / PaneTree (`views/workspaces.tsx`)
+- Flow cost sums unique model calls in the execution window, including calls with no skill.
+  Identity is session + call id (event id when absent); an unreported cost makes the total unknown.
+  Span costs remain observations, explicitly labelled shared when skills were co-active.
+- Step intent shows "together (all required)" or "alternatives (any one)" from the exact spec version.
+- Sessions outside the registered execution window carry a visible context label. An absent session
+  end is "end not observed" when the flow/pane ended or a newer session appeared, never a claimed live run.
+- EvidenceDisclosure: native `details` / `summary` beneath each turn and span, with a visible
+  basis Tag, wrapping lists and selectable paths/event ids. Uses existing stack/cluster layout,
+  `--s-2` / `--s-3` gaps, `--wash`, `--r-sm`, and body/small type; document owns scrolling.
+  Turn evidence includes queries, candidates (collapsed/raw ranks and copies), used skills and
+  latest-preceding-search ranks, abstention reasons, native-before-search and later-missed links.
+  Candidates are the API's turn-wide union with latest ranks, not falsely assigned to each query.
+  Span evidence includes labelled correction status/reason/matched terms and reported/heuristic
+  supporting reads with file and event provenance. Missing evidence is unknown, not a negative result.
+  Disclosure targets are at least 44px, keyboard focus uses the shared ring, and later-turn links
+  open the target turn before focusing its summary. No new motion or colors.
 - FlowHeader: `header.ws__head.card` > back link > `h1.ws__title` > `dl.ws__meta` (Workspace / Spec /
   Started / Ended / Panes / Sessions) > `p.facts.ws__counts` > `.ws__actions` (snapshot time plus a
   Refresh GhostButton). A flow report is computed on read, so the view states its `generatedAt` and
