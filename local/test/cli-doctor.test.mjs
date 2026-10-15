@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { distImport } from "./_helpers.mjs";
@@ -24,6 +25,29 @@ async function freePort() {
   const s = await listen(() => undefined);
   await s.close();
   return s.port;
+}
+
+async function listenHerdr(socketPath, onSocket) {
+  const sockets = new Set();
+  const herdr = createNetServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    onSocket(socket);
+  });
+  await new Promise((resolve) => herdr.listen(socketPath, resolve));
+  return {
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => herdr.close(resolve));
+    },
+  };
+}
+
+async function fakeHerdr(sb) {
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, (socket) => socket.on("data", () => socket.end('{"id":"1","result":{"type":"pong","protocol":"1"}}\n')));
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  return herdr;
 }
 
 function prepareHome(sb, port) {
@@ -65,7 +89,8 @@ test("doctor --json with the daemon down exits 1 and reports daemon_unreachable"
 test("doctor --json with the daemon up exits 0; no backups reports last_backup: none without failing", async (t) => {
   const sb = cliSandbox({ runtimes: [] });
   const daemon = await fakeGisool();
-  t.after(async () => { await daemon.close(); sb.cleanup(); });
+  const herdr = await fakeHerdr(sb);
+  t.after(async () => { await daemon.close(); await herdr.close(); sb.cleanup(); });
   prepareHome(sb, daemon.port);
   const r = await runCli(["doctor", "--json"], sb.env);
   assert.equal(r.code, 0, r.output);
@@ -129,7 +154,8 @@ test("doctor flags a gisool hook timeout above 5 s as hook_timeout_too_long", as
 test("a remote gisul registration is a warning, not a failure", async (t) => {
   const sb = cliSandbox({ runtimes: [".gemini"] });
   const daemon = await fakeGisool();
-  t.after(async () => { await daemon.close(); sb.cleanup(); });
+  const herdr = await fakeHerdr(sb);
+  t.after(async () => { await daemon.close(); await herdr.close(); sb.cleanup(); });
   prepareHome(sb, daemon.port);
   const init = await runCli(["init", "--no-service", "--runtime", "gemini"], sb.env);
   assert.equal(init.code, 0, init.output);
@@ -171,12 +197,13 @@ test("doctor fails with token_mismatch when /api/stats rejects this install's to
 test("doctor sends this install's bearer token to /api/stats and reports ok on 200", async (t) => {
   const sb = cliSandbox({ runtimes: [] });
   let auth;
+  const herdr = await fakeHerdr(sb);
   const daemon = await listen((req, res) => {
     if (req.url === "/api/stats") auth = req.headers.authorization;
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, version: VERSION }));
   });
-  t.after(async () => { await daemon.close(); sb.cleanup(); });
+  t.after(async () => { await daemon.close(); await herdr.close(); sb.cleanup(); });
   prepareHome(sb, daemon.port);
   const r = await runCli(["doctor", "--json"], sb.env);
   assert.equal(r.code, 0, r.output);
@@ -184,4 +211,63 @@ test("doctor sends this install's bearer token to /api/stats and reports ok on 2
   const token = readFileSync(join(sb.env.GISOOL_HOME, "token"), "utf8").trim();
   assert.ok(token.length > 0);
   assert.equal(auth, "Bearer " + token);
+});
+
+test("doctor herdr check accepts a pong from the configured unix socket", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const daemon = await fakeGisool();
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, (socket) => {
+    let request = "";
+    socket.on("data", (chunk) => {
+      request += chunk.toString();
+      if (request.includes("\n")) socket.end('{"id":"1","result":{"type":"pong","protocol":"1"}}\n');
+    });
+  });
+  t.after(async () => { await daemon.close(); await herdr.close(); sb.cleanup(); });
+  prepareHome(sb, daemon.port);
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  const r = await runCli(["doctor", "--json"], sb.env);
+  assert.equal(r.code, 0, r.output);
+  const c = check(JSON.parse(r.stdout), "herdr");
+  assert.equal(c.status, "ok");
+  assert.match(c.detail, /protocol 1/);
+});
+
+test("doctor herdr check fails for an unreachable configured socket", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  t.after(sb.cleanup);
+  prepareHome(sb, await freePort());
+  sb.env.GISOOL_HERDR_SOCKET = "/nonexistent";
+  const r = await runCli(["doctor"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr/);
+});
+
+test("doctor herdr check rejects a malformed socket reply", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, (socket) => {
+    socket.on("data", () => socket.end('{"id":"1","result":{"type":"unexpected"}}\n'));
+  });
+  t.after(async () => { await herdr.close(); sb.cleanup(); });
+  prepareHome(sb, await freePort());
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  const r = await runCli(["doctor"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr/);
+});
+
+test("doctor herdr check fails when the socket never replies", async (t) => {
+  const sb = cliSandbox({ runtimes: [] });
+  const socketPath = join(sb.home, "herdr.sock");
+  const herdr = await listenHerdr(socketPath, () => {});
+  t.after(async () => { await herdr.close(); sb.cleanup(); });
+  prepareHome(sb, await freePort());
+  sb.env.GISOOL_HERDR_SOCKET = socketPath;
+  const started = Date.now();
+  const r = await runCli(["doctor"], sb.env);
+  assert.equal(r.code, 1, r.output);
+  assert.match(r.stdout, /\[fail\] herdr: install herdr and start it: herdr/);
+  assert.ok(Date.now() - started < 5000, "herdr socket check should respect its 2 second timeout");
 });

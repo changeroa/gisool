@@ -1,0 +1,30 @@
+Task 5: Packs and doctor
+Worktree: /Users/victor/projects/gisul-wt/gst-w1-t5
+
+Baseline
+- `cd local && npm ci` completed.
+- Initial targeted test invocation could not load `local/dist` before building.
+- After `npm run build`, unchanged targeted tests passed: 20 tests, 20 passed.
+
+Implementation verification
+- `npm run build`: passed.
+- `npm run typecheck`: passed.
+- `node --test test/packs-claude-codex.test.mjs test/cli-doctor.test.mjs`: passed, 24 tests.
+- `npm test`: passed, 278 tests, 0 failures.
+- After restoring the mutation, `node --test test/packs-claude-codex.test.mjs`: passed, 12 tests.
+- Mutation check: temporarily removed the Claude `SessionStart` entry from `local/packs/claude-code/settings.template.json`. The pack test failed as expected at the SessionStart assertion (`Cannot read properties of undefined (reading 'length')`). Restored the entry and reran the pack tests successfully.
+
+Real doctor surface
+- With a temporary HOME/GISOOL_HOME and `GISOOL_HERDR_SOCKET=/Users/victor/.config/herdr/herdr.sock`:
+  `[ok] herdr: herdr ping succeeded (protocol 20)`
+  Overall doctor exit code: 1 because the fresh sandbox also has unrelated daemon/runtime configuration checks failing.
+- With the same sandbox and `GISOOL_HERDR_SOCKET=/nonexistent`:
+  `[fail] herdr: install herdr and start it: herdr (connect ENOENT /nonexistent) (herdr_unavailable)`
+  Overall doctor exit code: 1.
+- Temporary HOME directories were removed by shell traps.
+
+Doctor test fixture updates
+- Added a fake herdr socket to `doctor --json with the daemon up exits 0; no backups reports last_backup: none without failing`.
+- Added a fake herdr socket to `a remote gisul registration is a warning, not a failure`.
+- Added a fake herdr socket to `doctor sends this install's bearer token to /api/stats and reports ok on 200`.
+- These tests still assert their existing overall success outcomes; the fixtures now satisfy the newly required herdr check instead of depending on a host herdr installation.
