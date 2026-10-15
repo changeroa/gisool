@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { stringify } from "yaml";
 
+// Existing server tests must never discover or connect to the user's live herdr.
+process.env.GISOOL_HERDR = "off";
+
 export const PACKAGE_ROOT = new URL("../", import.meta.url);
 
 /** Imports a compiled module from local/dist, e.g. distImport("store/db.js"). */
@@ -31,6 +34,7 @@ export function sandboxEnv(home, base = process.env) {
   env.HOME = home;
   env.GISOOL_HOME = join(home, ".gisool");
   env.GISOOL_NO_CLI = "1";
+  env.GISOOL_HERDR = "off";
   return env;
 }
 
