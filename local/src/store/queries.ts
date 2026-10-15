@@ -242,15 +242,23 @@ export function createQueries(ctx: StoreCtx): Queries {
         .all(sessionId) as (Omit<TreeEvent, "data"> & { data_json: string })[];
       // Broker traces can differ from the turn trace. Scope call ids to this session's conversation (when supplied),
       // and use the log's exact trace/span pair rather than treating a trace id as a turn id.
-      const spans = db.prepare(`SELECT o.trace_id AS traceId, o.span_id AS spanId, o.name, o.runtime, o.received_at AS receivedAt,
+      const spans = db.prepare(`WITH session AS (
+        SELECT id, runtime, runtime_session_id, conversation_id FROM sessions WHERE id = ?
+      ), matched AS (
+        SELECT o.trace_id, o.span_id FROM session s CROSS JOIN otel_spans o
+          WHERE o.conversation_id IN (s.runtime_session_id, s.conversation_id) AND o.runtime = s.runtime
+        UNION
+        SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+          WHERE o.call_id = e.call_id AND o.runtime = s.runtime
+            AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
+        UNION
+        SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+          WHERE o.trace_id = json_extract(e.data_json, '$.otelTraceId') AND o.span_id = e.span_id AND o.runtime = s.runtime
+            AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
+      ) SELECT o.trace_id AS traceId, o.span_id AS spanId, o.name, o.runtime, o.received_at AS receivedAt,
         o.parent_span_id AS parentSpanId, o.conversation_id AS conversationId, o.turn_key AS turnKey,
         o.call_id AS callId, o.start_ms AS startMs, o.end_ms AS endMs
-        FROM otel_spans o JOIN sessions s ON s.id = ? AND o.runtime = s.runtime
-        WHERE (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
-        AND (o.conversation_id IN (s.runtime_session_id, s.conversation_id)
-          OR EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND
-            ((e.call_id IS NOT NULL AND e.call_id = o.call_id)
-              OR (e.span_id = o.span_id AND json_extract(e.data_json, '$.otelTraceId') = o.trace_id))))
+        FROM matched m JOIN otel_spans o ON o.trace_id = m.trace_id AND o.span_id = m.span_id
         ORDER BY o.start_ms, o.trace_id, o.span_id`).all(sessionId) as
         (Pick<OtelSpanRow, "traceId" | "spanId" | "name" | "runtime" | "receivedAt"> &
           { parentSpanId: string | null; conversationId: string | null; turnKey: string | null; callId: string | null; startMs: number | null; endMs: number | null })[];

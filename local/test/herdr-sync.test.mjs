@@ -10,7 +10,7 @@ import { modernClient } from "./helpers/mcp.mjs";
 
 const { openDb } = await distImport("store/db.js");
 const { startHerdrSync } = await distImport("herdr/sync.js");
-const { resolveHerdrSocket } = await distImport("herdr/client.js");
+const { resolveHerdrSocket, createHerdrClient } = await distImport("herdr/client.js");
 const { startServer } = await distImport("server.js");
 // Deadlines remain real when recovery tests advance the production retry clock.
 const deadlineTimeout = globalThis.setTimeout;
@@ -170,6 +170,7 @@ test("discovery recovers when herdr appears after startup and resolves a new soc
   const { server, db, logs, messages } = await followedServer(t, fake, dir);
   assert.equal((await http(server.port, { path: "/healthz" })).status, 200);
   assert.equal(fake.requests.length, 0);
+  assert.match(messages.find((message) => message.startsWith("herdr failure:")), /ENOENT/);
   // When discovery becomes available without restarting the daemon.
   const executable = join(dir, "herdr");
   writeFileSync(executable, `#!/bin/sh\nprintf 'socket: ${fake.path}\\n'\n`, { mode: 0o700 });
@@ -185,7 +186,7 @@ test("discovery recovers when herdr appears after startup and resolves a new soc
   await signal(logs, "log", (message) => message === "herdr connected", () => t.mock.timers.tick(1_000));
   assert.equal(db.prepare("SELECT id FROM herdr_panes WHERE closed_ms IS NULL").get().id, "moved");
   assert.deepEqual(messages.filter((message) => message.startsWith("herdr ")),
-    ["herdr unreachable", "herdr connected", "herdr unreachable", "herdr connected"]);
+    [messages.find((message) => message.startsWith("herdr failure:")), "herdr unreachable", "herdr connected", "herdr unreachable", "herdr connected"]);
 });
 
 test("binding-only hook links reported and cwd sessions before any ordinary event", async (t) => {
@@ -227,6 +228,23 @@ test("binding-only hook links cwd when it updates an existing session", async (t
   assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
 });
 
+test("ingest batch revisits its touched session outside the recent pane window", async (t) => {
+  // Given a stored session and pane whose lifetime ended more than 24 hours ago.
+  const fake = await fakeHerdr(t, topology([pane("old", { cwd: "/old", created_ms: 0 })]));
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const { server, db, token } = await followedServer(t, fake);
+  db.prepare("UPDATE herdr_panes SET closed_ms = ?, last_seen_ms = ? WHERE id = 'old'").run(200, 200);
+  session(db, "old-session", { runtime: "claude-code", runtimeId: "old-runtime", start: 100 });
+  // When a binding-only ingest supplies that session's cwd, without a topology refresh.
+  const res = await http(server.port, { method: "POST", path: "/ingest/hook/claude-code", headers: jsonHeaders(token),
+    body: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__gisool__search_skills",
+      tool_use_id: "old-tool", session_id: "old-runtime", cwd: "/old" }) });
+  // Then the batch's session id is forwarded through server coalescing to the bounded linker.
+  assert.equal(res.status, 202);
+  assert.equal(db.prepare("SELECT session_id FROM pane_sessions WHERE pane_id = 'old'").get()?.session_id, "old-session");
+  assert.equal(fake.requests.filter((r) => r.method === "session.snapshot").length, 1);
+});
+
 for (const channel of ["otlp", "mcp"]) {
   test(`${channel} ingest links a new session without waiting for reconciliation`, async (t) => {
     // Given an unlinked reported identity and no clock-driven reconciliations.
@@ -265,7 +283,7 @@ test("30 second reconcile repairs all pending links even for panes absent from t
   t.mock.timers.enable({ apis: ["setInterval"] });
   const { db, changes } = await follower(t, fake);
   db.prepare("INSERT INTO pane_sessions (pane_id, source, agent_session_value) VALUES ('inferred', 'inferred:cwd_time', 'later-inferred')").run();
-  session(db, "later-reported", { runtimeId: "later" });
+  session(db, "later-reported", { runtime: "claude-code", runtimeId: "later" });
   session(db, "later-inferred", { cwd: "/inferred", start: 1 });
   session(db, "later-cwd", { cwd: "/live", start: 1 });
   fake.snapshot = topology([pane("live-cwd", { cwd: "/live", created_ms: 0 })]);
@@ -353,10 +371,7 @@ for (const order of [[0, 1], [1, 0]]) {
     sync.linkSessions();
     session(db, "session-two", { cwd: "/r2", start: base + 9_000, conversation: "runtime-two" });
     sync.linkSessions();
-    assert.deepEqual(linkedPairs(db), [
-      { pane_id: "r2:p1", session_id: "session-two", source: "inferred:cwd_time" },
-      { pane_id: "r2:p2", session_id: "session-one", source: "inferred:cwd_time" },
-    ]);
+    assert.deepEqual(linkedPairs(db), []);
     // When reported identities correct the initially plausible but wrong inference, in either order.
     for (const index of order) {
       panes[index].agent_session = reportedIdentity(index === 0 ? "runtime-one" : "runtime-two");
@@ -414,8 +429,8 @@ test("equally close panes leave a session unlinked rather than guess", async (t)
   assert.equal(db.prepare("SELECT created_ms FROM herdr_panes WHERE id = 'tie:p2'").get().created_ms, 100);
 });
 
-test("late earlier session is assigned before a concurrently open later session", async (t) => {
-  // Given a later session ingested first in the newer pane.
+test("late earlier sessions do not resolve ambiguous same-cwd panes by recency", async (t) => {
+  // Given a later session ingested first with two eligible panes.
   const fake = await fakeHerdr(t, topology([
     pane("late:p1", { cwd: "/late-order", created_ms: 100 }),
     pane("late:p2", { cwd: "/late-order", created_ms: 200 }),
@@ -426,11 +441,77 @@ test("late earlier session is assigned before a concurrently open later session"
   // When an earlier session arrives late.
   session(db, "earlier", { cwd: "/late-order", start: 300 });
   sync.linkSessions();
-  // Then chronological inference is deterministic regardless of ingest order.
-  assert.deepEqual(linkedPairs(db), [
-    { pane_id: "late:p1", session_id: "later", source: "inferred:cwd_time" },
-    { pane_id: "late:p2", session_id: "earlier", source: "inferred:cwd_time" },
-  ]);
+  // Then ambiguity remains regardless of ingest order.
+  assert.deepEqual(linkedPairs(db), []);
+});
+
+for (const [name, first, second, expected] of [
+  ["older matching agent beats newer shell", { agent: "claude" }, {}, "older"],
+  ["matching runtime beats another agent", { agent: "claude" }, { agent: "codex" }, "older"],
+  ["agent-session detection beats shell", { agent_session: { agent: "claude", kind: "path", source: "file", value: "/session" } }, {}, "older"],
+  ["two matching agents remain ambiguous", { agent: "claude" }, { agent: "claude" }, null],
+  ["two unmatched agents remain ambiguous", { agent: "codex" }, { agent: "pi" }, null],
+  ["two shells remain ambiguous", {}, {}, null],
+  ["agent pane beats shell without runtime match", { agent: "pi" }, {}, "older"],
+]) {
+  test(`same-cwd inference: ${name}`, async (t) => {
+    // Given two simultaneously live panes with different creation times.
+    const fake = await fakeHerdr(t, topology([
+      pane("older", { cwd: "/same", created_ms: 100, ...first }),
+      pane("newer", { cwd: "/same", created_ms: 200, ...second }),
+    ]));
+    const { db, sync } = await follower(t, fake);
+    session(db, "s", { runtime: "claude-code", cwd: "/same", start: 300 });
+    // When the session is inferred from its cwd and runtime.
+    sync.linkSessions(["s"]);
+    // Then agent evidence wins only if it uniquely identifies a pane.
+    assert.deepEqual(linkedPairs(db).map((row) => row.pane_id), expected ? [expected] : []);
+  });
+}
+
+test("connection failures log each distinct cause once across retries", async (t) => {
+  // Given a reachable server whose connection initialization fails repeatedly.
+  const fake = await fakeHerdr(t, topology([]));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events = new EventEmitter(), messages = [];
+  const errors = ["schema mismatch", "schema mismatch", "bad snapshot"];
+  const disconnected = signal(events, "disconnect");
+  const client = createHerdrClient({
+    env: { GISOOL_HERDR_SOCKET: fake.path },
+    log(message) { messages.push(message); },
+    async onConnect() { throw new Error(errors.shift()); },
+    onDisconnect() { events.emit("disconnect"); },
+    onEvent() {},
+  });
+  t.after(() => client.close());
+  await disconnected;
+  // When retrying the same cause and then encountering a different one.
+  await signal(events, "disconnect", () => true, () => t.mock.timers.tick(1_000));
+  await signal(events, "disconnect", () => true, () => t.mock.timers.tick(2_000));
+  // Then the logger preserves both root causes without repeated-cause spam.
+  assert.deepEqual(messages, ["herdr failure: schema mismatch", "herdr unreachable", "herdr failure: bad snapshot"]);
+});
+
+test("discovery rejections log the actual command or protocol cause", async (t) => {
+  // Given discovery failing first to execute, then to parse a successful command.
+  const dir = mkdtempSync("/tmp/gst-log-discovery-");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events = new EventEmitter(), messages = [];
+  const failed = signal(events, "log", (message) => message === "herdr unreachable");
+  const client = createHerdrClient({
+    env: { PATH: dir },
+    log(message) { messages.push(message); events.emit("log", message); },
+    async onConnect() {}, onDisconnect() {}, onEvent() {},
+  });
+  t.after(() => client.close());
+  await failed;
+  assert.match(messages[0], /ENOENT/);
+  writeFileSync(join(dir, "herdr"), "#!/bin/sh\nprintf 'status: running\\n'\n", { mode: 0o700 });
+  // When a retry rejects a malformed discovery reply.
+  await signal(events, "log", (message) => message.includes("no socket: line"), () => t.mock.timers.tick(1_000));
+  // Then both discovery causes reach the injected logger.
+  assert.equal(messages.filter((message) => message.startsWith("herdr failure:")).length, 2);
 });
 
 test("pane.closed is applied before a subsequent snapshot can answer", async (t) => {

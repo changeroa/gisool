@@ -88,6 +88,7 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const herdr = process.env.GISOOL_HERDR === "off" ? undefined : startHerdrSync(db, { log });
     if (herdr) cleanup.push(() => herdr.close());
     let linkQueued = false;
+    const linkSessions = new Set<string>();
     let herdrClosed = false;
     cleanup.push(() => { herdrClosed = true; });
 
@@ -123,15 +124,19 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const ingestDeps = createIngestDeps(ownStore, {
       captureLevel: config.captureLevel,
       publish: (change) => sse.notify(change.sessionId),
-      sessionChanged: () => {
+      sessionChanged: (sessionId) => {
         // Ingest batches are synchronous; coalesce their notifications into one linking pass.
-        if (!herdr || linkQueued) return;
+        if (!herdr) return;
+        linkSessions.add(sessionId);
+        if (linkQueued) return;
         linkQueued = true;
         queueMicrotask(() => {
           linkQueued = false;
           if (herdrClosed) return;
           try {
-            herdr.linkSessions();
+            const touched = [...linkSessions];
+            linkSessions.clear();
+            herdr.linkSessions(touched);
           } catch (error) {
             log(`herdr linking failed: ${error instanceof Error ? error.message : String(error)}`);
           }

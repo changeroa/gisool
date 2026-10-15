@@ -45,6 +45,14 @@ export function createHerdrClient(opts: {
   let backoff = 1_000;
   let state: "connected" | "unreachable" | undefined;
   let seq = 0;
+  const causes = new Set<string>();
+  const logCause = (error: unknown) => {
+    if (stopped) return;
+    const cause = error instanceof Error ? error.message : String(error);
+    if (causes.has(cause)) return;
+    causes.add(cause);
+    opts.log(`herdr failure: ${cause}`);
+  };
   const pending = new Map<string, { socket: Socket; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   const transition = (next: typeof state) => {
     if (state === next) return;
@@ -90,6 +98,7 @@ export function createHerdrClient(opts: {
     let buffer = "";
     active.setEncoding("utf8");
     active.on("error", (error) => {
+      logCause(error);
       if (!stopped && active !== socket) socket?.destroy(error);
     });
     active.on("close", () => {
@@ -149,7 +158,10 @@ export function createHerdrClient(opts: {
           transition("connected");
         }, (error: unknown) => active.destroy(error instanceof Error ? error : new Error(String(error))));
       });
-    }, scheduleReconnect);
+    }, (error: unknown) => {
+      logCause(error);
+      scheduleReconnect();
+    });
   };
   connect();
   return client;

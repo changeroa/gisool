@@ -11,7 +11,7 @@ export type IngestDeps = {
   captureLevel: CaptureLevel | (() => CaptureLevel);
   state: AttributionState;
   publish?: (change: IngestChange) => void;
-  sessionChanged?: () => void;
+  sessionChanged?: (sessionId: string) => void;
   log?: (message: string, error: unknown) => void;
   now?: () => number;
 };
@@ -63,7 +63,7 @@ export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | u
     const captured = capture(event, level);
     const attribution = attribute(captured, deps.store, nowOf(deps), deps.state);
     // Attribution can upsert a session even when append later rejects a replay.
-    if (attribution.sessionId !== "unattributed") deps.sessionChanged?.();
+    if (attribution.sessionId !== "unattributed") deps.sessionChanged?.(attribution.sessionId);
     const inserted = deps.store.append(captured, attribution);
     if (captured.loadId && attribution.sessionId !== "unattributed") remember(deps.state.loadSessions, captured.loadId, attribution.sessionId);
     if (!inserted) return undefined;
@@ -84,7 +84,7 @@ export function ingestHook(runtime: RuntimeId, payload: HookPayload, deps: Inges
   for (const binding of bindings) {
     try {
       const sessionId = deps.store.upsertSession(binding.ref, now);
-      deps.sessionChanged?.();
+      deps.sessionChanged?.(sessionId);
       remember(deps.state.toolUseSessions, binding.toolUseId, sessionId);
       const eventId = deps.store.findEventByToolUseId(binding.toolUseId);
       if (eventId) {
