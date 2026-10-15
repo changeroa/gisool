@@ -38,7 +38,11 @@ export type HookPayload =
   | Record<string, unknown>;                                                                                                  // raw hook stdin JSON (claude-code, codex, gemini, cursor)
 export type CanonicalEvent = { id: string; ts: number; kind: EventKind; source: "mcp" | "otel" | "hook";
   ref: SessionRef; traceId?: string; loadId?: string; skillUri?: SkillUri; toolUseId?: string; text?: string; textDigest?: string;
-  textLength?: number; data: Record<string, unknown> };
+  textLength?: number;
+  // sourceKey identifies the agent record this event was derived from, so a replayed batch stores nothing new;
+  // turnKey, callId and spanId join the event to its turn, tool call and OTel span.
+  sourceKey?: string; turnKey?: string; callId?: string; spanId?: string;
+  data: Record<string, unknown> };
 export type Attribution = { sessionId: string | "unattributed"; method: "runtime_id" | "vendor_meta" | "trace_handle" | "window" | "none";
   reason?: "no_session" | "ambiguous" | "stale" };
 export type AdoptionState = "loaded" | "exposed_only" | "no_match" | "aborted" | "not_used";
@@ -55,7 +59,8 @@ export type FlowDto = { unit: "first_load" | "all_loads"; columns: ["task_type",
 export type HeatmapDto = { tz: string; weekStart: 0 | 1; bucketHours: 1 | 2 | 4; cells: { dow: number; hour: number; count: number }[]; rowTotals: number[]; colTotals: number[] };
 export type SkillWeekDto = { weeks: string[]; rows: { uri: SkillUri; name: string; counts: number[] }[] };
 export interface Store {
-  append(event: CanonicalEvent, attribution: Attribution): void;
+  // Returns false when the row was already stored (same id or source_key) and nothing was written.
+  append(event: CanonicalEvent, attribution: Attribution): boolean;
   openSessions(runtime: RuntimeId, since: number): { id: string; startedAt: number; lastActivityAt: number; ref: SessionRef }[];
   reattribute(eventId: string, sessionId: string, method: Attribution["method"]): void;
   findEventByToolUseId(toolUseId: string): string | undefined;

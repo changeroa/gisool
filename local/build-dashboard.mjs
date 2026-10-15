@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const root = new URL("./", import.meta.url);
@@ -22,7 +22,10 @@ await build({
 });
 await copyFile(new URL("dashboard/index.html", root), new URL("index.html", out));
 await copyFile(new URL("dashboard/styles.css", root), new URL("assets/styles.css", out));
-// tsc does not copy non-TS assets; the store reads schema.sql next to db.js.
-await mkdir(new URL("dist/store/", root), { recursive: true });
+// tsc does not copy non-TS assets; the store reads schema.sql and migrations/*.sql next to db.js.
+await mkdir(new URL("dist/store/migrations/", root), { recursive: true });
 await copyFile(new URL("src/store/schema.sql", root), new URL("dist/store/schema.sql", root));
+for (const name of await readdir(new URL("src/store/migrations/", root))) {
+  if (name.endsWith(".sql")) await copyFile(new URL(`src/store/migrations/${name}`, root), new URL(`dist/store/migrations/${name}`, root));
+}
 console.log(`Built dashboard: ${fileURLToPath(out)}`);

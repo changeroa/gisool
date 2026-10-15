@@ -83,8 +83,9 @@ export function createWrites(ctx: StoreCtx): Writes {
   const { db } = ctx;
 
   const insertEvent = db.prepare(`INSERT OR IGNORE INTO events
-    (id, ts, kind, source, session_id, attribution_method, attribution_reason, runtime, trace_id, load_id, skill_uri, tool_use_id, text, text_digest, text_length, data_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (id, ts, kind, source, session_id, attribution_method, attribution_reason, runtime, trace_id, load_id, skill_uri, tool_use_id, text, text_digest, text_length, data_json,
+     source_key, turn_key, call_id, span_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const setFirstPrompt = db.prepare("UPDATE sessions SET first_prompt = ? WHERE id = ? AND first_prompt IS NULL");
   const setEnded = db.prepare("UPDATE sessions SET ended_at = MAX(COALESCE(ended_at, 0), ?) WHERE id = ?");
 
@@ -95,12 +96,16 @@ export function createWrites(ctx: StoreCtx): Writes {
   }
 
   return {
-    append(event: CanonicalEvent, attribution: Attribution): void {
+    append(event: CanonicalEvent, attribution: Attribution): boolean {
       const text = event.text ?? null;
-      insertEvent.run(event.id, event.ts, event.kind, event.source, attribution.sessionId, attribution.method, attribution.reason ?? null,
+      const result = insertEvent.run(event.id, event.ts, event.kind, event.source, attribution.sessionId, attribution.method, attribution.reason ?? null,
         event.ref.runtime, event.traceId ?? null, event.loadId ?? null, event.skillUri ?? null, event.toolUseId ?? null, text,
-        event.textDigest ?? null, event.textLength ?? null, JSON.stringify(event.data ?? {}));
-      sessionSideEffects(attribution.sessionId, event.kind, event.ts, text);
+        event.textDigest ?? null, event.textLength ?? null, JSON.stringify(event.data ?? {}),
+        event.sourceKey ?? null, event.turnKey ?? null, event.callId ?? null, event.spanId ?? null);
+      const inserted = Number(result.changes) > 0;
+      // A record the agent re-sent must not reopen its session or replace the first prompt it already set.
+      if (inserted) sessionSideEffects(attribution.sessionId, event.kind, event.ts, text);
+      return inserted;
     },
 
     openSessions(runtime: RuntimeId, since: number) {

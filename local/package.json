@@ -14,6 +14,7 @@
     "dist",
     "packs",
     "src/store/schema.sql",
+    "src/store/migrations",
     "src/store/task-types.json",
     "README.md"
   ],

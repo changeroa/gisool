@@ -41,11 +41,14 @@ export function memoryStore() {
         .map(({ id, startedAt, lastActivityAt, ref }) => ({ id, startedAt, lastActivityAt, ref }));
     },
     append(event, attribution) {
+      const duplicate = events.some((e) => e.event.id === event.id || (event.sourceKey !== undefined && e.event.sourceKey === event.sourceKey));
+      if (duplicate) return false;
       events.push({ event, attribution: { ...attribution } });
       if (attribution.sessionId !== "unattributed") {
         touch(attribution.sessionId, event.ts);
         if (event.kind === "session_end") byId(attribution.sessionId).endedAt = event.ts;
       }
+      return true;
     },
     reattribute(eventId, sessionId, method) {
       const row = events.find((e) => e.event.id === eventId);

@@ -51,14 +51,16 @@ function capture(event: CanonicalEvent, level: CaptureLevel): CanonicalEvent {
 /**
  * capture -> attribute -> store.append -> publish, fully synchronous. Errors are logged, counted as
  * rejected `ingest_error`, and swallowed so one bad event never breaks a batch or blocks an agent.
+ * Returns undefined for an event the store already had (a replayed record), which is counted nowhere and published nowhere.
  */
 export function ingest(event: CanonicalEvent, deps: IngestDeps): Attribution | undefined {
   try {
     const level = typeof deps.captureLevel === "function" ? deps.captureLevel() : deps.captureLevel;
     const captured = capture(event, level);
     const attribution = attribute(captured, deps.store, nowOf(deps), deps.state);
-    deps.store.append(captured, attribution);
+    const inserted = deps.store.append(captured, attribution);
     if (captured.loadId && attribution.sessionId !== "unattributed") remember(deps.state.loadSessions, captured.loadId, attribution.sessionId);
+    if (!inserted) return undefined;
     count(deps, "accepted");
     if (deps.publish && attribution.sessionId !== "unattributed") deps.publish({ sessionId: attribution.sessionId, attribution, event: captured });
     return attribution;

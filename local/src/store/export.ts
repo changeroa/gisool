@@ -7,7 +7,24 @@ import type { Store } from "../types.js";
 
 export const EXPORT_FILE = "gisool-export.json";
 export const HISTORY_FILE = "history.db";
-const HISTORY_TABLES = ["sessions", "events", "loads"] as const;
+/**
+ * Tables that export --with-history carries, in foreign-key order, each with the columns identifying a row.
+ * A table or column missing on either side (importing a v1 history.db into a v2 store) is simply not copied.
+ */
+const HISTORY_TABLES: Record<string, string[]> = {
+  sessions: ["id"],
+  events: ["id"],
+  loads: ["load_id"],
+  otel_spans: ["trace_id", "span_id"],
+  herdr_workspaces: ["id"],
+  herdr_tabs: ["id"],
+  herdr_panes: ["id"],
+  pane_sessions: ["pane_id", "agent_session_value"],
+  workflow_specs: ["id"],
+  flows: ["id"],
+  flow_steps: ["flow_id", "pane_id"],
+};
+const HISTORY_VERSIONS = [1, 2];
 
 type ExportedEvalCase = { query: string; expectedUri?: string; fromTraceId?: string };
 export type ExportDoc = { version: 1; config: Record<string, unknown>; roots: { id: string; path: string }[]; evalCases: ExportedEvalCase[];
@@ -18,7 +35,7 @@ export type ImportDetails = {
   roots: { added: string[]; skipped: string[] };
   configKeys: { added: string[]; kept: string[] };
   aliases: { added: string[]; skipped: string[] };
-  history: { sessions: number; events: number; loads: number; skipped: number } | null;
+  history: { tables: Record<string, number>; skipped: number } | null;
 };
 export type ImportResult = { added: number; skipped: number; details: ImportDetails };
 
@@ -46,24 +63,39 @@ export function createPortable(ctx: StoreCtx): Portable {
     return new Set(rows.map((r) => JSON.stringify([r.query, r.expected_uri])));
   }
 
-  function historyPlan(): { counts: Record<(typeof HISTORY_TABLES)[number], number>; skipped: number } {
-    const counts = { sessions: 0, events: 0, loads: 0 };
+  function columnsOf(schema: "main" | "hist", table: string): string[] {
+    return (db.prepare(`PRAGMA ${schema}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+  }
+
+  function historyShape(): { table: string; key: string[]; columns: string[] }[] {
+    const shape: { table: string; key: string[]; columns: string[] }[] = [];
+    for (const [table, key] of Object.entries(HISTORY_TABLES)) {
+      const mine = new Set(columnsOf("main", table));
+      const columns = columnsOf("hist", table).filter((c) => mine.has(c));
+      if (key.every((k) => columns.includes(k))) shape.push({ table, key, columns });
+    }
+    return shape;
+  }
+
+  const keyIn = (table: string, key: string[]) =>
+    `${key.length === 1 ? key[0]! : `(${key.join(", ")})`} IN (SELECT ${key.join(", ")} FROM main.${table})`;
+
+  function historyPlan(): { tables: Record<string, number>; skipped: number } {
+    const tables: Record<string, number> = {};
     let skipped = 0;
-    for (const t of HISTORY_TABLES) {
-      const key = t === "loads" ? "load_id" : "id";
-      const row = db.prepare(`SELECT SUM(CASE WHEN ${key} IN (SELECT ${key} FROM main.${t}) THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${t}`).get() as
+    for (const { table, key } of historyShape()) {
+      const row = db.prepare(`SELECT SUM(CASE WHEN ${keyIn(table, key)} THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${table}`).get() as
         { fresh: number | null; total: number };
-      counts[t] = row.fresh ?? 0;
+      tables[table] = row.fresh ?? 0;
       skipped += row.total - (row.fresh ?? 0);
     }
-    return { counts, skipped };
+    return { tables, skipped };
   }
 
   function copyHistory(): void {
-    for (const t of HISTORY_TABLES) {
-      const key = t === "loads" ? "load_id" : "id";
-      const cols = (db.prepare(`PRAGMA main.table_info(${t})`).all() as { name: string }[]).map((c) => c.name).join(", ");
-      db.prepare(`INSERT INTO main.${t} (${cols}) SELECT ${cols} FROM hist.${t} WHERE ${key} NOT IN (SELECT ${key} FROM main.${t})`).run();
+    for (const { table, key, columns } of historyShape()) {
+      const cols = columns.join(", ");
+      db.prepare(`INSERT INTO main.${table} (${cols}) SELECT ${cols} FROM hist.${table} WHERE NOT ${keyIn(table, key)}`).run();
     }
   }
 
@@ -146,9 +178,8 @@ export function createPortable(ctx: StoreCtx): Portable {
         db.prepare("ATTACH DATABASE ? AS hist").run(resolve(historyPath));
         try {
           const version = (db.prepare("PRAGMA hist.user_version").get() as { user_version: number }).user_version;
-          if (version !== 1) throw storeError("unsupported_history_version", `history.db user_version ${version}`);
-          const plan = historyPlan();
-          history = { ...plan.counts, skipped: plan.skipped };
+          if (!HISTORY_VERSIONS.includes(version)) throw storeError("unsupported_history_version", `history.db user_version ${version}`);
+          history = historyPlan();
           if (apply) {
             db.exec("BEGIN IMMEDIATE");
             try {
@@ -190,7 +221,7 @@ export function createPortable(ctx: StoreCtx): Portable {
         }
       }
 
-      const historyAdded = history ? history.sessions + history.events + history.loads : 0;
+      const historyAdded = history ? Object.values(history.tables).reduce((sum, n) => sum + n, 0) : 0;
       return {
         added: evalToAdd.length + rootsAdded.length + configAdded.length + aliasAdded.length + historyAdded,
         skipped: evalSkipped + rootsSkipped.length + configKept.length + aliasSkipped.length + (history?.skipped ?? 0),

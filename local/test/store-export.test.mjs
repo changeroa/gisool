@@ -103,14 +103,14 @@ test("export with history uses VACUUM INTO and import ATTACHes history.db, inser
     assert.equal(count(c.db, "sessions"), count(a.db, "sessions"));
     assert.equal(count(c.db, "events"), count(a.db, "events"));
     assert.equal(count(c.db, "loads"), count(a.db, "loads"));
-    assert.equal(res.details.history.sessions, 40);
+    assert.equal(res.details.history.tables.sessions, 40);
     assert.equal(c.store.sessions({}).length, 40);
     assert.equal(c.db.prepare("SELECT COUNT(*) AS n FROM pragma_database_list WHERE name = 'hist'").get().n, 0, "history detached");
     const cfg = JSON.parse(readFileSync(join(c.gisoolHome, "config.json"), "utf8"));
     assert.ok(cfg.roots.some((r) => r.id === "work"), "fresh home starts from default roots plus imported ones");
     assert.ok(cfg.roots.some((r) => r.id === "claude"));
     const again = c.store.importFrom(out, { merge: true });
-    assert.deepEqual([again.details.history.sessions, again.details.history.events, again.details.history.loads], [0, 0, 0]);
+    assert.deepEqual([again.details.history.tables.sessions, again.details.history.tables.events, again.details.history.tables.loads], [0, 0, 0]);
     assert.ok(again.skipped >= count(a.db, "events"));
     assert.equal(count(c.db, "events"), count(a.db, "events"));
     a.store.exportTo(out, { withHistory: false });

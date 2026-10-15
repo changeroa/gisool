@@ -28,11 +28,11 @@ test("mergeSplitSessions folds a Codex session split across conversation_id and 
   }
 });
 
-test("fresh database migrates to user_version 1 with every table", () => {
+test("fresh database migrates to user_version 2 with every table", () => {
   const db = openDb(":memory:");
   try {
-    assert.equal(SCHEMA_VERSION, 1);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(SCHEMA_VERSION, 2);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table') ORDER BY name").all().map((r) => r.name);
     for (const t of ["meta", "skills", "skills_fts", "sessions", "events", "loads", "eval_cases"]) assert.ok(names.includes(t), t);
     const cols = db.prepare("PRAGMA table_info(events)").all().map((r) => r.name);
@@ -55,7 +55,7 @@ test("file database uses WAL, busy_timeout 5000, foreign keys, and reopens witho
     db.prepare("INSERT INTO meta(key, value) VALUES ('k', 'v')").run();
     db.close();
     const again = openDb(path);
-    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 2);
     assert.equal(again.prepare("SELECT value FROM meta WHERE key = 'k'").get().value, "v");
     again.close();
   } finally {

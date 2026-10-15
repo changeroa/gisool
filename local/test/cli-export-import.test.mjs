@@ -88,7 +88,9 @@ test("export --with-history then import keeps the session count; empty dir fails
     assert.ok(readdirSync(out).includes("history.db"));
     const depsB = makeDeps(b.home, b.env);
     mkdirSync(depsB.gisoolHome, { recursive: true });
-    assert.equal((await capture(() => runImport(out, { dryRun: false }, depsB))).code, 0);
+    const applied = await capture(() => runImport(out, { dryRun: false }, depsB));
+    assert.equal(applied.code, 0);
+    assert.match(applied.out, /history to add: 40 sessions, \d+ events, \d+ loads \(already present: 0\)/);
     s = depsB.openStore();
     assert.equal(s.sessions({}).length, expected);
     s.close();
