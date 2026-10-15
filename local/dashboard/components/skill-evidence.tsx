@@ -63,7 +63,7 @@ export function UsageEvidence({ events, usage }: { events: readonly AssignedTree
     <details class="evidence" data-evidence="usage">
       <summary>Inspect use evidence <span class="tag">reported / heuristic</span></summary>
       <div class="evidence__body">
-        <p data-correction={correction.status} data-basis={correction.label}>
+        <p data-correction={correction.status} data-basis={correction.label} data-correction-reason={correction.reason ?? "none"}>
           Next-prompt correction: <strong>{CORRECTION_LABEL[correction.status]}</strong> <span class="tag">{correction.label}</span>
           {correction.reason && ` - ${CORRECTION_REASON[correction.reason]}`}
           {correction.matched.length > 0 && ` - matched: ${correction.matched.join(", ")}`}

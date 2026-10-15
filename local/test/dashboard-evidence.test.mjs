@@ -18,7 +18,7 @@ export const mutations = {
   missed: ["finding.missedLater.map", "[].map"],
   correction: ["correction.status}", '"unknown"}'],
   correctionBasis: ["correction.label}", '"reported"}'],
-  unknownCorrection: ["CORRECTION_REASON[correction.reason]", '"mutated"'],
+  unknownCorrection: ['correction.reason ?? "none"', '"mutated"'],
   reads: ["read.eventId}", '"mutated"}'],
   readBasis: ["read.label}", '"unknown"}'],
   readPath: ['typeof event?.data.uri === "string" ? event.data.uri', 'typeof event?.data.uri === "string" ? "mutated"'],
@@ -33,18 +33,29 @@ export const mutations = {
 };
 
 const mutation = process.env.GISOOL_DASHBOARD_MUTATION;
+const reword = process.env.GISOOL_DASHBOARD_REWORD === "1";
 const bundled = await build({
   stdin: {
     contents: 'export * from "./dashboard/views/workspaces.tsx"; export * from "./dashboard/components/skill-evidence.tsx"; export {h, render} from "preact";',
     resolveDir: fileURLToPath(PACKAGE_ROOT), loader: "tsx",
   },
   bundle: true, write: false, format: "esm", platform: "node", jsx: "automatic", jsxImportSource: "preact", logLevel: "silent",
-  plugins: mutation ? [{
+  plugins: mutation || reword ? [{
     name: "regression-mutation",
     setup(build) {
       build.onLoad({ filter: /(?:workspaces|skill-evidence)\.tsx$/ }, async ({ path }) => {
-        const [from, to] = mutations[mutation];
-        return { contents: (await readFile(path, "utf8")).replaceAll(from, to), loader: "tsx" };
+        const replacements = mutation ? [mutations[mutation]] : [
+          ['"not in results (or no preceding search)"', '"absent from the preceding search"'],
+          ['"next prompt text not captured"', '"following prompt content unavailable"'],
+          ['"no next prompt observed"', '"following prompt unavailable"'],
+        ];
+        const source = await readFile(path, "utf8");
+        if (reword && path.endsWith("skill-evidence.tsx")) {
+          const count = replacements.filter(([from]) => source.includes(from)).length;
+          assert.equal(count, 3, "the probe must reword all three display strings");
+          console.log(`Reword probe: replaced ${count} display strings; semantic values unchanged.`);
+        }
+        return { contents: replacements.reduce((text, [from, to]) => text.replaceAll(from, to), source), loader: "tsx" };
       });
     },
   }] : [],
@@ -115,7 +126,7 @@ test("native-before-search remains visible when another finding label wins", () 
 test("out-of-results use does not invent a rank", () => {
   const node = attr(findingView(1), "data-used-skill", "outside");
   assert.equal(node.attrs["data-rank"], "not_in_results");
-  assert.match(node.textContent, /not in results/);
+  assert.equal(node.attrs["data-via"], "load");
 });
 test("missed-later link opens and focuses the actual folded turn", () => {
   const session = reports.evidence;
@@ -138,12 +149,12 @@ test("correction status exposes matched terms and heuristic basis", () => {
 test("uncaptured next prompt remains unknown with heuristic basis", () => {
   const node = attr(usageView("outside", 1), "data-correction", "unknown");
   assert.equal(node.attrs["data-basis"], "heuristic");
-  assert.match(node.textContent, /not captured/);
+  assert.equal(node.attrs["data-correction-reason"], "text_not_captured");
 });
 test("absent next prompt stays unknown rather than no correction", () => {
   const node = attr(usageView("later-missed", 2), "data-correction", "unknown");
   assert.equal(node.attrs["data-basis"], "heuristic");
-  assert.match(node.textContent, /no next prompt/);
+  assert.equal(node.attrs["data-correction-reason"], "no_next_prompt");
 });
 test("reported supporting read shows actual resource and event provenance", () => {
   const root = usageView("lower");
