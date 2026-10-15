@@ -63,7 +63,7 @@ const bundled = await build({
 // Load before installing the DOM: view-local styles are a browser concern.
 const ui = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`);
 const newRoot = installDom();
-let server, fixture, report, versions;
+let server, fixture, report, workspaceReport, versions;
 const reports = {};
 const costReports = {};
 before(async () => {
@@ -75,6 +75,7 @@ before(async () => {
     return response.json;
   };
   report = await get(`/api/flows/${fixture.flowId}`);
+  workspaceReport = await get("/api/flows/ws:evidence-ws");
   versions = await get("/api/workflows/evidence-spec/versions");
   for (const [key, id] of Object.entries(fixture.ids)) reports[key] = await get(`/api/sessions/${id}/skill-report`);
   for (const [key, id] of Object.entries(fixture.costFlows)) costReports[key] = await get(`/api/flows/${id}`);
@@ -208,11 +209,14 @@ test("step cards render together and alternative modes from the exact spec versi
   }
 });
 test("pane history and missing ends stay distinct from the registered execution", () => {
-  const pane = report.tree.tabs[0].panes[0];
+  const pane = workspaceReport.tree.tabs[0].panes[0];
   const link = pane.sessions.find((item) => item.agentSessionValue === "earlier");
+  assert.ok(link, "implicit workspace retains the earlier pane session");
+  assert.equal(report.tree.tabs[0].panes[0].sessions.some((item) => item.sessionId === link.sessionId), false);
   const props = { session: link.session, link, route: { filter: {} }, findings: new Map(), usageBySpan: new Map() };
   const ended = render(ui.Session, { ...props, flow: report.flow });
-  attr(render(ui.Header, { report, backHref: "#/workspaces", onRefresh() {}, busy: false }), "data-pane-history", "true");
+  const header = render(ui.Header, { report, backHref: "#/workspaces", onRefresh() {}, busy: false });
+  assert.equal(descendants(header).some((node) => node.attrs["data-pane-history"] === "true"), false);
   attr(ended, "data-session-window", "outside");
   attr(ended, "data-session-status", "end_not_observed");
   attr(render(ui.Session, { ...props, newerSession: true }), "data-session-status", "end_not_observed");

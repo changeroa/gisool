@@ -118,3 +118,29 @@ for (const skill of ["beta", "alpha"]) test(`a continuing session is split by ev
   assert.deepEqual(session.turns[0].events.find((e) => e.kind === "llm_call").skills, [skill]);
   assert.deepEqual((await f.list()).filter((row) => row.kind === "flow").map((row) => row.sessionIds), [[s.id], [s.id]]);
 });
+
+test("D3 warnings share inclusive execution bounds for a continuing session", async (t) => {
+  // Given ambiguous loads before, at the end of, and after A in one continuing session.
+  const f = await fixture(t);
+  const s = f.session("ambiguous-continuing", 900);
+  f.activity(s, 910, "outside", 9, "same-turn");
+  const a = f.start(1000);
+  f.activity(s, 1010, "alpha", 0.02, "same-turn");
+  const load = (ts) => f.store.append({
+    id: `ambiguous-${ts}`, kind: "load", ts, ref: { runtime: "claude-code" }, source: "mcp",
+    skillUri: `skill://local/fixture/skill-${ts}/SKILL.md`,
+    data: { attributionCandidates: [s.id] },
+  }, { sessionId: "unattributed", method: "none", reason: "ambiguous" });
+  for (const ts of [999, 1100, 1101]) load(ts);
+  f.end(a, 1100);
+  // When B reuses the same session, including another unresolved load.
+  const b = f.start(1200);
+  f.activity(s, 1210, "beta", 0.07, "same-turn");
+  load(1211);
+  f.end(b, 1300);
+  // Then each execution exposes only its own ambiguous load, including A's exact end.
+  const report = await f.get(a);
+  assert.deepEqual(report.unattributedLoads, { count: 1, uris: ["skill://local/fixture/skill-1100/SKILL.md"] });
+  assertExecution(report, s.id, "alpha", 0.02);
+  assert.deepEqual((await f.get(b)).unattributedLoads, { count: 1, uris: ["skill://local/fixture/skill-1211/SKILL.md"] });
+});

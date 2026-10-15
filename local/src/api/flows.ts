@@ -226,7 +226,9 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const unattributedLoads = store.reconcileLoads({
       from: flow?.registeredMs ?? (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
         : Math.min(...sessions.map((session) => session.startedAt))),
-      to: flow?.endedMs ?? (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
+      // Execution trees include the end timestamp; reconcileLoads uses an exclusive upper bound.
+      to: flow?.endedMs !== undefined ? flow.endedMs + 1
+        : (ref === "outside" ? intOf(req.query, "to") ?? Date.now() + 1 : Date.now() + 1),
       sessionIds: [...sessions.map((session) => session.id), ...comparisonSessionIds.filter((id) => !excluded.has(id))],
     });
     res.json({
