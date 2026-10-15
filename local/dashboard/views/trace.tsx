@@ -18,10 +18,15 @@ type PromptDetail = { kind: "prompt"; text?: string; textLength?: number };
 type LoadDetail = { kind: "load"; uri: SkillUri; loadId: string; manifestDigest: string };
 type ReadDetail = { kind: "read_file"; skillUri: SkillUri; uri: SkillUri; bytes: number };
 type NativeDetail = { kind: "native_skill"; name: string; via: string };
+type LlmDetail = { kind: "llm_call"; model?: string; costUsd?: number; durationMs?: number; ttftMs?: number };
+type ToolDetail = { kind: "tool_call"; toolName?: string; success?: boolean; durationMs?: number; gisoolMcp?: boolean; args?: string; argsLength?: number; resultBytes?: number };
 type ErrorDetail = { kind: "error"; code: string; message: string };
 
 export const PROMPT_FOLD_CHARS = 600;
 export const SHORT_DIGEST_CHARS = 8;
+export const TOOL_ARGS_PREVIEW_CHARS = 160;
+export type ToolArgs = { captured: true; text: string; truncated: boolean } | { captured: false; length: number };
+export const COST_UNKNOWN = "cost unknown";
 
 export const KIND_LABEL: Record<EventKind, string> = {
   session_start: "Session started",
@@ -30,6 +35,8 @@ export const KIND_LABEL: Record<EventKind, string> = {
   load: "Loaded skill",
   read_file: "Read resource",
   native_skill: "Native skill",
+  llm_call: "Model call",
+  tool_call: "Tool run",
   session_end: "Session ended",
   error: "Error",
 };
@@ -332,6 +339,43 @@ function NativeBody({ detail }: { detail: NativeDetail }) {
   );
 }
 
+/** A runtime that reports no cost (Codex) says "unknown", never $0.00. */
+export function formatCost(costUsd: number | undefined): string {
+  return typeof costUsd === "number" && Number.isFinite(costUsd) ? `$${costUsd.toFixed(4)}` : COST_UNKNOWN;
+}
+
+/** The captured arguments, or how much text the capture level dropped; undefined when the runtime sent none. */
+export function toolArgsPreview(detail: ToolDetail): ToolArgs | undefined {
+  if (typeof detail.args === "string") {
+    const chars = Array.from(detail.args);
+    const truncated = chars.length > TOOL_ARGS_PREVIEW_CHARS;
+    return { captured: true, text: truncated ? `${chars.slice(0, TOOL_ARGS_PREVIEW_CHARS).join("")}…` : detail.args, truncated };
+  }
+  return typeof detail.argsLength === "number" ? { captured: false, length: detail.argsLength } : undefined;
+}
+
+function LlmBody({ step, detail }: { step: TraceStep; detail: LlmDetail }) {
+  return (
+    <p class="tl__line">
+      <span class="tl__name">{step.summary}</span>
+      <span class="tl__meta">{formatCost(detail.costUsd)}</span>
+      {detail.durationMs !== undefined && <span class="tl__meta">{formatMs(detail.durationMs)}</span>}
+      {detail.ttftMs !== undefined && <span class="tl__meta">first token {formatMs(detail.ttftMs)}</span>}
+    </p>
+  );
+}
+
+function ToolBody({ step, detail }: { step: TraceStep; detail: ToolDetail }) {
+  const args = toolArgsPreview(detail);
+  return (
+    <p class="tl__line">
+      <span class="tl__name">{step.summary}</span>
+      {args !== undefined && <span class="tl__name tl__name--mono">{args.captured ? args.text : `${args.length} chars not captured`}</span>}
+      {detail.resultBytes !== undefined && <span class="tl__meta">result {formatBytes(detail.resultBytes)}</span>}
+    </p>
+  );
+}
+
 function ErrorBody({ detail }: { detail: ErrorDetail }) {
   return (
     <p class="tl__line">
@@ -348,6 +392,8 @@ function StepBody({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof
     case "load": return <LoadBody detail={step.detail as LoadDetail} />;
     case "read_file": return <ReadBody detail={step.detail as ReadDetail} />;
     case "native_skill": return <NativeBody detail={step.detail as NativeDetail} />;
+    case "llm_call": return <LlmBody step={step} detail={step.detail as LlmDetail} />;
+    case "tool_call": return <ToolBody step={step} detail={step.detail as ToolDetail} />;
     case "error": return <ErrorBody detail={step.detail as ErrorDetail} />;
     case "session_end":
       return bounds.startedAt !== undefined ? <p class="tl__meta">after {formatDuration(step.ts - bounds.startedAt)}</p> : null;
@@ -360,13 +406,17 @@ function StepBody({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof
 
 function Step({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof sessionBounds> }) {
   const search = step.kind === "search" ? searchDetail(step) : undefined;
-  const hollow = step.kind === "read_file" || step.kind === "native_skill";
+  const failedTool = step.kind === "tool_call" && (step.detail as ToolDetail).success === false;
+  const gisoolTool = step.kind === "tool_call" && (step.detail as ToolDetail).gisoolMcp === true;
+  const hollow = step.kind === "read_file" || step.kind === "native_skill" || step.kind === "llm_call" || step.kind === "tool_call";
   return (
     <li class={`tl__step tl__step--${step.kind}`} data-kind={step.kind}>
       <span class={hollow ? "tl__dot tl__dot--hollow" : "tl__dot"} aria-hidden="true" />
       <div class="tl__head">
         <span class="tl__kind">{KIND_LABEL[step.kind] ?? step.kind}</span>
         {step.kind === "native_skill" && <span class="tl__tag" title="handled by the runtime's own skill mechanism, not gisool">native</span>}
+        {gisoolTool && <span class="tl__tag" title="a call to gisool's own MCP server">gisool</span>}
+        {failedTool && <span class="tl__tag tl__tag--bad">failed</span>}
         {search?.abstained && <span class="tl__tag tl__tag--bad">abstained</span>}
         <StepTime ts={step.ts} startedAt={bounds.startedAt} />
       </div>

@@ -1,0 +1,146 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "codex_cli_rs"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "codex_otel"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1760320006000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2025-10-13T01:46:46.000Z"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "codex-conv-1"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "call_abc123"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "exec_command"
+                  }
+                },
+                {
+                  "key": "tool_namespace",
+                  "value": {
+                    "stringValue": "unified_exec"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "intValue": "43"
+                  }
+                },
+                {
+                  "key": "arguments",
+                  "value": {
+                    "stringValue": "{\"command\":[\"bash\",\"-lc\",\"ls\"],\"workdir\":\"/tmp/work\"}"
+                  }
+                },
+                {
+                  "key": "output_truncated",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "tool_result_seq",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "gpt-6-astra"
+                  }
+                },
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "0.162.1"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "chatgpt"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "codex_cli_rs"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "gpt-6-astra"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "iTerm.app"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "account-placeholder"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "agent@example.invalid"
+                  }
+                }
+              ],
+              "traceId": "cd36e249feea84bd9f32aa5425613249",
+              "spanId": "038c89db542b7dbc"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
