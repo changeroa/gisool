@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { distImport, makeTempDir, removeDir } from "./_helpers.mjs";
 import { bearer, http, startTestServer } from "./helpers/api.mjs";
 
@@ -64,6 +65,39 @@ function assertExecution(report, id, skill, cost) {
   assert.deepEqual(report.comparison.steps[0].usedSkills, [skill]);
   assert.equal(report.comparison.steps[0].status, "matched");
 }
+
+test("detail and list compute each registered execution scope only once per request", async (t) => {
+  // Given a registered flow with a visible member, instrument actual DB reads, not store return values.
+  const f = await fixture(t);
+  const id = f.start(1000);
+  const s = f.session("single-scope", 1001);
+  f.activity(s, 1010, "alpha", 0.02, "turn");
+  const prepare = DatabaseSync.prototype.prepare;
+  let scopeReads = 0;
+  DatabaseSync.prototype.prepare = function (sql) {
+    const stmt = prepare.call(this, sql);
+    if (sql.startsWith("SELECT start_event_ids_json")) {
+      const get = stmt.get.bind(stmt);
+      stmt.get = (...args) => { scopeReads++; return get(...args); };
+    }
+    return stmt;
+  };
+  try {
+    // When each real HTTP request assembles tree, comparison, warnings or list membership.
+    assertExecution(await f.get(id), s.id, "alpha", 0.02);
+    assert.equal(scopeReads, 1);
+    scopeReads = 0;
+    assert.deepEqual((await f.list()).find((row) => row.id === id).sessionIds, [s.id]);
+    // Then reuse is request-local, and a later request still computes fresh state.
+    assert.equal(scopeReads, 1);
+    f.append(s, "llm_call", 1020, { costUsd: 0.03 }, "turn");
+    scopeReads = 0;
+    assert.equal((await f.get(id)).usage.skills[0].costUsd, 0.05);
+    assert.equal(scopeReads, 1);
+  } finally {
+    DatabaseSync.prototype.prepare = prepare;
+  }
+});
 
 test("A remains stable and B inherits no sessions, skills, turns or costs on pane reuse", async (t) => {
   // Given a completed A report with fixture-known measurements.

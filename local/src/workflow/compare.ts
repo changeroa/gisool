@@ -82,7 +82,7 @@ export function compare(input: CompareInput): FlowComparison {
  * Returns undefined when the flow is unknown or was registered without a spec.
  * `excludeSessions` leaves named sessions out, so a caller that hides automated sessions compares without them too.
  */
-export function compareFlow(store: Store, flowId: string, opts: { excludeSessions?: readonly string[] } = {}): FlowComparison | undefined {
+export function compareFlow(store: Store, flowId: string, opts: Parameters<Store["flowPaneUsage"]>[1] = {}): FlowComparison | undefined {
   const flow = store.getFlow(flowId);
   if (!flow?.spec) return undefined;
   const usage = store.flowPaneUsage(flowId, opts);

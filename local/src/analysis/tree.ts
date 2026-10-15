@@ -1,4 +1,4 @@
-import type { AssignedTreeEvent, FlowTree, SessionTree, SkillSpan, Store, TreeEvent, TreeSessionData, TurnBasis, TurnTree } from "../types.js";
+import type { AssignedTreeEvent, ExecutionEventScope, FlowTree, SessionTree, SkillSpan, Store, TreeEvent, TreeSessionData, TurnBasis, TurnTree } from "../types.js";
 import { scopeSession } from "../store/execution.js";
 
 const PROMPT_JOIN_WINDOW_MS = 5_000;
@@ -126,11 +126,11 @@ export function sessionTree(store: Pick<Store, "treeSessionData">, sessionId: st
   return data ? assembleSession(data) : undefined;
 }
 
-export function flowTree(store: Pick<Store, "treeSessionData" | "treeFlowData" | "flowEventScope">, flowOrWorkspaceId: string): FlowTree | undefined {
-  const data = store.treeFlowData(flowOrWorkspaceId);
+export function flowTree(store: Pick<Store, "treeSessionData" | "treeFlowData" | "flowEventScope">, flowOrWorkspaceId: string,
+  scope: ExecutionEventScope | undefined = store.flowEventScope(flowOrWorkspaceId)): FlowTree | undefined {
+  const data = store.treeFlowData(flowOrWorkspaceId, scope);
   if (!data) return undefined;
   const sessions = new Map<string, SessionTree | null>();
-  const scope = data.registered ? store.flowEventScope(data.id) : undefined;
   for (const link of data.links) {
     if (link.sessionId !== null && !sessions.has(link.sessionId)) {
       const input = store.treeSessionData(link.sessionId, scope);

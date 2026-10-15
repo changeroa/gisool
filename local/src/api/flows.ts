@@ -174,7 +174,8 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const rows = store.listFlows({ limit: limit + 1, automated, ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}), ...(cursor ? { cursor } : {}) });
     const page = rows.slice(0, limit);
     const last = page.at(-1);
-    const automation = store.sessionAutomation(page.flatMap((row) => row.links.flatMap((link) => (link.sessionId === null ? [] : [link.sessionId]))));
+    const automation = automated === "include" ? {} :
+      store.sessionAutomation(page.flatMap((row) => row.links.flatMap((link) => (link.sessionId === null ? [] : [link.sessionId]))));
     res.json({
       generatedAt: Date.now(), from: from ?? null, to: to ?? null, limit, automated,
       flows: page.map((row) => entryOf(row, automation, automated)),
@@ -187,6 +188,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const automated = automatedOf(req.query);
     const ref = String(req.params.id);
     const id = ref.startsWith(WORKSPACE_PREFIX) ? ref.slice(WORKSPACE_PREFIX.length) : ref;
+    const eventScope = ref === "outside" ? undefined : store.flowEventScope(id);
     let full: FlowTree | undefined;
     if (ref === "outside") {
       const to = intOf(req.query, "to") ?? Date.now() + 1;
@@ -199,14 +201,13 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
           return session ? [session] : [];
         }) };
     } else {
-      full = flowTree(store, id);
+      full = flowTree(store, id, eventScope);
     }
     if (!full) return deny(res, 404, "flow_not_found", { message: `no flow or herdr workspace ${ref}` });
     // Classify the shared execution population, including explicitly mapped panes on other tabs.
-    const comparisonSessionIds = full.registered ? store.flowSessionIds(full.id) : [];
-    const automation = store.sessionAutomation([...sessionIdsOf(full), ...comparisonSessionIds]);
+    const comparisonSessionIds = full.registered ? store.flowSessionIds(full.id, eventScope) : [];
+    const automation = automated === "include" ? {} : store.sessionAutomation([...sessionIdsOf(full), ...comparisonSessionIds]);
     const flow = full.registered ? store.getFlow(full.id) : undefined;
-    const eventScope = flow ? store.flowEventScope(flow.id) : undefined;
     const overlaps = flow ? sessionsOf(full).map((session) => ({
       sessionId: session.id, startedBefore: session.startedAt < flow.registeredMs,
       continuesAfter: flow.endedMs !== undefined && (session.endedAt === null || session.endedAt > flow.endedMs),
@@ -222,7 +223,7 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
     const usages = sessions.map((session) => sessionUsage(session));
     const spec = flow?.spec;
     const warningSessions = [...sessions.map((session) => session.id), ...comparisonSessionIds.filter((id) => !excluded.has(id))];
-    const unattributedLoads = flow ? store.flowUnattributedLoads(flow.id, warningSessions) : store.reconcileLoads({
+    const unattributedLoads = flow ? store.flowUnattributedLoads(flow.id, warningSessions, eventScope) : store.reconcileLoads({
       readOnly: true,
       from: (ref === "outside" ? intOf(req.query, "from") ?? Date.now() - DEFAULT_RANGE_DAYS * DAY_MS
         : sessions.length === 0 ? 0 : Math.min(...sessions.map((session) => session.startedAt))),
@@ -244,7 +245,8 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
           : "Historical boundary order was not recorded. Equal-time boundary activity is uncertain and excluded here; workspace history retains it." } : null,
       finding: { id: tree.id, sessions: findings.map(findingDto), aggregate: aggregateFindings(findings.flatMap((f) => f.turns)) },
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
-      comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()] }) ?? null : null,
+      comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()],
+        ...(eventScope ? { scope: eventScope } : {}) }) ?? null : null,
       excludedSessions: [...excluded.values()],
       unattributedLoads,
     });

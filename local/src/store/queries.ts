@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { automationOf, NO_ACTIVITY } from "./automation.js";
-import { executionMembers } from "./execution.js";
+import { executionEventScope } from "./execution.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
 import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, OtelSpanRow, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep, TreeEvent, TreeTopologyNode, TreePaneLink } from "../types.js";
 
@@ -279,7 +279,7 @@ export function createQueries(ctx: StoreCtx): Queries {
           ...(s.startMs !== null ? { startMs: s.startMs } : {}), ...(s.endMs !== null ? { endMs: s.endMs } : {}) })) };
     },
 
-    treeFlowData(flowOrWorkspaceId) {
+    treeFlowData(flowOrWorkspaceId, scope) {
       const flow = db.prepare("SELECT id, workspace_id, tab_id, label, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowOrWorkspaceId) as
         { id: string; workspace_id: string; tab_id: string | null; label: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
       const workspaceId = flow?.workspace_id ?? flowOrWorkspaceId;
@@ -287,7 +287,7 @@ export function createQueries(ctx: StoreCtx): Queries {
         { id: string; label: string | null } | undefined;
       if (!workspace) return undefined;
       if (flow) {
-        const { paneIds, links } = executionMembers(db, flow);
+        const { paneIds, links } = scope ?? executionEventScope(db, flow);
         const panes = paneIds.flatMap((id) => {
           const pane = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs
             FROM herdr_panes WHERE id = ?`).get(id) as (TreeTopologyNode & { tabId: string }) | undefined;

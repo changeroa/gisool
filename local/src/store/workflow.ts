@@ -3,7 +3,7 @@ import { nameFromUri, parseJson, type StoreCtx } from "./writes.js";
 import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, PaneUsageRow, Store, WorkflowSpecRow } from "../types.js";
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
 import { createQueries } from "./queries.js";
-import { executionEventScope, executionMembers } from "./execution.js";
+import { executionBoundaryEvents, executionBoundarySpans, executionCandidates, executionEventScope } from "./execution.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
 type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
@@ -111,9 +111,13 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       if (open) return { created: false, conflict: flowOf(open) };
       const id = randomUUID();
       const registeredMs = ctx.now();
+      const candidates = executionCandidates(db, { id, workspace_id: input.workspaceId, tab_id: input.tabId ?? null,
+        registered_ms: registeredMs, ended_ms: null });
+      const sessionIds = JSON.stringify([...new Set(candidates.links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))]);
       db.prepare(`INSERT INTO flows (id, workspace_id, tab_id, spec_id, label, registered_ms, start_event_ids_json)
-        VALUES (?, ?, ?, ?, ?, ?, (SELECT json_group_array(id) FROM events WHERE ts = ?))`)
-        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs, registeredMs);
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs,
+          JSON.stringify(executionBoundaryEvents(db, sessionIds, registeredMs)));
       return { created: true, flow: flowOf(selectFlow.get(id) as FlowDbRow) };
     },
 
@@ -176,7 +180,7 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
           links: outside.map((session) => ({ paneId: "", sessionId: session.id, source: "unlinked" })),
         };
         // A flow registered for one tab covers that tab's panes; a step may also map a pane herdr has not reported yet.
-        const execution = row.kind === "flow" ? executionMembers(db, { id: row.id, workspace_id: row.workspace_id,
+        const execution = row.kind === "flow" ? executionEventScope(db, { id: row.id, workspace_id: row.workspace_id,
           tab_id: row.tab_id, registered_ms: row.started_ms, ended_ms: row.ended_ms }) : undefined;
         const paneIds = execution?.paneIds ?? panes.filter((p) => p.workspace_id === row.workspace_id).map((p) => p.pane_id);
         const spec: FlowSpecRef | null = row.spec_id !== null && row.spec_name !== null
@@ -192,11 +196,9 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
      * The same execution population as the tree and list, including mapped panes on other tabs. The read API
      * classifies this population so a session it hides cannot credit a step through the comparison.
      */
-    flowSessionIds(flowId: string): string[] {
-      const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
-      if (!flow) return [];
-      return [...new Set(executionMembers(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" })
-        .links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))].sort();
+    flowSessionIds(flowId, scope): string[] {
+      const members = scope ?? this.flowEventScope(flowId);
+      return [...new Set(members?.links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))].sort();
     },
 
     flowEventScope(flowId) {
@@ -204,8 +206,11 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       return flow ? executionEventScope(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" }) : undefined;
     },
 
-    flowUnattributedLoads(flowId, sessionIds) {
-      const scope = this.flowEventScope(flowId);
+    flowUnattributedLoads(flowId, sessionIds, scope) {
+      if (!scope) {
+        const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
+        if (flow) scope = executionEventScope(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" }, sessionIds);
+      }
       if (!scope) return { count: 0, uris: [] };
       // Read the candidate index without reconciling. Legacy loads may lack a JSON candidate snapshot.
       // Apply the same recorded event identities as every other flow consumer.
@@ -224,11 +229,11 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       if (row.ended_ms !== null) return { endedMs: row.ended_ms, alreadyEnded: true };
       const endedMs = ctx.now();
       const sessionIds = JSON.stringify(this.flowSessionIds(flowId));
-      db.prepare(`UPDATE flows SET ended_ms = ?, end_event_ids_json =
-        (SELECT json_group_array(id) FROM events WHERE ts = ?),
+      db.prepare(`UPDATE flows SET ended_ms = ?, end_event_ids_json = ?,
         end_sessions_json = (SELECT json_group_object(id, ended_at) FROM sessions WHERE id IN (SELECT value FROM json_each(?))),
-        end_spans_json = (SELECT json_group_array(json_array(trace_id, span_id)) FROM otel_spans WHERE start_ms IS NULL OR start_ms = ?)
-        WHERE id = ?`).run(endedMs, endedMs, sessionIds, endedMs, flowId);
+        end_spans_json = ? WHERE id = ?`).run(endedMs,
+          JSON.stringify(executionBoundaryEvents(db, sessionIds, endedMs)), sessionIds,
+          JSON.stringify(executionBoundarySpans(db, sessionIds, endedMs)), flowId);
       return { endedMs, alreadyEnded: false };
     },
 
@@ -237,11 +242,10 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
      * `excludeSessions` drops named sessions (the read API passes the ones its automated filter left out), so one
      * report never compares against sessions it hid everywhere else.
      */
-    flowPaneUsage(flowId: string, opts: { excludeSessions?: readonly string[] } = {}): PaneUsageRow[] {
-      const flow = selectFlowScope.get(flowId) as FlowScopeRow | undefined;
-      if (!flow) return [];
-      const members = executionMembers(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" });
-      const eventIds = JSON.stringify(executionEventScope(db, { ...flow, id: flowId, workspace_id: flow.workspace_id ?? "" }).eventIds);
+    flowPaneUsage(flowId, opts = {}): PaneUsageRow[] {
+      const members = opts.scope ?? this.flowEventScope(flowId);
+      if (!members) return [];
+      const eventIds = JSON.stringify(members.eventIds);
       const activations = db.prepare(`SELECT kind, skill_uri, data_json FROM events
         WHERE session_id = ? AND kind IN ('load', 'native_skill') AND id IN (SELECT value FROM json_each(?)) ORDER BY ts, rowid`);
       const toolCalls = db.prepare(`SELECT data_json FROM events

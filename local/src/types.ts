@@ -108,11 +108,11 @@ export interface Store {
   mapFlowStep(flowId: string, paneId: string, stepId: string): { created: boolean };
   endFlow(flowId: string): { endedMs: number; alreadyEnded: boolean } | undefined;
   // excludeSessions leaves those sessions out of the pane usage, so a filtered report compares against what it shows.
-  flowPaneUsage(flowId: string, opts?: { excludeSessions?: readonly string[] }): PaneUsageRow[];
+  flowPaneUsage(flowId: string, opts?: { excludeSessions?: readonly string[]; scope?: ExecutionEventScope }): PaneUsageRow[];
   // Every session flowPaneUsage can read for this flow, so a caller can filter that population before comparing.
-  flowSessionIds(flowId: string): string[];
+  flowSessionIds(flowId: string, scope?: ExecutionEventScope): string[];
   flowEventScope(flowId: string): ExecutionEventScope | undefined;
-  flowUnattributedLoads(flowId: string, sessionIds: readonly string[]): UnattributedLoads;
+  flowUnattributedLoads(flowId: string, sessionIds: readonly string[], scope?: ExecutionEventScope): UnattributedLoads;
   // Read-API list: registered flows plus the herdr workspaces that have none, newest first, one page at a time.
   listFlows(q: FlowListQuery): FlowListRow[];
   outsideHerdrSessions(opts: { from: number; to: number; limit: number; automated: AutomatedMode }): { id: string; activityMs: number }[];
@@ -120,7 +120,7 @@ export interface Store {
   sessionAutomation(ids: readonly string[]): Record<string, string>;
   close(): void;
   treeSessionData(sessionId: string, scope?: ExecutionEventScope): TreeSessionData | undefined;
-  treeFlowData(flowOrWorkspaceId: string): TreeFlowData | undefined;
+  treeFlowData(flowOrWorkspaceId: string, scope?: ExecutionEventScope): TreeFlowData | undefined;
   outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[];
   // Ingest uses eventId to revisit only affected loads (including earlier resolutions).
   // Explicit reconciliation repairs pending history in scope; readOnly reports never mutate it.
@@ -164,6 +164,7 @@ export type SessionTree = { readonly id: string; readonly runtime: RuntimeId; re
   readonly executionWindow?: { readonly from: number; readonly to: number | null };
   readonly turns: readonly TurnTree[]; readonly unassignedEvents: readonly TreeEvent[] };
 export type ExecutionEventScope = { readonly from: number; readonly to: number | null; readonly eventIds: readonly string[];
+  readonly paneIds: readonly string[]; readonly links: readonly TreePaneLink[];
   readonly priorEventIds: readonly string[];
   readonly sessionEnds: Readonly<Record<string, number | null>> | null;
   readonly spanKeys: readonly string[] | null;
