@@ -68,6 +68,7 @@ test("six-span Codex batch stores only the three spans that carry turn or call k
         trace_id: TRACE, span_id: "ca230b04db5d3a37", parent_span_id: "ed21a5ffe92a277c", name: "unified_exec.exec_command",
         runtime: "codex", conversation_id: CONV, turn_key: TURN, call_id: CALL,
         start_ms: 1_800_000_000_000, end_ms: 1_800_000_000_123, received_at: NOW,
+        recording_orders_json: JSON.stringify({ [db.prepare("SELECT domain FROM recording_clock").get().domain]: 3 }),
       },
     );
     assert.equal(rows[1].turn_key, TURN);

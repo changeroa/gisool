@@ -3,7 +3,7 @@ import { nameFromUri, parseJson, type StoreCtx } from "./writes.js";
 import type { FlowListQuery, FlowListRow, FlowRow, FlowSpecRef, FlowStepRow, PaneUsageRow, Store, WorkflowSpecRow } from "../types.js";
 import { specDigest, type WorkflowSpec } from "../workflow/spec.js";
 import { createQueries } from "./queries.js";
-import { executionBoundaryEvents, executionBoundarySpans, executionCandidates, executionEventScope } from "./execution.js";
+import { executionEventScope } from "./execution.js";
 
 type SpecDbRow = { id: string; name: string; version: number; body_json: string; digest: string; created_ms: number };
 type FlowScopeRow = { workspace_id: string | null; tab_id: string | null; registered_ms: number | null; ended_ms: number | null };
@@ -111,13 +111,10 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       if (open) return { created: false, conflict: flowOf(open) };
       const id = randomUUID();
       const registeredMs = ctx.now();
-      const candidates = executionCandidates(db, { id, workspace_id: input.workspaceId, tab_id: input.tabId ?? null,
-        registered_ms: registeredMs, ended_ms: null });
-      const sessionIds = JSON.stringify([...new Set(candidates.links.flatMap((l) => l.sessionId === null ? [] : [l.sessionId]))]);
-      db.prepare(`INSERT INTO flows (id, workspace_id, tab_id, spec_id, label, registered_ms, start_event_ids_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs,
-          JSON.stringify(executionBoundaryEvents(db, sessionIds, registeredMs)));
+      db.prepare(`INSERT INTO flows (id, workspace_id, tab_id, spec_id, label, registered_ms,
+        start_event_ids_json, start_order_domain, start_order)
+        SELECT ?, ?, ?, ?, ?, ?, '[]', domain, position FROM recording_clock WHERE singleton = 1`)
+        .run(id, input.workspaceId, input.tabId ?? null, input.specId, input.label ?? null, registeredMs);
       return { created: true, flow: flowOf(selectFlow.get(id) as FlowDbRow) };
     },
 
@@ -229,11 +226,10 @@ export function createWorkflow(ctx: StoreCtx): WorkflowStore {
       if (row.ended_ms !== null) return { endedMs: row.ended_ms, alreadyEnded: true };
       const endedMs = ctx.now();
       const sessionIds = JSON.stringify(this.flowSessionIds(flowId));
-      db.prepare(`UPDATE flows SET ended_ms = ?, end_event_ids_json = ?,
+      db.prepare(`UPDATE flows SET ended_ms = ?, end_event_ids_json = '[]',
         end_sessions_json = (SELECT json_group_object(id, ended_at) FROM sessions WHERE id IN (SELECT value FROM json_each(?))),
-        end_spans_json = ? WHERE id = ?`).run(endedMs,
-          JSON.stringify(executionBoundaryEvents(db, sessionIds, endedMs)), sessionIds,
-          JSON.stringify(executionBoundarySpans(db, sessionIds, endedMs)), flowId);
+        end_spans_json = '[]', end_order_domain = (SELECT domain FROM recording_clock WHERE singleton = 1),
+        end_order = (SELECT position FROM recording_clock WHERE singleton = 1) WHERE id = ?`).run(endedMs, sessionIds, flowId);
       return { endedMs, alreadyEnded: false };
     },
 

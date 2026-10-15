@@ -1,29 +1,21 @@
 # Execution ownership and session lifetime
 
-## Recorded cuts (schema 4)
-
-Integration note: this isolated branch starts at `ca73462`, so the registry's fourth step
-is the boundary migration. Its filename is reserved as `005_execution_boundaries.sql` to
-avoid colliding with approved parallel commit `bc260550`'s `004_load_reconciliation.sql`.
-When combining them, register reconciliation first and boundaries second, set schema version
-to 5, accept history versions 1 through 5, and update current-version test assertions to 5.
-Do not deploy this branch's standalone schema-4 database as reconciliation's schema 4.
-The registry index, not the filename, determines `PRAGMA user_version`.
+## Recorded cuts (schema 6)
 
 An execution is an analysis interval, not a session lifetime. Event timestamps remain
 runtime timestamps. Equal timestamps do not establish causal order.
 
-Registration records the identities of events already present at its exact millisecond.
-Those events cannot belong to the newly registered execution. Ending records the identities
-of events at its exact timestamp, equal-time or untimed span identities, and the observed
-session ends. These cuts are stored on the flow
-row in the same SQL statement as its lifecycle timestamp. An idempotent end never recaptures.
+Registration and end capture a persistent database clock's domain and counter in the same
+SQL statement as the lifecycle timestamp. Insert triggers advance that clock and stamp each
+event/span atomically. Duplicate event/source-key and composite-span replays are no-ops.
+An idempotent end never recaptures. Membership is resolved separately on read: mapping a
+pane after registration or discovering its session after closure cannot move these cuts.
 
 An event is owned when:
 
 1. Its timestamp is at or after registration and at or before the end, when ended.
-2. If equal to registration, its identity was not in the registration snapshot.
-3. If equal to the end, its identity was in the end snapshot.
+2. If equal to registration, its recorded order in the start domain exceeds the start cut.
+3. If equal to the end, its recorded order in the end domain is at or below the end cut.
 
 This is **local recording-order evidence at a timestamp tie**, not an assertion about
 runtime causal order or network delivery order. Delayed boundary telemetry is not silently
@@ -32,30 +24,45 @@ no execution was active may belong to neither execution, even if the clock did n
 Timestamp-interior events remain timestamp-scoped, including delayed telemetry received after
 closure. This preserves the existing late-ingestion and attribution-reconciliation contract.
 
-For adjacent A and B sharing millisecond t, an event recorded before A ends belongs to
-A's end snapshot and B's registration exclusion. An event recorded after B starts is
-absent from A's snapshot and B's exclusion. Thus neither category is duplicated or lost.
+For adjacent A and B sharing millisecond t, an event recorded before A ends is at or below
+A's end cut and B's start cut. An event recorded after B starts exceeds both cuts.
+Thus neither category is duplicated or lost.
 This also holds for zero-duration executions. No UUID comparison or SQLite rowid is used
-to invent lifecycle order; identity survives reopening, VACUUM and history import.
+to invent lifecycle order. The counter survives deletion, retention, reopening and VACUUM.
 
 The owned event set is shared by tree membership, finding, usage, comparison and unresolved
 load warnings. Earlier prompts only supply continuing turn identity, not inherited skills
-or calls. Boundary prompt filtering and span identity cuts prevent B's equal-time prompts/spans
-from moving A's calls to a new turn. Snapshots contain IDs and observed lifecycle metadata, not captured
-prompt/tool content; retention still removes content normally.
+or calls. Indexed conversation/call/exact-pair joins select relevant endpoint or untimed
+spans, whose recorded order must pass the end cut. Interior delayed spans remain eligible.
+`putSpans` keeps the first observation on replay. Explicit SQL corrections to span facts
+receive new order and invalidate old provenance; changed endpoint facts cannot borrow the
+former facts' pre-close order. The metadata contains no captured prompt/tool content.
 
 Completed reports remain stable against the adjacent execution's boundary and later activity.
 This is not an immutable export: delayed interior events, corrected attribution/reconciliation,
 topology labels, automation classification and retained content can still change their
 respective interpretation. The underlying event history is never deleted by flow scoping.
 
-## History without recorded cuts
+## Portable history and unavailable order
 
-Migration does not backfill imaginary historical snapshots. Missing start/end cuts are NULL.
-At a missing cut, exact-boundary events are excluded from credited execution results and
-`executionScope.boundary` is `order_unavailable`. Interior timestamps remain usable.
+Each row stores order by recording domain. History import retains source-domain marks and
+adds destination arrival order; chained export/import preserves both. The local clock is
+never imported or reset. New local flows therefore see imported rows as already present,
+while imported flows can still use their source cuts. Import skips existing identities:
+if a duplicate lacks the source order, it remains unknown rather than borrowing local order.
+Start and end domains can differ when an imported open flow is closed locally.
+
+Migration establishes a new domain and marks existing observations at zero. This proves
+only that they precede future cuts, not their relative order or a historical cut. Pre-v6
+flow cuts remain unavailable because schema-5 identity snapshots may have omitted eventual
+members. Known positive end identities remain usable; absence from an old start snapshot
+is not proof of later arrival. Unproven exact-boundary events are excluded from credited
+results and `executionScope.boundary` is `order_unavailable`. Interior timestamps remain usable.
 The API and dashboard disclose this uncertainty and point to workspace history. A historical
 same-millisecond causal ordering cannot be recovered from independent event and flow rowids.
+An observation from a different database with no mark for a flow's domain is also uncertain
+at equality. A full database restore retains its lineage; independently writable databases
+must be created separately and combined through export/import, not forked database files.
 
 ## Lifecycle versus analysis
 
@@ -64,6 +71,9 @@ In a completed execution, an end strictly inside the window can arrive late; an 
 at the boundary must have been observed at closure. An end beyond the window is not part
 of that execution's observations and is NULL there. The unscoped session report retains the
 latest actual termination observation.
+Bounded member-session end snapshots preserve already known ends against later updates.
+An end-order stamp also recognizes a current endpoint termination when membership is learned
+after close. Neither a later termination nor flow closure invents a previous observed end.
 `executionWindow: { from, to }` separately describes the analysis slice. Turn/span durations
 are clipped to this slice. An execution end never becomes a session end.
 
@@ -75,13 +85,14 @@ disappearance; an omitted field in a partial status event is not.
 
 Unresolved load disclosures show the real count and every affected URI in both flow and
 session trace reports. They mean a recorded load cannot yet be assigned confidently, not
-that a skill was unused. Flow warnings use the same recorded identity cuts as the tree;
+that a skill was unused. Flow warnings use the same recorded-order predicates as the tree;
 reconciliation remains responsible for candidate and URI matching.
 
 ## Storage cost
 
-Registration and end snapshots cover only equal-time event IDs. The end also records
-equal-time/untimed span IDs and member-session end observations.
-These are per-execution metadata, not a second content archive. Large simultaneous batches
-and untimed span histories increase snapshot size; no claim of a new flow-scale performance benchmark
-is made by the existing search benchmark.
+Registration stores only a scalar cut. End stores a scalar cut and bounded member-session
+end observations, not event IDs or historical span IDs. Candidate-session event and load
+indexes bound reads; endpoint span joins use the same indexes as tree assembly. GET is
+read-only. Unrelated history does not enlarge cut identities or scope-query populations.
+Native observation metadata has one domain entry; imported metadata grows with its database
+ancestry, not with unrelated history. A search benchmark is separate from flow-scale checks.

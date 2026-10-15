@@ -25,7 +25,7 @@ test("v2 tracing rows survive index migration and reopening", (t) => {
     const db = openDb(path);
     try {
       // Then data and historical lifetime remain intact, with each required index installed.
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
       assert.equal(db.prepare("SELECT session_id FROM pane_sessions").get().session_id, "s");
       assert.equal(db.prepare("SELECT last_seen_ms FROM herdr_panes").get().last_seen_ms, 20);
       const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all().map((r) => r.name);

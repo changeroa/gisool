@@ -8,7 +8,7 @@ import { PACKAGE_ROOT, distImport, makeTempDir, removeDir } from "./_helpers.mjs
 const { openDb } = await distImport("store/db.js");
 const { createStore } = await distImport("store/index.js");
 
-for (const version of [3, 4]) test(`v${version} execution boundaries migrate as unknown and remain unknown on reopen`, (t) => {
+for (const version of [3, 4, 5]) test(`v${version} execution boundaries migrate as unknown and remain unknown on reopen`, (t) => {
   // Given an actual legacy database, not a new database with fabricated historical cuts.
   const dir = makeTempDir();
   t.after(() => removeDir(dir));
@@ -17,7 +17,8 @@ for (const version of [3, 4]) test(`v${version} execution boundaries migrate as 
   for (const file of ["schema.sql", "migrations/002_tracing.sql", "migrations/003_tracing_indexes.sql"]) {
     old.exec(readFileSync(new URL(`dist/store/${file}`, PACKAGE_ROOT), "utf8"));
   }
-  if (version === 4) old.exec(readFileSync(new URL("dist/store/migrations/004_load_reconciliation.sql", PACKAGE_ROOT), "utf8"));
+  if (version >= 4) old.exec(readFileSync(new URL("dist/store/migrations/004_load_reconciliation.sql", PACKAGE_ROOT), "utf8"));
+  if (version === 5) old.exec(readFileSync(new URL("dist/store/migrations/005_execution_boundaries.sql", PACKAGE_ROOT), "utf8"));
   old.exec(`PRAGMA user_version = ${version};
     INSERT INTO flows (id, workspace_id, registered_ms, ended_ms) VALUES ('old', 'w', 100, 200);`);
   old.close();
@@ -26,8 +27,8 @@ for (const version of [3, 4]) test(`v${version} execution boundaries migrate as 
     const db = openDb(path);
     const store = createStore(db);
     try {
-      // Then schema 5 preserves history without inventing an order or an end observation.
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
+      // Then schema 6 preserves history without inventing an order or an end observation.
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
       const scope = store.flowEventScope("old");
       assert.equal(scope.boundary, "order_unavailable");
       assert.equal(scope.sessionEnds, null);

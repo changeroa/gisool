@@ -56,7 +56,7 @@ test("execution identities exclude foreign sessions and loads but retain late in
   });
 });
 
-test("recorded cuts contain only relevant equal-time events and session-matched spans", (t) => {
+test("scalar cuts resolve only relevant equal-time events and session-matched spans", (t) => {
   // Given unrelated equal-time events and historical untimed spans alongside all three valid span joins.
   const f = fixture(t);
   const own = f.session("own", 900);
@@ -84,7 +84,7 @@ test("recorded cuts contain only relevant equal-time events and session-matched 
   insertSpan.run("exact", "same", null, null, 1300);
   f.db.prepare("UPDATE events SET call_id = ?, span_id = ?, data_json = ? WHERE id = ?")
     .run("own-call", "same", JSON.stringify({ otelTraceId: "exact" }), "own-end");
-  // When this execution records its end, without any unrelated span scan.
+  // When this execution records its end and resolves eventual membership on read.
   const prepare = f.db.prepare.bind(f.db);
   const plans = [];
   f.db.prepare = (sql) => {
@@ -99,11 +99,14 @@ test("recorded cuts contain only relevant equal-time events and session-matched 
     return stmt;
   };
   f.end(flow.id, 1300);
-  // Then equality snapshots are small, composite span identity survives, and interior spans need no snapshot.
+  const scope = f.store.flowEventScope(flow.id);
+  // Then no identity snapshot is persisted; bounded indexed reads retain all three composite joins.
   const cuts = prepare("SELECT * FROM flows WHERE id = ?").get(flow.id);
-  assert.deepEqual(JSON.parse(cuts.start_event_ids_json).sort(), ["prior-candidate", "prior-own"]);
-  assert.deepEqual(JSON.parse(cuts.end_event_ids_json).sort(), ["own-end", "own-warning"]);
-  assert.deepEqual(JSON.parse(cuts.end_spans_json), [["call", "same"], ["conversation", "same"], ["exact", "same"]]);
+  assert.deepEqual([...scope.priorEventIds].sort(), ["prior-candidate", "prior-own"]);
+  assert.deepEqual([...scope.eventIds].sort(), ["own-end", "own-warning"]);
+  assert.deepEqual(scope.spanKeys.map((key) => JSON.parse(key)), [["call", "same"], ["conversation", "same"], ["exact", "same"]]);
+  assert.deepEqual([cuts.start_event_ids_json, cuts.end_event_ids_json, cuts.end_spans_json], ["[]", "[]", "[]"]);
+  assert.ok(cuts.end_order > cuts.start_order);
   assert.deepEqual(Object.keys(JSON.parse(cuts.end_sessions_json)), [own]);
   assert.ok(cuts.end_spans_json.length < 100);
   assert.match(plans.join("\n"), /SEARCH o USING INDEX otel_spans_conversation/);

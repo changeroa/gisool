@@ -24,7 +24,9 @@ const HISTORY_TABLES: Record<string, string[]> = {
   flows: ["id"],
   flow_steps: ["flow_id", "pane_id"],
 };
-const HISTORY_VERSIONS = [1, 2, 3, 4, 5];
+// recording_clock is deliberately local. Row provenance and flow cuts travel
+// through shared columns; insert triggers add destination arrival provenance.
+const HISTORY_VERSIONS = [1, 2, 3, 4, 5, 6];
 
 type ExportedEvalCase = { query: string; expectedUri?: string; fromTraceId?: string };
 export type ExportDoc = { version: 1; config: Record<string, unknown>; roots: { id: string; path: string }[]; evalCases: ExportedEvalCase[];
@@ -101,6 +103,11 @@ export function createPortable(ctx: StoreCtx): Portable {
       if (table === "events") db.exec(`INSERT OR IGNORE INTO load_candidates
         SELECT * FROM load_candidate_rows WHERE load_id IN (SELECT id FROM hist.events)`);
     }
+    // Restoring newer history into an older backup of the SAME lineage must also
+    // advance past deleted observations. Never adopt another database's domain.
+    if (columnsOf("hist", "recording_clock").includes("position")) db.exec(`UPDATE recording_clock
+      SET position = MAX(position, COALESCE((SELECT h.position FROM hist.recording_clock h
+        WHERE h.domain = recording_clock.domain AND h.singleton = 1), 0)) WHERE singleton = 1`);
   }
 
   return {

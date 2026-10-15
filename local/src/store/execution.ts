@@ -16,24 +16,49 @@ export function executionEventScope(db: Db, flow: Execution, warningSessionIds: 
   const sessionIds = JSON.stringify([...new Set(candidates.links.flatMap((link) => link.sessionId === null ? [] : [link.sessionId]))]);
   const candidateIds = JSON.stringify([...new Set([...candidates.links.flatMap((link) => link.sessionId === null ? [] : [link.sessionId]),
     ...warningSessionIds])]);
-  const cut = db.prepare("SELECT start_event_ids_json, end_event_ids_json, end_sessions_json, end_spans_json FROM flows WHERE id = ?").get(flow.id) as
-    { start_event_ids_json: string | null; end_event_ids_json: string | null; end_sessions_json: string | null; end_spans_json: string | null };
+  const cut = db.prepare(`SELECT start_event_ids_json, end_event_ids_json, end_sessions_json, end_spans_json,
+    start_order_domain, start_order, end_order_domain, end_order FROM flows WHERE id = ?`).get(flow.id) as
+    { start_event_ids_json: string | null; end_event_ids_json: string | null; end_sessions_json: string | null; end_spans_json: string | null;
+      start_order_domain: string | null; start_order: number | null; end_order_domain: string | null; end_order: number | null };
+  const startPath = cut.start_order_domain === null ? null : `$."${cut.start_order_domain}"`;
+  const endPath = cut.end_order_domain === null ? null : `$."${cut.end_order_domain}"`;
+  const startOrder = cut.start_order;
   const rows = db.prepare(`WITH execution_events AS (
-    SELECT e.id, e.session_id, e.ts, e.rowid AS recording_order FROM events e
+    SELECT e.id, e.session_id, e.ts, e.rowid AS recording_order, e.recording_orders_json FROM events e
       WHERE e.session_id IN (SELECT value FROM json_each(?)) AND e.ts BETWEEN ? AND ?
     UNION
-    SELECT e.id, e.session_id, e.ts, e.rowid AS recording_order FROM load_candidates c
+    SELECT e.id, e.session_id, e.ts, e.rowid AS recording_order, e.recording_orders_json FROM load_candidates c
       CROSS JOIN events e ON e.id = c.load_id
       WHERE c.session_id IN (SELECT value FROM json_each(?)) AND c.ts BETWEEN ? AND ?
         AND e.kind = 'load' AND e.source = 'mcp'
-    ) SELECT id, session_id, ts FROM execution_events WHERE 1
-    AND (ts > ? OR (? IS NOT NULL AND id NOT IN (SELECT value FROM json_each(?))))
-    AND (? IS NULL OR ts < ? OR (? IS NOT NULL AND id IN (SELECT value FROM json_each(?))))
+    ) SELECT id, session_id, ts, json_extract(recording_orders_json, ?) AS start_position,
+      json_extract(recording_orders_json, ?) AS end_position FROM execution_events
     ORDER BY ts, recording_order`).all(sessionIds, from, to ?? Number.MAX_SAFE_INTEGER,
-      candidateIds, from, to ?? Number.MAX_SAFE_INTEGER, from, cut.start_event_ids_json, cut.start_event_ids_json,
-      to, to, cut.end_event_ids_json, cut.end_event_ids_json) as { id: string; session_id: string; ts: number }[];
+      candidateIds, from, to ?? Number.MAX_SAFE_INTEGER, startPath, endPath) as
+      { id: string; session_id: string; ts: number; start_position: number | null; end_position: number | null }[];
+  const legacyEnds = new Set(parseJson<string[]>(cut.end_event_ids_json, []));
+  const owned = rows.filter((row) =>
+    (row.ts > from || (cut.start_order !== null && row.start_position !== null && row.start_position > cut.start_order)) &&
+    (to === null || row.ts < to || (cut.end_order !== null
+      ? row.end_position !== null && row.end_position <= cut.end_order : legacyEnds.has(row.id))));
+  let unavailable = cut.start_order === null || (to !== null && cut.end_order === null) ||
+    rows.some((row) => (row.ts === from && row.start_position === null) || (row.ts === to && row.end_position === null));
+  const spanCut = to !== null && cut.end_order !== null
+    ? executionBoundarySpans(db, { sessionIds, at: to, path: endPath, position: cut.end_order }) : null;
+  if (spanCut?.unavailable) unavailable = true;
+  const sessionEnds = cut.end_sessions_json === null ? null : parseJson<Record<string, number | null>>(cut.end_sessions_json, {});
+  if (sessionEnds !== null && to !== null && cut.end_order !== null) {
+    const ends = db.prepare(`SELECT id, json_extract(end_orders_json, ?) AS position FROM sessions
+      WHERE id IN (SELECT value FROM json_each(?)) AND ended_at = ?`).all(endPath, sessionIds, to) as
+      { id: string; position: number | null }[];
+    for (const end of ends) {
+      if (Object.hasOwn(sessionEnds, end.id)) continue;
+      if (end.position === null) unavailable = true;
+      else if (end.position <= cut.end_order) sessionEnds[end.id] = to;
+    }
+  }
   const activity = new Map<string, { first: number; last: number }>();
-  for (const row of rows) {
+  for (const row of owned) {
     const times = activity.get(row.session_id);
     if (times) times.last = row.ts;
     else activity.set(row.session_id, { first: row.ts, last: row.ts });
@@ -47,12 +72,13 @@ export function executionEventScope(db: Db, flow: Execution, warningSessionIds: 
     return [{ ...link, firstSeenMs: Math.max(from, Math.min(startedAt, times?.first ?? startedAt)),
       lastSeenMs: Math.min(to ?? Number.MAX_SAFE_INTEGER, Math.max(startedAt, times?.last ?? startedAt)) }];
   });
-  return { from, to, paneIds: candidates.paneIds, links, eventIds: rows.map((row) => row.id),
-    priorEventIds: cut.start_event_ids_json === null ? [] : parseJson<string[]>(cut.start_event_ids_json, []),
-    sessionEnds: cut.end_sessions_json === null ? null : parseJson<Record<string, number | null>>(cut.end_sessions_json, {}),
-    spanKeys: cut.end_spans_json === null ? null : parseJson<string[][]>(cut.end_spans_json, []).map((key) => JSON.stringify(key)),
-    boundary: cut.start_event_ids_json === null || (to !== null && cut.end_event_ids_json === null)
-      ? "order_unavailable" : "recorded" };
+  return { from, to, paneIds: candidates.paneIds, links, eventIds: owned.map((row) => row.id),
+    priorEventIds: startOrder === null ? parseJson<string[]>(cut.start_event_ids_json, []) :
+      rows.filter((row) => row.ts === from && row.start_position !== null && row.start_position <= startOrder).map((row) => row.id),
+    sessionEnds,
+    spanKeys: spanCut?.keys ?? (cut.end_spans_json === null ? null :
+      parseJson<string[][]>(cut.end_spans_json, []).map((key) => JSON.stringify(key))),
+    boundary: unavailable ? "order_unavailable" : "recorded" };
 }
 
 /** Derive possible membership before reading events; activity refines it, never defines its query population. */
@@ -78,16 +104,8 @@ export function executionCandidates(db: Db, flow: Execution): { paneIds: string[
   return { paneIds, links };
 }
 
-/** Only equal-time event identities need a recording cut. Candidate loads remain separate from attribution. */
-export function executionBoundaryEvents(db: Db, sessionIds: string, at: number): string[] {
-  return (db.prepare(`SELECT id FROM events WHERE session_id IN (SELECT value FROM json_each(?)) AND ts = ?
-    UNION SELECT e.id FROM load_candidates c CROSS JOIN events e ON e.id = c.load_id
-      WHERE c.session_id IN (SELECT value FROM json_each(?)) AND c.ts = ?
-        AND e.source = 'mcp' AND e.kind = 'load'`).all(sessionIds, at, sessionIds, at) as { id: string }[]).map((row) => row.id);
-}
-
-/** Match the tree's conversation, call and exact trace/span joins before taking the endpoint snapshot. */
-export function executionBoundarySpans(db: Db, sessionIds: string, at: number): string[][] {
+/** Resolve the persisted scalar against eventual members, never snapshot unrelated historical spans. */
+function executionBoundarySpans(db: Db, cut: { sessionIds: string; at: number; path: string | null; position: number }) {
   const rows = db.prepare(`WITH session AS (
     SELECT id, runtime, runtime_session_id, conversation_id FROM sessions WHERE id IN (SELECT value FROM json_each(?))
   ), matched AS (
@@ -101,10 +119,12 @@ export function executionBoundarySpans(db: Db, sessionIds: string, at: number): 
     SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
       WHERE o.trace_id = json_extract(e.data_json, '$.otelTraceId') AND o.span_id = e.span_id AND o.runtime = s.runtime
         AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
-  ) SELECT o.trace_id, o.span_id FROM matched m JOIN otel_spans o ON o.trace_id = m.trace_id AND o.span_id = m.span_id
+  ) SELECT o.trace_id, o.span_id, json_extract(o.recording_orders_json, ?) AS position
+    FROM matched m JOIN otel_spans o ON o.trace_id = m.trace_id AND o.span_id = m.span_id
     WHERE o.start_ms IS NULL OR o.start_ms = ? ORDER BY o.trace_id, o.span_id`)
-    .all(sessionIds, at) as { trace_id: string; span_id: string }[];
-  return rows.map((row) => [row.trace_id, row.span_id]);
+    .all(cut.sessionIds, cut.path, cut.at) as { trace_id: string; span_id: string; position: number | null }[];
+  return { keys: rows.filter((row) => row.position !== null && row.position <= cut.position)
+    .map((row) => JSON.stringify([row.trace_id, row.span_id])), unavailable: rows.some((row) => row.position === null) };
 }
 
 /** Keep turn identity from the full assembly, but never carry observations across execution boundaries. */

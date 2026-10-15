@@ -165,8 +165,10 @@ export type SessionTree = { readonly id: string; readonly runtime: RuntimeId; re
   readonly turns: readonly TurnTree[]; readonly unassignedEvents: readonly TreeEvent[] };
 export type ExecutionEventScope = { readonly from: number; readonly to: number | null; readonly eventIds: readonly string[];
   readonly paneIds: readonly string[]; readonly links: readonly TreePaneLink[];
+  /** Relevant equal-start observations proven to precede registration; only prompt context is retained. */
   readonly priorEventIds: readonly string[];
   readonly sessionEnds: Readonly<Record<string, number | null>> | null;
+  /** Read-time relevant endpoint/untimed span keys, resolved against the persisted recording cut. */
   readonly spanKeys: readonly string[] | null;
   readonly boundary: "recorded" | "order_unavailable" };
 export type TreeTopologyNode = { readonly id: string; readonly label: string | null; readonly createdMs: number | null; readonly closedMs: number | null };

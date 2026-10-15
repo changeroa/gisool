@@ -241,8 +241,8 @@ export function registerFlowRoutes(app: Express, deps: FlowRouteDeps): void {
       executionScope: eventScope ? { from: eventScope.from, to: eventScope.to, boundary: eventScope.boundary,
         overlaps: overlaps.filter((session) => keepSession(session.sessionId, automation, automated)),
         label: eventScope.boundary === "recorded"
-          ? "Events scoped by timestamp; recorded identity resolves equal-time boundaries. Delayed interior evidence can still arrive. Session ends are observed separately."
-          : "Historical boundary order was not recorded. Equal-time boundary activity is uncertain and excluded here; workspace history retains it." } : null,
+          ? "Events scoped by timestamp; persisted recording order resolves equal-time boundaries independently of membership discovery. Delayed interior evidence can still arrive. Session ends are observed separately."
+          : "Some boundary ordering is unavailable. Unproven equal-time activity is excluded here; workspace history retains it." } : null,
       finding: { id: tree.id, sessions: findings.map(findingDto), aggregate: aggregateFindings(findings.flatMap((f) => f.turns)) },
       usage: { id: tree.id, sessions: usages, skills: aggregateUsage(usages.flatMap((u) => u.spans)) },
       comparison: tree.registered ? compareFlow(store, tree.id, { excludeSessions: [...excluded.keys()],

@@ -308,7 +308,8 @@ test("historical equal-time boundary order is exposed as unavailable rather than
   f.activity(s, 1010, "alpha", 0.02, "turn");
   f.append(s, "llm_call", 1100, { costUsd: 8 });
   f.end(a, 1100);
-  f.db.prepare("UPDATE flows SET start_event_ids_json = NULL, end_event_ids_json = NULL, end_sessions_json = NULL WHERE id = ?").run(a);
+  f.db.prepare(`UPDATE flows SET start_event_ids_json = NULL, end_event_ids_json = NULL, end_sessions_json = NULL,
+    start_order_domain = NULL, start_order = NULL, end_order_domain = NULL, end_order = NULL WHERE id = ?`).run(a);
   // When reporting this history after upgrade.
   const report = await f.get(a);
   // Then ambiguous endpoints receive no invented owner, while interior evidence and workspace history survive.

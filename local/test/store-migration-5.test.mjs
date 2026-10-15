@@ -11,7 +11,7 @@ const URI = "skill://local/fixture/retained/SKILL.md";
 const migrations = ["schema.sql", "migrations/002_tracing.sql", "migrations/003_tracing_indexes.sql",
   "migrations/004_load_reconciliation.sql"];
 
-for (const version of [1, 2, 3, 4]) test(`v${version} history imports into v5 with retained proof and legacy candidate warnings`, (t) => {
+for (const version of [1, 2, 3, 4]) test(`v${version} history imports into v6 with retained proof and legacy candidate warnings`, (t) => {
   // Given portable retained evidence and legacy candidates in each supported pre-boundary history format.
   const dir = makeTempDir();
   t.after(() => removeDir(dir));
@@ -42,7 +42,7 @@ for (const version of [1, 2, 3, 4]) test(`v${version} history imports into v5 wi
   t.after(() => round.close());
   round.importFrom(join(dir, "v5"), { merge: true });
   // Then both migration contracts remain usable, with no invented historical boundary evidence.
-  assert.equal(roundDb.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(roundDb.prepare("PRAGMA user_version").get().user_version, 6);
   assert.deepEqual(round.reconcileLoads({ sessionIds: ["a"], readOnly: true }), { count: 1, uris: [URI] });
   round.reconcileLoads({ eventId: "resolved" });
   const resolved = roundDb.prepare("SELECT session_id, data_json, text FROM events WHERE id='resolved'").get();
