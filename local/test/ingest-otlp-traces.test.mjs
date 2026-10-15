@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import test, { after, before } from "node:test";
+import test from "node:test";
 import { distImport } from "./_helpers.mjs";
 import { bearer, http, jsonHeaders, startTestServer } from "./helpers/api.mjs";
 import { openStore } from "./helpers/store.mjs";
@@ -138,69 +138,79 @@ test("a store failure propagates to the caller instead of being swallowed", () =
   assert.deepEqual(counted, [["rejected", "bad_otlp"]]);
 });
 
-let s;
-before(async () => { s = await startTestServer(); });
-after(async () => { await s.stop(); });
-
-const get = (path) => http(s.port, { path, headers: bearer(s.token) });
-const post = (body) => http(s.port, { method: "POST", path: "/ingest/otlp/v1/traces", headers: jsonHeaders(s.token), body: typeof body === "string" ? body : JSON.stringify(body) });
+const TRACES = "/ingest/otlp/v1/traces";
 
 /**
- * The route answers 202 and stores the batch in a microtask, which the daemon drains before it reads the next request
- * off the socket. Awaiting one more response is therefore the barrier for the write, with no sleeping involved.
+ * Runs one case against its own daemon, so every test states the absolute row count it expects instead of inheriting
+ * rows from the test before it. `settle` is the write barrier: the route answers 202 and stores the batch in a
+ * microtask, which the daemon drains before it reads the next request off the socket, so awaiting one more response
+ * is enough - nothing here sleeps or polls.
  */
-async function settle() {
-  const stats = await get("/api/stats");
-  assert.equal(stats.status, 200);
-  return stats.json.ingest;
-}
-
-function daemonSpans() {
-  const db = new DatabaseSync(join(s.gisoolHome, "gisool.db"));
+async function withDaemon(run) {
+  const s = await startTestServer();
+  const get = (path) => http(s.port, { path, headers: bearer(s.token) });
   try {
-    db.exec("PRAGMA busy_timeout = 5000");
-    return spanRows(db);
+    await run({
+      port: s.port,
+      token: s.token,
+      get,
+      post: (body, headers = jsonHeaders(s.token)) => http(s.port, { method: "POST", path: TRACES, headers, body: typeof body === "string" ? body : JSON.stringify(body) }),
+      async settle() {
+        const stats = await get("/api/stats");
+        assert.equal(stats.status, 200);
+        return stats.json.ingest;
+      },
+      spans() {
+        const db = new DatabaseSync(join(s.gisoolHome, "gisool.db"));
+        try {
+          db.exec("PRAGMA busy_timeout = 5000");
+          return spanRows(db);
+        } finally {
+          db.close();
+        }
+      },
+    });
   } finally {
-    db.close();
+    await s.stop();
   }
 }
 
-test("POST /ingest/otlp/v1/traces needs the bearer token", async () => {
-  const anon = await http(s.port, { method: "POST", path: "/ingest/otlp/v1/traces", headers: { "Content-Type": "application/json" }, body: JSON.stringify(SIX_SPANS) });
+test("POST /ingest/otlp/v1/traces needs the bearer token", () => withDaemon(async (d) => {
+  const anon = await d.post(SIX_SPANS, { "Content-Type": "application/json" });
   assert.equal(anon.status, 401);
   assert.equal(anon.json.error, "unauthorized");
-  const wrong = await http(s.port, { method: "POST", path: "/ingest/otlp/v1/traces", headers: { ...jsonHeaders("not-the-token") }, body: "{}" });
+  const wrong = await d.post("{}", jsonHeaders("not-the-token"));
   assert.equal(wrong.status, 401);
-  await settle();
-  assert.deepEqual(daemonSpans(), []);
-});
+  await d.settle();
+  assert.deepEqual(d.spans(), []);
+}));
 
-test("the daemon answers 202 with partialSuccess and stores the joinable spans", async () => {
-  const before = await settle();
-  const res = await post(SIX_SPANS);
+test("the daemon answers 202 with partialSuccess and stores the joinable spans", () => withDaemon(async (d) => {
+  const before = await d.settle();
+  const res = await d.post(SIX_SPANS);
   assert.equal(res.status, 202);
   assert.deepEqual(res.json, { partialSuccess: {} });
-  const after = await settle();
-  const rows = daemonSpans();
+  const after = await d.settle();
+  const rows = d.spans();
   assert.equal(rows.length, 3);
   assert.deepEqual(rows.map((r) => r.turn_key), [TURN, TURN, TURN]);
   assert.equal(after.accepted - before.accepted, 3);
   assert.equal(after.dropped - before.dropped, 3);
-});
+}));
 
-test("protobuf and non-JSON trace exports are refused the same way as logs", async () => {
-  const proto = await http(s.port, { method: "POST", path: "/ingest/otlp/v1/traces", headers: { ...bearer(s.token), "Content-Type": "application/x-protobuf" }, body: Buffer.from([10, 2, 3]) });
+test("protobuf and non-JSON trace exports are refused the same way as logs", () => withDaemon(async (d) => {
+  const proto = await d.post(Buffer.from([10, 2, 3]), { ...bearer(d.token), "Content-Type": "application/x-protobuf" });
   assert.equal(proto.status, 415);
   assert.match(proto.json.hint, /http\/json/);
-  assert.equal((await post("{not json")).status, 400);
-  const before = await settle();
-  assert.equal((await post({ resourceSpans: "nope" })).status, 202);
-  const after = await settle();
+  assert.equal((await d.post("{not json")).status, 400);
+  const before = await d.settle();
+  assert.equal((await d.post({ resourceSpans: "nope" })).status, 202);
+  const after = await d.settle();
   assert.equal(after.rejected - before.rejected, 1);
-  assert.equal(daemonSpans().length, 3, "a rejected batch stores nothing");
-});
+  assert.deepEqual(d.spans(), [], "a rejected batch stores nothing");
+}));
 
-test("a 2 MB batch of 5,000 filler spans plus 3 joinable ones is accepted and stores 3 rows", async () => {
+test("a 2 MB batch of 5,000 filler spans plus 3 joinable ones is accepted and stores 3 rows", () => withDaemon(async (d) => {
   const filler = [];
   const pad = "codex_core::codex::handle_tool_call_with_source::".repeat(5);
   for (let i = 0; i < 5000; i += 1) {
@@ -214,22 +224,24 @@ test("a 2 MB batch of 5,000 filler spans plus 3 joinable ones is accepted and st
   const body = JSON.stringify(batch([...filler.slice(0, 2500), ...joinable, ...filler.slice(2500)]));
   assert.ok(body.length >= 2 * 1024 * 1024 && body.length < 8 * 1024 * 1024, `body is ${body.length} bytes`);
 
-  const before = await settle();
-  const res = await post(body);
+  const before = await d.settle();
+  const res = await d.post(body);
   assert.equal(res.status, 202);
-  const after = await settle();
-  const rows = daemonSpans().filter((r) => r.trace_id === BIG_TRACE);
+  const after = await d.settle();
+  const rows = d.spans();
   assert.deepEqual(rows.map((r) => r.name).sort(), ["code_mode.handler.execute", "codex.turn_input", "unified_exec.exec_command"]);
   assert.equal(rows.length, 3, "5,000 filler spans are dropped, not stored");
+  assert.ok(rows.every((r) => r.trace_id === BIG_TRACE));
   assert.equal(rows.find((r) => r.name === "unified_exec.exec_command").turn_key, null);
   assert.equal(after.accepted - before.accepted, 3);
   assert.equal(after.dropped - before.dropped, 5000);
-});
+}));
 
-test("a 9 MB trace export is refused with 413 and counted", async () => {
-  const before = await settle();
+test("a 9 MB trace export is refused with 413 and counted", () => withDaemon(async (d) => {
+  const before = await d.settle();
   const big = JSON.stringify({ resourceSpans: [], pad: "x".repeat(9 * 1024 * 1024) });
-  assert.equal((await post(big)).status, 413);
-  const after = await settle();
+  assert.equal((await d.post(big)).status, 413);
+  const after = await d.settle();
   assert.equal(after.rejected - before.rejected, 1);
-});
+  assert.deepEqual(d.spans(), []);
+}));
