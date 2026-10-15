@@ -28,8 +28,6 @@ const candidates = await loadModule("dashboard/components/candidates.tsx");
 const fixtures = JSON.parse(readFileSync(new URL("dashboard/dev-fixtures.json", PACKAGE_ROOT), "utf8"));
 
 const EVENT_KINDS = ["session_start", "prompt", "search", "load", "read_file", "native_skill", "llm_call", "tool_call", "session_end", "error"];
-// The dev fixtures carry the kinds the timeline renders today; model calls and tool runs reach the dashboard with the Workspaces view.
-const FIXTURE_KINDS = EVENT_KINDS.filter((kind) => kind !== "llm_call" && kind !== "tool_call");
 const ALL_KINDS_SESSION = "ses_ac514fa3a9";
 const ABSTAINED_SESSION = "ses_bb85bd8f72";
 const NEVER_CONSULTED_SESSION = "ses_b143443884";
@@ -37,9 +35,9 @@ const NEVER_CONSULTED_SESSION = "ses_b143443884";
 test("fixtures cover every step kind, one abstained search, and one session with no search", () => {
   const allKinds = fixtures.traces[ALL_KINDS_SESSION];
   assert.ok(allKinds, `trace ${ALL_KINDS_SESSION} exists`);
-  for (const kind of FIXTURE_KINDS) assert.ok(allKinds.some((step) => step.kind === kind), `fixture has a ${kind} step`);
+  for (const kind of EVENT_KINDS) assert.ok(allKinds.some((step) => step.kind === kind), `fixture has a ${kind} step`);
   const everyKind = new Set(Object.values(fixtures.traces).flat().map((step) => step.kind));
-  assert.deepEqual([...everyKind].sort(), [...FIXTURE_KINDS].sort());
+  assert.deepEqual([...everyKind].sort(), [...EVENT_KINDS].sort());
 
   const abstained = fixtures.traces[ABSTAINED_SESSION].find((step) => step.kind === "search");
   assert.equal(abstained.detail.abstained.reason, "no_overlap");
@@ -57,8 +55,29 @@ test("every kind has a label and the never-consulted copy is the shipped sentenc
   assert.deepEqual(Object.keys(trace.MODE_LABEL).sort(), ["automatic", "discovery", "explicit"]);
 });
 
+test("model and tool steps carry the store's summary plus the facts their bodies render", () => {
+  const steps = fixtures.traces[ALL_KINDS_SESSION];
+  const llm = steps.find((step) => step.kind === "llm_call");
+  assert.match(llm.summary, /^model call: \S.*, \d+ tokens$/);
+  assert.equal(llm.detail.kind, "llm_call");
+  assert.equal(trace.formatCost(llm.detail.costUsd), "$0.3191");
+  assert.equal(trace.formatCost(undefined), trace.COST_UNKNOWN, "a runtime without reported cost never shows $0.0000");
+  assert.equal(trace.formatCost(Number.NaN), trace.COST_UNKNOWN);
+  assert.equal(trace.formatCost(0), "$0.0000");
+
+  const tool = steps.find((step) => step.kind === "tool_call");
+  assert.match(tool.summary, /^tool: \S.* \(\d+ ms, (ok|failed|unknown)\)$/);
+  assert.equal(tool.detail.kind, "tool_call");
+  assert.equal(trace.toolArgsPreview(tool.detail), tool.detail.args);
+  assert.equal(tool.detail.argsLength, tool.detail.args.length);
+  const long = { kind: "tool_call", args: "가".repeat(trace.TOOL_ARGS_PREVIEW_CHARS + 40) };
+  assert.equal(Array.from(trace.toolArgsPreview(long)).length, trace.TOOL_ARGS_PREVIEW_CHARS + 1, "long arguments are cut with one ellipsis");
+  assert.equal(trace.toolArgsPreview({ kind: "tool_call", argsLength: 412 }), "412 chars not captured");
+  assert.equal(trace.toolArgsPreview({ kind: "tool_call" }), undefined);
+});
+
 test("traceCounts tallies each kind and abstained searches", () => {
-  assert.deepEqual(trace.traceCounts(fixtures.traces[ALL_KINDS_SESSION]), { steps: 10, searches: 1, abstained: 0, loads: 2, reads: 2, natives: 1, errors: 1 });
+  assert.deepEqual(trace.traceCounts(fixtures.traces[ALL_KINDS_SESSION]), { steps: 12, searches: 1, abstained: 0, loads: 2, reads: 2, natives: 1, errors: 1 });
   assert.deepEqual(trace.traceCounts(fixtures.traces[ABSTAINED_SESSION]), { steps: 4, searches: 1, abstained: 1, loads: 0, reads: 0, natives: 0, errors: 0 });
   assert.deepEqual(trace.traceCounts(fixtures.traces[NEVER_CONSULTED_SESSION]), { steps: 3, searches: 0, abstained: 0, loads: 0, reads: 0, natives: 0, errors: 0 });
   assert.deepEqual(trace.traceCounts([]), { steps: 0, searches: 0, abstained: 0, loads: 0, reads: 0, natives: 0, errors: 0 });

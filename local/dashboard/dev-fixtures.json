@@ -864,6 +864,24 @@
     }
    },
    {
+    "ts": 1790240022747,
+    "kind": "llm_call",
+    "summary": "model call: claude-fable-5-1, 26343 tokens",
+    "detail": {
+     "kind": "llm_call",
+     "model": "claude-fable-5-1",
+     "inputTokens": 2,
+     "outputTokens": 4,
+     "cacheReadTokens": 10523,
+     "cacheCreationTokens": 15814,
+     "inputIncludesCache": false,
+     "costUsd": 0.31913075,
+     "durationMs": 2292,
+     "ttftMs": 2276,
+     "requestId": "req_011CXfixture"
+    }
+   },
+   {
     "ts": 1790240023747,
     "kind": "load",
     "summary": "Loaded db-migration",
@@ -915,6 +933,22 @@
      "kind": "native_skill",
      "name": "commit",
      "via": "tool"
+    }
+   },
+   {
+    "ts": 1790240210747,
+    "kind": "tool_call",
+    "summary": "tool: Bash (267 ms, ok)",
+    "detail": {
+     "kind": "tool_call",
+     "toolName": "Bash",
+     "success": true,
+     "durationMs": 267,
+     "toolUseId": "toolu_01Fixture",
+     "inputBytes": 107,
+     "resultBytes": 1203,
+     "args": "{\"command\":\"psql -c '\\\\d orders'\",\"description\":\"inspect the orders table\"}",
+     "argsLength": 75
     }
    },
    {
