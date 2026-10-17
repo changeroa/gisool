@@ -1,19 +1,87 @@
-# gisul
+<p align="center"><a href="README.md">English</a> · <a href="README.ko.md">한국어</a></p>
 
-For ARKPOINT team distribution, see [the native HTTPS Codex plugin](docs/arkpoint-plugin.md). It connects directly to Cloudflare Workers; neither clients nor deployment require a Mac mini. The team plugin is at `plugins/gisul`, with the Git marketplace in `.agents/plugins/marketplace.json`. Production readiness and prerequisites are documented separately from local verification.
+# gisool
 
-`gisul` is a personal MCP skill registry for serving Git-managed `SKILL.md` instruction bundles on demand.
-
-For skills that live only on this machine, `local/` contains gisool, a local skill router: one localhost daemon serves your existing skill folders to Claude Code, Codex, Gemini CLI, Cursor, OmO, Gajae Code, and OpenClaw over MCP, records which skills each session searched, loaded, and read, and shows the result in a local dashboard. Nothing leaves the machine. See [local/README.md](local/README.md) to install it and [docs/gisool.md](docs/gisool.md) for the architecture.
+gisool is a local skill router. One daemon on `127.0.0.1` serves the `SKILL.md` folders already on your machine to your coding agents over MCP. It records which skills each session searched, loaded, and read, and shows that in a local dashboard. Nothing leaves the machine.
 
 The name comes from 기술, Korean for "skill", "craft", or "technique".
 
-This repo contains two small packages:
+## Start in 30 seconds
 
-- `server/`: a Node.js MCP server that exposes local skill directories over stdio or Streamable HTTP.
-- `worker/`: an authenticated MCP server that reads immutable releases directly from a private R2 bucket.
+Requires Node.js 24.15 or newer on macOS or Linux.
 
-The intended deployment is:
+```sh
+npm --prefix local ci && npm --prefix local run build && npm link ./local
+gisool init --dry-run    # preview every config change; writes nothing
+gisool init              # connect detected runtimes and install the background service
+gisool open              # open the dashboard
+```
+
+`gisool init` installs a LaunchAgent (macOS) or systemd user unit (Linux) that keeps the daemon running on port `8799`. Use `gisool init --no-service` and `gisool serve` to run it in the foreground instead.
+
+## Supported runtimes
+
+| Runtime | `--runtime` id |
+| --- | --- |
+| Claude Code | `claude-code` |
+| Codex | `codex` |
+| Gemini CLI | `gemini` |
+| Cursor | `cursor` |
+| OmO | `omo` |
+| Gajae Code | `gajae` |
+| OpenClaw | `openclaw` |
+
+`gisool init` detects which are installed. Connect only some with `gisool init --runtime codex,claude-code`. Each runtime gets an MCP entry, OpenTelemetry log export to the daemon, and capture hooks.
+
+MCP connections require protocol revision 2026-07-28 and a host resource reader. Clients that use the legacy `initialize` handshake cannot connect. Details: [local/README.md](local/README.md).
+
+## What is recorded, and where
+
+- Prompts, skill searches (query and ranked candidates), skill loads, and supporting-file reads, per agent session.
+- Skills a runtime used natively, without gisool, when its hooks or telemetry report it.
+
+Everything is stored in SQLite under `~/.gisool/` (`GISOOL_HOME` moves it). The daemon listens on `127.0.0.1` only, every request needs the local bearer token, and nothing is sent to a remote service. Skill folders are indexed in place; gisool never copies or edits them.
+
+Set `captureLevel` in `~/.gisool/config.json` to `full` (default), `redacted` (secrets masked, text cut to 2048 characters), or `metadata` (no text, only digest and length). `retentionDays` deletes old sessions.
+
+| Path | Purpose |
+| --- | --- |
+| `~/.gisool/config.json` | settings: port, capture level, retention, skill roots |
+| `~/.gisool/token` | bearer token (0600) |
+| `~/.gisool/gisool.db` | skills index, sessions, events, loads |
+| `~/.gisool/logs/daemon.log` | daemon log |
+| `~/.gisool/backups/` | per-run config backups for rollback |
+
+## Dashboard
+
+```sh
+gisool open              # opens the browser
+gisool open --print      # prints the URL only
+```
+
+Sessions, a per-session trace with search candidates, a task -> skill -> outcome flow, and a weekday-by-hour heatmap.
+
+## Check, undo, move
+
+```sh
+gisool doctor                                  # service, daemon, token, FTS5, roots, index, hooks, backups
+gisool doctor --json
+gisool init --rollback                         # undo the newest init run
+gisool init --rollback --all                   # undo every run
+gisool export ~/gisool-backup                  # settings only
+gisool export ~/gisool-backup --with-history   # also sessions and events
+gisool import ~/gisool-backup --dry-run        # preview; import never overwrites existing keys
+gisool eval                                    # measure search quality
+```
+
+Full CLI, settings, and protocol notes: [local/README.md](local/README.md). Architecture: [docs/gisool.md](docs/gisool.md).
+
+## Remote registry (optional)
+
+This repo also contains gisul, an authenticated remote registry for team distribution. Use it only when skills must be shared across machines; gisool does not need it. `gisool init --disable-remote` turns off a remote gisul registration in connected runtimes.
+
+- `server/`: a Node.js MCP server that exposes skill directories over stdio or Streamable HTTP (default `http://127.0.0.1:8788/mcp`).
+- `worker/`: an authenticated Cloudflare Worker that serves immutable releases from a private R2 bucket.
 
 ```text
 Git main -> GitHub Actions validation/evaluation -> immutable R2 release
@@ -21,99 +89,21 @@ Git main -> GitHub Actions validation/evaluation -> immutable R2 release
 Codex plugin / MCP client -> authenticated Worker -------+
 ```
 
-## Agent runtimes
-
 | Runtime | Client | Connection |
 | --- | --- | --- |
 | Codex | [ARKPOINT plugin](docs/arkpoint-plugin.md) | Native HTTPS + OAuth |
 | oh-my-openagent / OmO 5 (`omo-ai`) | [Installer and loader](clients/oh-my-openagent/README.md) | OAuth stdio bridge, discovery extension |
-| Gajae Code (`gjc`) | [Installer and workflow integration](clients/gajae-code/README.md) | OAuth stdio bridge, deep-interview sub-skill, executor appendix |
-| OpenClaw | [Bundle and loader](clients/openclaw/README.md) | OAuth stdio bridge, in-memory bootstrap discovery hook |
+| Gajae Code (`gjc`) | [Installer and workflow integration](clients/gajae-code/README.md) | OAuth stdio bridge |
+| OpenClaw | [Bundle and loader](clients/openclaw/README.md) | OAuth stdio bridge, bootstrap discovery hook |
 
-All four discover and read the same immutable remote releases. Gajae Code uses skills to propose interview scope and questions, carries accepted constraints and pinned references into the plan, and loads the relevant guidance for an executor's approved assignment. Runtime integration files are small loaders; the team skill catalog is never copied into client packages.
+Both servers implement the [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640). The Worker uses `SKILLS_BUCKET`, `GISUL_BEARER_TOKEN` for readers, and a separate `GISUL_PUBLISH_TOKEN` for publication. No real secrets are in this repository; `server/ops/` holds templates.
 
-## Why
+- Deployment, release format, rollback, production gates: [docs/deployment.md](docs/deployment.md)
+- Codex plugin: [clients/codex/README.md](clients/codex/README.md)
+- Session handoff context: [docs/SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md)
 
-This project is an experiment around "skills over MCP": instead of copying every skill into every agent runtime, a client can discover and load task-specific instruction bundles from a personal MCP server.
+The remote registry is a personal prototype. Production acceptance needs a successful GitHub Actions publication, installed-plugin reads, and matching release evidence.
 
-Git is the source of truth. The Worker reads a verified release from R2; the Codex plugin keeps a small loader and reads selected skills and supporting files only when needed. The Node server remains available for local development and existing stdio integrations.
+## License
 
-## Packages
-
-### Server
-
-```bash
-cd server
-npm install
-npm run build
-node dist/index.js --http
-```
-
-Default HTTP endpoint:
-
-```text
-POST http://127.0.0.1:8788/mcp
-```
-
-Default skill roots:
-
-- `~/gisul/skills`
-- `~/.codex/skills`
-- `~/.agents/skills`
-
-### Worker
-
-```bash
-npm --prefix server ci
-npm --prefix server run build
-npm --prefix worker ci
-npm --prefix worker run typecheck
-npm --prefix worker test
-cd worker
-npx wrangler versions upload --dry-run
-```
-
-The Worker uses `SKILLS_BUCKET`, `GISUL_BEARER_TOKEN` for MCP readers, and a separate `GISUL_PUBLISH_TOKEN` for release publication. See [deployment and publication](docs/deployment.md) for the release format, verification, rollback, and production gates. The skill repository's builder/evaluation workflow and real release evidence must be connected before production activation.
-
-## Skills extension (SEP-2640)
-
-The server and Worker implement the [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) (`io.modelcontextprotocol/skills`):
-
-- `skills/list` and `skills/get` extension methods with per-file `{uri, digest, size}` resource manifests
-- every skill file readable through the standard `resources/read` resource primitive
-- `resources/directory/read` for scoped directory navigation (declared via `directoryRead: true`)
-- URIs carry the file path explicitly: `skill://<authority>/<source>/<skill-name>/SKILL.md`
-- skills need `name` and `description` frontmatter with `name` matching the directory name; nested skills get their own entries; each skill is limited to 512 files and 16 MiB total. The Worker rejects invalid release manifests; the Node server logs and skips invalid local skills.
-
-The Node server also retains the older `skills_list` / `skills_get` / `resources_read` tools as a compatibility layer.
-
-## Codex integration
-
-The [Codex plugin](clients/codex/README.md) lets Codex search remote
-skills, load a selected skill, and read supporting files with per-file integrity
-checks. Build the plugin with `cd server && npm run build:codex-plugin` and install
-it from a Codex marketplace. It bundles the MCP adapter and the small Gisul loader;
-remote skills stay on the server.
-
-## OpenClaw integration
-
-The [OpenClaw bundle](clients/openclaw/README.md) adds a remote skill loader,
-a bootstrap discovery hook and a read-only OAuth MCP connection. Workflow
-skills remain on Gisul; installation and verification instructions are included.
-
-## Authentication
-
-The Worker validates its MCP bearer before reading R2. Its publication bearer is a separate secret; Cloudflare account authentication is used to manage the Worker and bucket. The Node HTTP server supports:
-
-- bearer token validation for `/mcp`
-- a public token request endpoint
-- an admin dashboard for approving token requests
-- hashed storage for issued tokens
-
-No real secrets are included in this repository. The files in `server/ops/` are templates and must be adjusted before use.
-
-## Current status
-
-This is a personal prototype. Local Worker tests cover authenticated direct serving, immutable uploads, full inventory verification, concurrent pointer updates, rollback, and release-pinned bridge reads. Production acceptance additionally requires a successful GitHub Actions publication, actual installed-plugin reads, and matching Langfuse release/commit evidence.
-
-See [docs/SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) for the session handoff context behind this version.
+[MIT](LICENSE)
