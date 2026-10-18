@@ -3,9 +3,9 @@ name: Runtime validation
 on:
   push:
     branches: [main, feat/dev-tools-mvp]
-    paths: ['server/**', 'worker/**', 'clients/**', 'plugins/**', '.agents/plugins/**', 'scripts/check-openclaw-*.mjs', 'scripts/team-config.mjs', '.github/workflows/**']
+    paths: ['server/**', 'worker/**', 'clients/**', 'plugins/**', '.agents/plugins/**', 'scripts/**', '.github/workflows/**']
   pull_request:
-    paths: ['server/**', 'worker/**', 'clients/**', 'plugins/**', '.agents/plugins/**', 'scripts/check-openclaw-*.mjs', 'scripts/team-config.mjs', '.github/workflows/**']
+    paths: ['server/**', 'worker/**', 'clients/**', 'plugins/**', '.agents/plugins/**', 'scripts/**', '.github/workflows/**']
   workflow_dispatch:
 
 permissions:
@@ -24,18 +24,4 @@ jobs:
           cache-dependency-path: |
             server/package-lock.json
             worker/package-lock.json
-      - run: npm --prefix server ci
-      - run: npm --prefix worker ci
-      - run: npm --prefix server run build
-      - run: npm --prefix server test
-      - run: node server/bench/search.mjs --check
-      - run: npm --prefix server run build:codex-plugin
-      - run: npm --prefix worker run typecheck
-      - run: npm --prefix worker test
-      - run: node scripts/check-team-plugin.mjs
-      - run: npx wrangler deploy --config wrangler.team.jsonc --dry-run
-        working-directory: worker
-      - run: npx wrangler versions upload --dry-run
-        working-directory: worker
-      - run: npx wrangler deploy --config wrangler.oauth.jsonc --dry-run
-        working-directory: worker
+      - run: node scripts/verify.mjs
