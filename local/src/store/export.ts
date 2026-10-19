@@ -82,11 +82,36 @@ export function createPortable(ctx: StoreCtx): Portable {
   const keyIn = (table: string, key: string[]) =>
     `${key.length === 1 ? key[0]! : `(${key.join(", ")})`} IN (SELECT ${key.join(", ")} FROM main.${table})`;
 
+  /**
+   * A history row the destination already holds: the same primary key, the same agent record stored under another event
+   * id (source_key), or the same workflow spec version registered there independently.
+   */
+  function present(table: string, key: string[], columns: string[]): string {
+    if (table === "events" && columns.includes("source_key")) {
+      return `(${keyIn(table, key)} OR (source_key IS NOT NULL AND source_key IN (SELECT source_key FROM main.events WHERE source_key IS NOT NULL)))`;
+    }
+    if (table === "workflow_specs") return `(${keyIn(table, key)} OR (name, version) IN (SELECT name, version FROM main.workflow_specs))`;
+    return keyIn(table, key);
+  }
+
+  /** Two different bodies under one spec name and version cannot both be kept, and picking one would rewrite flows. */
+  function refuseSpecConflicts(shape: { table: string }[]): void {
+    if (!shape.some((s) => s.table === "workflow_specs")) return;
+    const clash = db.prepare(`SELECT h.name, h.version FROM hist.workflow_specs h JOIN main.workflow_specs m
+      ON m.name = h.name AND m.version = h.version WHERE m.digest <> h.digest ORDER BY h.name, h.version LIMIT 1`).get() as
+      { name: string; version: number } | undefined;
+    if (clash) {
+      throw storeError("history_spec_conflict", `workflow spec ${clash.name} v${clash.version} differs between this store and the history`);
+    }
+  }
+
   function historyPlan(): { tables: Record<string, number>; skipped: number } {
     const tables: Record<string, number> = {};
     let skipped = 0;
-    for (const { table, key } of historyShape()) {
-      const row = db.prepare(`SELECT SUM(CASE WHEN ${keyIn(table, key)} THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${table}`).get() as
+    const shape = historyShape();
+    refuseSpecConflicts(shape);
+    for (const { table, key, columns } of shape) {
+      const row = db.prepare(`SELECT SUM(CASE WHEN ${present(table, key, columns)} THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${table}`).get() as
         { fresh: number | null; total: number };
       tables[table] = row.fresh ?? 0;
       skipped += row.total - (row.fresh ?? 0);
@@ -97,7 +122,12 @@ export function createPortable(ctx: StoreCtx): Portable {
   function copyHistory(): void {
     for (const { table, key, columns } of historyShape()) {
       const cols = columns.join(", ");
-      db.prepare(`INSERT INTO main.${table} (${cols}) SELECT ${cols} FROM hist.${table} WHERE NOT ${keyIn(table, key)}`).run();
+      // A flow follows its spec to the id the destination keeps for that name and version.
+      const values = columns.map((c) => table === "flows" && c === "spec_id"
+        ? `COALESCE((SELECT m.id FROM main.workflow_specs m JOIN hist.workflow_specs h ON h.name = m.name AND h.version = m.version
+            WHERE h.id = src.spec_id), src.spec_id)`
+        : `src.${c}`).join(", ");
+      db.prepare(`INSERT INTO main.${table} (${cols}) SELECT ${values} FROM hist.${table} AS src WHERE NOT ${present(table, key, columns)}`).run();
       // Legacy loads have no snapshot: insert triggers may run before later-received activity rows.
       // Complete their candidate index once the whole events table is available, not on report reads.
       if (table === "events") db.exec(`INSERT OR IGNORE INTO load_candidates
