@@ -234,6 +234,28 @@ test("a malformed MCP response leaves none of its body, or a token prefix, in th
   assert.ok(!text.includes("echoed"), text);
 });
 
+test("pack tool text and compared response values stay out of the receipt", { timeout: 30000 }, async t => {
+  for (const [method, change] of [
+    ["tools/call", body => { body.result.content = [{ type: "text", text: `${reader} echoed instead of JSON` }]; }],
+    ["server/discover", body => { body.jsonrpc = "echoed-marker"; }],
+  ]) {
+    const f = await fixture(t);
+    const fetcher = async (url, options) => {
+      const response = await f.fetcher(url, options);
+      if (String(url) !== f.env.GISUL_CANARY_MCP_URL || JSON.parse(options.body).method !== method) return response;
+      const body = await response.json();
+      change(body);
+      return new Response(JSON.stringify(body), { status: response.status });
+    };
+    const receipt = await runCanary(f.env, fetcher);
+    assert.equal(receipt.state, "failed", method);
+    assert.equal(receipt.phase, "mcp", method);
+    const text = await readFile(f.env.GISUL_CANARY_RECEIPT, "utf8");
+    assert.ok(!text.includes(reader.slice(0, 10)), text);
+    assert.ok(!text.includes("echoed"), text);
+  }
+});
+
 test("scheduled canary is opt-in, read-only and retains receipts on failure", async () => {
   const workflow = parse(await readFile(new URL("../../.github/workflows/production-canary.yml", import.meta.url), "utf8"));
   assert.deepEqual(workflow.permissions, { contents: "read" });

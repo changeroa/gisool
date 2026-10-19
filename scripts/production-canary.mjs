@@ -7,9 +7,9 @@ import { manifestDigest, parseInventory } from "../worker/src/release-reader.ts"
 import { assertCommit, sha256 } from "../worker/src/r2-objects.ts";
 
 // A parser message quotes the start of the text, which can be a credential the redaction only matches whole.
-function parseJson(bytes, source) {
+function parseJson(text, source) {
   try {
-    return JSON.parse(bytes.toString("utf8"));
+    return JSON.parse(text);
   } catch {
     throw new Error(`${source} is not valid JSON`);
   }
@@ -47,7 +47,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
       ? { authorization: `Bearer ${env.GISUL_CANARY_INVENTORY_TOKEN}` } : {} });
     assert.ok(bytes.length <= 8 * 1024 * 1024, "Expected inventory exceeds the release limit");
     assert.equal(await sha256(bytes), env.GISUL_CANARY_INVENTORY_SHA256);
-    const document = parseJson(bytes, "Expected inventory");
+    const document = parseJson(bytes.toString("utf8"), "Expected inventory");
     assertCommit(document?.commit);
     const identity = { commit: document.commit, release: document.release, inventory_digest: env.GISUL_CANARY_INVENTORY_SHA256 };
     const { inventory, files } = parseInventory(bytes.toString("utf8"), identity);
@@ -56,7 +56,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     let id = 0;
     async function rpc(method, params = {}) {
       receipt.operation = method === "tools/call" ? params.name : method;
-      const body = parseJson(await request(endpoint, { method: "POST", headers: {
+      const body = parseJson((await request(endpoint, { method: "POST", headers: {
         authorization: `Bearer ${env.GISUL_CANARY_READER_TOKEN}`, "content-type": "application/json",
         accept: "application/json, text/event-stream", "mcp-protocol-version": "2026-07-28", "mcp-method": method,
         ...(method === "resources/read" ? { "mcp-name": params.uri }
@@ -64,10 +64,10 @@ export async function runCanary(env = process.env, fetcher = fetch) {
       }, body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params: { ...params, _meta: {
         ...params._meta, "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {},
-      } } }) }), "MCP response");
+      } } }) })).toString("utf8"), "MCP response");
       assert.equal(body.jsonrpc, "2.0");
       assert.equal(body.id, id);
-      assert.ok(!body.error, `MCP request failed (${body.error?.code})`);
+      assert.ok(!body.error, `MCP request failed (${Number.isInteger(body.error?.code) ? body.error.code : "no numeric code"})`);
       const result = body.result;
       assert.equal(result.resultType, "complete");
       assert.equal(result._meta["io.modelcontextprotocol/serverInfo"].name, "gisul");
@@ -110,7 +110,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
         const response = await rpc("tools/call", { name, arguments: args });
         assert.equal(response.isError, false, "Read-only pack operation failed");
         assert.equal(response.content.length, 1);
-        const result = JSON.parse(response.content[0].text);
+        const result = parseJson(response.content[0].text, "MCP tool result");
         checkIdentity(result);
         assert.equal(result.publication_status, "published");
         assert.equal(result.active_commit, identity.commit);
@@ -155,7 +155,10 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     receipt.state = "complete";
     receipt.phase = "complete";
   } catch (error) {
-    receipt.error = { message: error.message, status: error.status ?? null };
+    // A generated assertion message quotes the compared response value; phase and operation already locate the check.
+    const message = error instanceof assert.AssertionError && error.generatedMessage
+      ? `Check failed during ${receipt.phase}` : error.message;
+    receipt.error = { message, status: error.status ?? null };
   }
   receipt.finished_at = new Date().toISOString();
   const text = JSON.stringify(receipt, (_key, value) => typeof value === "string"
