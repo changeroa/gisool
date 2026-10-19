@@ -222,9 +222,9 @@ test("daemon end to end: MCP, OTLP and hook ingest, dashboard API, restart, and 
   const guideUri = top.uri.replace(/SKILL\.md$/, "guide.md");
   const read = await client.readResource({ uri: guideUri, _meta: readMeta });
   assert.equal(read.contents[0].text, "database-query guide v1\n");
-  const legacy = await post(port, token, "/mcp", JSON.stringify({ jsonrpc: "2.0", id: 99, method: "initialize", params: { protocolVersion: "2025-11-25" } }));
-  assert.equal(legacy.status, 400);
-  assert.equal(legacy.json.error.code, -32020);
+  const legacy = await post(port, token, "/mcp", JSON.stringify({ jsonrpc: "2.0", id: 99, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "legacy-client", version: "1" } } }));
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.json.result.protocolVersion, "2025-11-25");
 
   // Claude OTLP prompt and Gemini hook.
   let wait = stream.next((r) => r.runtime === "claude-code", "claude prompt session frame");

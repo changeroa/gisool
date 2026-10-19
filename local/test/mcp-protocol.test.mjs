@@ -50,15 +50,52 @@ test("encoded names preserve UTF-8 BOM and sentinel-like literals before validat
   }
 }));
 
-test("legacy initialize is rejected and legacy session headers never create state", () => withDaemon(async (daemon) => {
-  const body = { jsonrpc: "2.0", id: 77, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "legacy", version: "1" } } };
-  const response = await fetch(`http://127.0.0.1:${daemon.port}/mcp`, {
-    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body),
+const legacyPost = async (port, body, headers = {}) => {
+  const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: "POST", body: JSON.stringify(body),
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${TOKEN}`, ...headers },
   });
-  assert.equal(response.status, 400);
-  const error = (await response.json()).error;
-  assert.equal(error.code, -32020);
-  assert.match(error.message, /2026-07-28/);
+  const text = await res.text();
+  return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : undefined };
+};
+
+test("legacy initialize opens a session served with legacy result shapes and client attribution", () => withDaemon(async (daemon) => {
+  for (const [requested, negotiated] of [["2025-11-25", "2025-11-25"], ["2025-06-18", "2025-06-18"], ["2025-03-26", "2025-03-26"], ["2099-01-01", "2025-11-25"]]) {
+    const init = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: requested, capabilities: { roots: { listChanged: true } }, clientInfo: { name: "openclaw-mcp", version: "1" } } });
+    assert.equal(init.status, 200);
+    assert.equal(init.body.result.protocolVersion, negotiated);
+  }
+  const init = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 77, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "openclaw-mcp", version: "1" } } });
+  assert.equal(init.body.id, 77);
+  assert.deepEqual(Object.keys(init.body.result).sort(), ["capabilities", "instructions", "protocolVersion", "serverInfo"]);
+  assert.equal(init.body.result.serverInfo.name, "gisool");
+  assert.ok(init.body.result.capabilities.tools && init.body.result.capabilities.resources);
+  const session = init.headers.get("mcp-session-id");
+  assert.ok(session);
+  const headers = { "mcp-session-id": session, "mcp-protocol-version": "2025-11-25" };
+  assert.equal((await legacyPost(daemon.port, { jsonrpc: "2.0", method: "notifications/initialized" }, headers)).status, 202);
+  const tools = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, headers);
+  assert.deepEqual(tools.body.result.tools.map((t) => t.name), ["search_skills"]);
+  for (const key of ["resultType", "ttlMs", "cacheScope", "_meta"]) assert.equal(key in tools.body.result, false, key);
+  const search = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "search_skills", arguments: { query: "pr-review pull request code changes" } } }, headers);
+  assert.equal(JSON.parse(search.body.result.content[0].text).candidates[0].uri, uriOf("pr-review"));
+  const read = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 4, method: "resources/read", params: { uri: uriOf("pr-review") } }, headers);
+  assert.equal(read.body.result.contents[0].mimeType, "text/markdown");
+  assert.equal("ttlMs" in read.body.result, false);
+  assert.deepEqual((await legacyPost(daemon.port, { jsonrpc: "2.0", id: 5, method: "ping" }, headers)).body.result, {});
+  assert.deepEqual((await legacyPost(daemon.port, { jsonrpc: "2.0", id: 6, method: "resources/templates/list" }, headers)).body.result, { resourceTemplates: [] });
+  const missing = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 7, method: "resources/read", params: { uri: uriOf("missing") } }, headers);
+  assert.equal(missing.status, 200);
+  assert.equal(missing.body.error.code, -32602);
+  const headerless = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 8, method: "tools/list" }, { "mcp-session-id": "unknown-after-restart" });
+  assert.equal(headerless.status, 200);
+  assert.equal(headerless.body.result.tools.length, 1);
+  const badInit = await legacyPost(daemon.port, { jsonrpc: "2.0", id: 9, method: "initialize", params: { protocolVersion: "2025-11-25" } });
+  assert.equal(badInit.body.error.code, -32602);
+  assert.deepEqual(daemon.rows().filter((r) => r.kind !== "error").map((r) => [r.kind, r.runtime]), [["search", "openclaw"], ["load", "openclaw"]]);
+}));
+
+test("modern requests never fall into the legacy era and legacy session headers never create modern state", () => withDaemon(async (daemon) => {
   const modernInitialize = await wire(daemon.port, request({}, "initialize"));
   assert.equal(modernInitialize.status, 404);
   assert.equal(modernInitialize.body.error.code, -32601);

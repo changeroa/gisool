@@ -1,14 +1,48 @@
+import { randomUUID } from "node:crypto";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { bearerOf, safeEqual } from "../api/security.js";
 import { createDispatcher } from "./dispatch.js";
-import { checkHeaders, checkVersion, errorResponse, messageId, messageSchema, parseParams, RpcError, rpcFailure } from "./protocol.js";
+import { initializeResult, initializeSchema, isLegacyRequest, legacyLocalResult, negotiateVersion, toLegacyResult, toModernMessage, type ClientInfo } from "./legacy.js";
+import { checkHeaders, checkVersion, errorResponse, messageId, messageSchema, parseParams, RpcError, rpcFailure, type Message } from "./protocol.js";
 import type { ToolDeps } from "./tools.js";
 
 export type McpHttpDeps = ToolDeps & { token: string };
 
-/** Modern MCP: every POST is self-contained; no initialize, sessions, GET stream or DELETE. */
+const MAX_LEGACY_SESSIONS = 1024;
+
+/**
+ * Dual-era MCP. Modern POSTs are self-contained. An `initialize` opens a legacy session whose only state is
+ * the client identity used for attribution; unknown session IDs are served anonymously rather than rejected,
+ * so a daemon restart never strands a legacy client. No GET stream or DELETE in either era.
+ */
 export function registerMcp(app: Express, deps: McpHttpDeps): void {
   const dispatch = createDispatcher(deps);
+  const sessions = new Map<string, ClientInfo>();
+  const legacy = async (message: Message & { id: string | number }, req: Request, res: Response) => {
+    try {
+      let result: Record<string, unknown>;
+      if (message.method === "initialize") {
+        const init = initializeSchema.safeParse(message.params);
+        if (!init.success) throw new RpcError(-32602, "Invalid initialize params", init.error.issues);
+        const clientInfo = { name: init.data.clientInfo.name, version: init.data.clientInfo.version };
+        const discover = toModernMessage({ jsonrpc: "2.0", id: message.id, method: "server/discover" }, clientInfo);
+        result = initializeResult(negotiateVersion(init.data.protocolVersion), await dispatch(discover, parseParams(discover)));
+        const sessionId = randomUUID();
+        if (sessions.size >= MAX_LEGACY_SESSIONS) sessions.delete(sessions.keys().next().value!);
+        sessions.set(sessionId, clientInfo);
+        res.set("Mcp-Session-Id", sessionId);
+      } else {
+        const local = legacyLocalResult(message.method);
+        const sessionId = req.header("Mcp-Session-Id");
+        const modern = toModernMessage(message, sessionId ? sessions.get(sessionId) : undefined);
+        result = local ?? toLegacyResult(await dispatch(modern, parseParams(modern)));
+      }
+      if (!res.destroyed) res.json({ jsonrpc: "2.0", id: message.id, result });
+    } catch (error) {
+      // Legacy clients surface JSON-RPC errors only from 200 responses.
+      if (!res.destroyed) res.json(errorResponse(message.id, rpcFailure(error)));
+    }
+  };
   const auth = (req: Request, res: Response, next: NextFunction) => {
     if (!safeEqual(bearerOf(req), deps.token)) {
       res.status(401).json({ error: "unauthorized" });
@@ -26,6 +60,15 @@ export function registerMcp(app: Express, deps: McpHttpDeps): void {
     if (message.id === undefined) {
       // No client notification is acted upon over HTTP in this revision.
       res.status(202).end();
+      return;
+    }
+    const version = req.header("MCP-Protocol-Version");
+    if (isLegacyRequest(message, version)) {
+      if (req.header("accept") && !req.accepts("application/json")) {
+        res.status(406).json(errorResponse(message.id, new RpcError(-32600, "Accept must include application/json")));
+        return;
+      }
+      await legacy({ ...message, id: message.id }, req, res);
       return;
     }
     try {

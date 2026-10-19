@@ -115,7 +115,7 @@ export async function runInit(opts: InitOptions, env: NodeJS.ProcessEnv, io: Io,
 
   const selected: RuntimePack[] = [];
   if (!opts.serviceOnly) {
-    io.out("MCP connections require revision 2026-07-28 and a host resource reader; legacy initialize clients cannot connect.\n");
+    io.out("MCP connections accept revision 2026-07-28 and legacy initialize clients (2024-11-05 to 2025-11-25); skill bodies need a host resource reader.\n");
     const requested = parseRuntimeIds(opts.runtimes ?? []);
     if (requested.unknown.length) {
       io.err(`unknown_runtime: ${requested.unknown.join(", ")} (known: ${PACKS.map((p) => p.id).join(", ")})\n`);

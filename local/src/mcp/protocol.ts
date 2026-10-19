@@ -96,10 +96,9 @@ export function checkHeaders(message: Message, header: (name: string) => string 
   const meta = object.safeParse(raw.success ? raw.data._meta : undefined);
   const version = header("MCP-Protocol-Version");
   const method = header("Mcp-Method");
-  const hint = message.method === "initialize" ? `; gisool supports only MCP ${PROTOCOL_VERSION}, without initialize` : "";
-  if (!version || !method) throw new RpcError(-32020, `Missing required MCP headers${hint}`);
+  if (!version || !method) throw new RpcError(-32020, "Missing required MCP headers");
   if (method !== message.method || (meta.success && typeof meta.data[VERSION_KEY] === "string" && version !== meta.data[VERSION_KEY])) {
-    throw new RpcError(-32020, `MCP header does not match request body${hint}`);
+    throw new RpcError(-32020, "MCP header does not match request body");
   }
   const name = header("Mcp-Name");
   const nameRequired = ["tools/call", "resources/read", "prompts/get"].includes(message.method);

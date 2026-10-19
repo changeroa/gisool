@@ -48,7 +48,7 @@ export function createDispatcher(deps: ToolDeps) {
         result = await readResource(deps, uriParams.parse(params).uri, ctx);
         break;
       default:
-        throw new RpcError(-32601, `Unknown method: ${request.method}; gisool supports only MCP ${PROTOCOL_VERSION}, without initialize`);
+        throw new RpcError(-32601, `Unknown method: ${request.method}`);
     }
     return { resultType: "complete", ...result, _meta: { "io.modelcontextprotocol/serverInfo": serverInfo } };
   };

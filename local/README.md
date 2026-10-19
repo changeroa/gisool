@@ -5,9 +5,9 @@ serves them over MCP through `search_skills` and standard `resources/read`, reco
 each agent session searched, loaded, and read, and shows that history in a local dashboard.
 
 Capture packs cover Claude Code, Codex, Gemini CLI, Cursor, OmO, Gajae Code, and OpenClaw.
-MCP connections require **revision 2026-07-28 only** and a host resource reader. Packs configure endpoints and
-capture hooks; they do not upgrade a client's protocol implementation. Any build using the legacy `initialize`
-handshake (including clients built on `@modelcontextprotocol/sdk` 1.32.1) cannot connect.
+MCP connections accept revision 2026-07-28 and, for older clients, the legacy `initialize` handshake
+(revisions 2024-11-05 through 2025-11-25, e.g. clients built on `@modelcontextprotocol/sdk` 1.x). Reading skill
+bodies needs a host resource reader. Packs configure endpoints and capture hooks only.
 
 ## Skills over MCP
 
@@ -24,8 +24,19 @@ Every request, including `server/discover`, carries `params._meta` with
 with `{name, version}` for runtime attribution. HTTP additionally requires `MCP-Protocol-Version`,
 `Mcp-Method`, and (for tool calls and resource reads) `Mcp-Name`, matching the body.
 Use `Accept: application/json, text/event-stream` and the bearer token.
-There is no initialization handshake or protocol session; GET and DELETE on `/mcp` return 405.
-The stdio proxy forwards this same modern protocol without translating legacy requests.
+Modern requests need no initialization handshake or protocol session; GET and DELETE on `/mcp` return 405.
+The stdio proxy forwards modern requests unchanged.
+
+### Legacy clients (before 2026-07-28)
+
+The server is dual-era. A request without modern `_meta` and without a modern `MCP-Protocol-Version` header
+is served under legacy semantics: `initialize` negotiates the requested revision (or answers `2025-11-25`
+for unknown ones) with the same capabilities and instructions as `server/discover`. Over HTTP it returns an
+`Mcp-Session-Id` whose only state is `clientInfo` for runtime attribution; unknown session IDs (e.g. after a
+daemon restart) are served anonymously instead of rejected. Over stdio the proxy keeps `clientInfo` for the
+process. Legacy results omit `resultType`, `ttlMs`, `cacheScope`, and the `serverInfo` `_meta`; legacy HTTP
+errors are JSON-RPC errors with status 200. `ping` and an empty `resources/templates/list` are answered.
+The deprecated HTTP+SSE transport (GET stream) is not offered, so 2024-11-05 clients connect over stdio.
 
 All cacheable results include `resultType: "complete"`, `ttlMs: 60000`, and `cacheScope: "private"`.
 List methods use opaque `cursor`/`nextCursor` pagination. The search tool uses its own `offset`/`limit`.
