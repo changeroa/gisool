@@ -11,7 +11,7 @@ function parseJson(text, source) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`${source} is not valid JSON`);
+    throw Object.assign(new Error(`${source} is not valid JSON`), { canary: true });
   }
 }
 
@@ -39,7 +39,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     async function request(url, options) {
       const response = await fetcher(url, { ...options, redirect: "error", signal: AbortSignal.timeout(15000) });
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (!response.ok) throw Object.assign(new Error(`HTTP request failed (${response.status})`), { status: response.status });
+      if (!response.ok) throw Object.assign(new Error(`HTTP request failed (${response.status})`), { status: response.status, canary: true });
       return bytes;
     }
     receipt.phase = "inventory";
@@ -155,9 +155,11 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     receipt.state = "complete";
     receipt.phase = "complete";
   } catch (error) {
-    // A generated assertion message quotes the compared response value; phase and operation already locate the check.
-    const message = error instanceof assert.AssertionError && error.generatedMessage
-      ? `Check failed during ${receipt.phase}` : error.message;
+    // During MCP checks any other message can carry response text: node:assert quotes the values it compared, and a native
+    // error can quote a response-supplied constructor name. Keep only messages this script wrote there; phase and operation
+    // locate the failed check. Earlier phases see only configuration and the digest-verified inventory.
+    const own = error.canary === true || (error instanceof assert.AssertionError && !error.generatedMessage);
+    const message = receipt.phase !== "mcp" || own ? error.message : `Check failed during ${receipt.phase}`;
     receipt.error = { message, status: error.status ?? null };
   }
   receipt.finished_at = new Date().toISOString();

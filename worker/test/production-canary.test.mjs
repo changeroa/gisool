@@ -238,6 +238,7 @@ test("pack tool text and compared response values stay out of the receipt", { ti
   for (const [method, change] of [
     ["tools/call", body => { body.result.content = [{ type: "text", text: `${reader} echoed instead of JSON` }]; }],
     ["server/discover", body => { body.jsonrpc = "echoed-marker"; }],
+    ["resources/read", body => { body.result.contents[0].text = { constructor: { name: "echoed-marker" } }; }],
   ]) {
     const f = await fixture(t);
     const fetcher = async (url, options) => {
