@@ -38,6 +38,21 @@ Git is the source of truth. The Worker reads a verified release from R2; the Cod
 
 ## Packages
 
+### Verify the checkout
+
+Use Node.js 24 and npm, then run:
+
+```sh
+node scripts/verify.mjs
+```
+
+The command resolves paths from its own checkout, not the caller's working
+directory. It installs both packages with `npm ci`, builds and tests the server,
+checks the synthetic search benchmark and Codex plugin, typechecks and tests
+the Worker, checks the team plugin, and runs the team, direct and OAuth Worker
+dry runs. CI calls the same command. The first failure stops verification.
+No live endpoint, Cloudflare login, deployment or content publication is required.
+
 ### Server
 
 ```bash

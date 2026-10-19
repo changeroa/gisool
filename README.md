@@ -116,6 +116,10 @@ This started as a personal project. Reading instructions doesn't make an agent a
 
 ## Contributing
 
+With Node.js 24 and npm, run `node scripts/verify.mjs` from the checkout to
+perform the same locked installs, builds, tests, search and plugin checks, and
+Worker dry runs as CI. It does not deploy or publish content.
+
 Broken connection? [Open an issue](https://github.com/changeroa/gisul/issues) with reproduction steps and sanitized errors. Code changes should include verification evidence. Propose workflow content in [gisul-skills](https://github.com/changeroa/gisul-skills). Keep tokens and personal data out of reports.
 
 [MIT License](LICENSE) · *gisul* comes from the Korean word for skill, craft, or technique.

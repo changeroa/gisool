@@ -114,6 +114,10 @@ node server/dist/index.js --http
 
 ## 기여
 
+Node.js 24와 npm을 설치한 뒤 체크아웃에서 `node scripts/verify.mjs`를 실행하면
+CI와 같은 잠금 의존성 설치, 빌드, 테스트, 검색·플러그인 검사, Worker dry-run을
+순서대로 수행한다. 배포하거나 콘텐츠를 발행하지는 않는다.
+
 연결이 깨졌다면 재현 조건과 비밀값을 제거한 오류를 [이슈](https://github.com/changeroa/gisul/issues)에 남겨주세요. 코드 변경에는 재현·검증 근거를, 스킬 제안에는 [내용 저장소](https://github.com/changeroa/gisul-skills/blob/main/README.ko.md)를 사용합니다. 토큰이나 개인 데이터는 올리지 마세요.
 
 [MIT License](LICENSE) · 기술: skill, craft, technique.
