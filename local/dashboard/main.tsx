@@ -10,6 +10,7 @@ import { FlowView } from "./views/flow";
 import { HeatmapView } from "./views/heatmap";
 import { SessionsView } from "./views/sessions";
 import { TraceView } from "./views/trace";
+import { WorkspaceView, WorkspacesView } from "./views/workspaces";
 
 function useRoute(): [Route, (next: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(location.hash));
@@ -108,14 +109,20 @@ function AutomatedToggle({ route, navigate, live }: { route: Route; navigate: (n
 
 const TABS: { view: View; label: string }[] = [
   { view: "sessions", label: "Sessions" },
+  { view: "workspaces", label: "Workspaces" },
   { view: "flow", label: "Flow" },
   { view: "heatmap", label: "Heatmap" },
 ];
 
+/** The tab a detail route belongs to, so opening a trace or a flow keeps its list tab marked current. */
+export const TAB_OF: Record<View, View> = {
+  sessions: "sessions", trace: "sessions", workspaces: "workspaces", workspace: "workspaces", flow: "flow", heatmap: "heatmap",
+};
+
 function App() {
   const [route, navigate] = useRoute();
   const live = useLive();
-  const activeTab: View = route.view === "trace" ? "sessions" : route.view;
+  const activeTab: View = TAB_OF[route.view];
   const props = { route, navigate, live };
   return (
     <>
@@ -142,6 +149,8 @@ function App() {
       <main class="page wrap">
         {route.view === "sessions" && <SessionsView {...props} />}
         {route.view === "trace" && <TraceView {...props} />}
+        {route.view === "workspaces" && <WorkspacesView {...props} />}
+        {route.view === "workspace" && <WorkspaceView {...props} />}
         {route.view === "flow" && <FlowView {...props} />}
         {route.view === "heatmap" && <HeatmapView {...props} />}
       </main>

@@ -59,6 +59,12 @@
                   "value": {
                     "stringValue": "userSettings"
                   }
+                },
+                {
+                  "key": "prompt.id",
+                  "value": {
+                    "stringValue": "p-1"
+                  }
                 }
               ]
             }

@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createCatalog } from "../catalog/index.js";
@@ -15,8 +17,74 @@ export type SkillFamily = { id: string; members: string[] };
 export type DoctorReport = { ok: boolean; version: string; checks: DoctorCheck[]; families: SkillFamily[] };
 
 const HOOK_LIMIT_S = 5;
+const HERDR_TIMEOUT_MS = 2000;
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
+
+function herdrCommand(args: string[]): { ok: boolean; output: string } {
+  const result = spawnSync("herdr", args, { encoding: "utf8", timeout: HERDR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+  return { ok: result.status === 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
+}
+
+function herdrPing(socketPath: string): Promise<{ protocol?: unknown }> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let response = "";
+    let settled = false;
+    const timer = setTimeout(() => fail(new Error("herdr socket timed out")), HERDR_TIMEOUT_MS);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("error", fail);
+    socket.once("end", () => fail(new Error("herdr closed the socket before replying")));
+    socket.once("close", () => fail(new Error("herdr closed the socket before replying")));
+    socket.once("connect", () => socket.write('{"id":"1","method":"ping","params":{}}\n'));
+    socket.on("data", (chunk: Buffer) => {
+      response += chunk.toString("utf8");
+      const newline = response.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const line: unknown = JSON.parse(response.slice(0, newline));
+        if (!isObj(line) || !isObj(line.result) || line.result.type !== "pong") throw new Error("invalid herdr ping response");
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+        resolve({ protocol: line.result.protocol });
+      } catch (error) {
+        fail(error as Error);
+      }
+    });
+  });
+}
+
+async function herdrCheck(env: NodeJS.ProcessEnv): Promise<DoctorCheck> {
+  let socketPath = env.GISOOL_HERDR_SOCKET;
+  let version = "";
+  if (!socketPath) {
+    const versionResult = herdrCommand(["--version"]);
+    if (!versionResult.ok) {
+      return { name: "herdr", status: "fail", code: "herdr_unavailable", detail: `install herdr and start it: herdr (${versionResult.output || "herdr --version failed"})` };
+    }
+    version = versionResult.output;
+    const status = herdrCommand(["status", "server"]);
+    const match = status.ok ? status.output.match(/^\s*socket:\s*(.+?)\s*$/mi) : null;
+    if (!match) {
+      return { name: "herdr", status: "fail", code: "herdr_unavailable", detail: `install herdr and start it: herdr (${status.output || "could not resolve herdr socket"})` };
+    }
+    socketPath = match[1];
+  }
+  try {
+    const pong = await herdrPing(socketPath);
+    const info = [version && `version ${version}`, pong.protocol !== undefined && `protocol ${String(pong.protocol)}`].filter(Boolean).join(", ");
+    return { name: "herdr", status: "ok", detail: `herdr ping succeeded${info ? ` (${info})` : ""}` };
+  } catch (error) {
+    return { name: "herdr", status: "fail", code: "herdr_unavailable", detail: `install herdr and start it: herdr (${(error as Error).message})` };
+  }
+}
 
 function readJson(path: string): Obj | undefined {
   try {
@@ -163,6 +231,7 @@ export async function collectDoctor(env: NodeJS.ProcessEnv): Promise<DoctorRepor
   const gisoolHome = resolveGisoolHome(env);
   const config = loadConfig(env);
   const checks: DoctorCheck[] = [serviceCheck(home, env), await healthCheck(config.port, gisoolHome)];
+  checks.push(await herdrCheck(env));
 
   const remote: string[] = [];
   const packChecks: DoctorCheck[] = [];

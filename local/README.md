@@ -126,6 +126,12 @@ gisool eval
 gisool eval --cases cases.json --json
 ```
 
+## Skill tracing
+
+herdr is required for skill tracing; `gisool doctor` checks its socket connection. gisool joins agent sessions
+to panes and compares observed skill use with registered workflows without restricting agents.
+See [Skill tracing](docs/skill-tracing.md) for capture details, attribution limits, and the orchestrator protocol.
+
 ## Export and import
 
 Move your gisool setup (skill roots, config, eval cases, aliases) to another machine:

@@ -11,6 +11,7 @@ import { registerStatic } from "./api/static.js";
 import { createCatalog } from "./catalog/index.js";
 import { ensureGisoolHome, ensureToken, resolveGisoolHome, resolveHome } from "./config.js";
 import { createFsWatchdog } from "./fs-watchdog.js";
+import { startHerdrSync } from "./herdr/sync.js";
 import { createIngestDeps } from "./ingest/pipeline.js";
 import { registerMcp } from "./mcp/http.js";
 import { packageVersion } from "./mcp/tools.js";
@@ -27,7 +28,7 @@ export type ServerDeps = {
   handleSignals?: boolean;
   dashboardDir?: string;
   log?: (msg: string) => void;
-  /** Filesystem-stall watchdog; defaults probe GISOOL_HOME every 15 s and exit(70) after 30 s so launchd restarts. */
+  /** Filesystem-stall watchdog; defaults probe GISOOL_HOME every 15 s and SIGKILL after 30 s so launchd restarts. */
   fsWatchdog?: { probe?: () => Promise<unknown>; intervalMs?: number; timeoutMs?: number; onStall?: (stalledMs: number) => void };
 };
 export type RunningServer = { port: number; host: "127.0.0.1"; close(): Promise<void> };
@@ -84,6 +85,13 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     cleanup.push(() => ownStore.close());
     if (deps.openStore) cleanup.push(() => db.close());
 
+    const herdr = process.env.GISOOL_HERDR === "off" ? undefined : startHerdrSync(db, { log });
+    if (herdr) cleanup.push(() => herdr.close());
+    let linkQueued = false;
+    const linkSessions = new Set<string>();
+    let herdrClosed = false;
+    cleanup.push(() => { herdrClosed = true; });
+
     const catalog = createCatalog({ roots: config.roots, watch: true, log });
     cleanup.push(() => catalog.close());
     await catalog.refresh();
@@ -116,6 +124,24 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
     const ingestDeps = createIngestDeps(ownStore, {
       captureLevel: config.captureLevel,
       publish: (change) => sse.notify(change.sessionId),
+      sessionChanged: (sessionId) => {
+        // Ingest batches are synchronous; coalesce their notifications into one linking pass.
+        if (!herdr) return;
+        linkSessions.add(sessionId);
+        if (linkQueued) return;
+        linkQueued = true;
+        queueMicrotask(() => {
+          linkQueued = false;
+          if (herdrClosed) return;
+          try {
+            const touched = [...linkSessions];
+            linkSessions.clear();
+            herdr.linkSessions(touched);
+          } catch (error) {
+            log(`herdr linking failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        });
+      },
       log: (message, error) => log(`ingest: ${message}: ${error instanceof Error ? error.message : String(error)}`),
     });
 
@@ -126,7 +152,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
       timeoutMs: wd.timeoutMs ?? 30_000,
       onStall: wd.onStall ?? ((stalledMs) => {
         log(`filesystem requests stalled for ${stalledMs} ms; exiting so the service manager restarts gisool`);
-        process.exit(70);
+        // process.exit() can hang joining libuv workers during native cleanup after an fs stall.
+        process.kill(process.pid, "SIGKILL");
       }),
     });
 

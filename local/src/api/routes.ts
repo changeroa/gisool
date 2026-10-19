@@ -1,8 +1,11 @@
 import type { Express, Request, Response } from "express";
 import type { FsHealth } from "../fs-watchdog.js";
+import { ingestOtlpTraces } from "../ingest/otlp-traces.js";
 import { ingestHook, ingestOtlp, type IngestDeps } from "../ingest/pipeline.js";
 import { isRuntimeId, RUNTIME_IDS } from "../ingest/runtimes.js";
 import type { AdoptionState, Catalog, Filter, RuntimeId, Store } from "../types.js";
+import { registerWorkflowRoutes } from "../workflow/routes.js";
+import { registerFlowRoutes } from "./flows.js";
 import { deny } from "./security.js";
 import type { SseHub } from "./sse.js";
 
@@ -111,6 +114,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
   });
 
+  app.post("/ingest/otlp/v1/traces", (req, res) => {
+    const body: unknown = req.body;
+    res.status(202).json({ partialSuccess: {} });
+    queueMicrotask(() => {
+      try {
+        const result = ingestOtlpTraces(body, store, Date.now());
+        if (result.status !== 200) log(`otlp traces batch rejected: ${result.body.code}: ${result.body.message}`);
+      } catch (error) {
+        // The batch is stored after the 202, so a store failure has nowhere to surface but the log, and an escaping throw would kill the daemon.
+        log(`otlp traces batch failed: ${(error as Error).stack ?? String(error)}`);
+      }
+    });
+  });
+
   app.post("/ingest/hook/:runtime", (req, res) => {
     const runtime = String(req.params.runtime);
     if (!isRuntimeId(runtime)) {
@@ -176,4 +193,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   }));
 
   app.get("/api/events/stream", (req, res) => deps.sse.handler(req, res));
+
+  registerWorkflowRoutes(app, { store, log });
+  registerFlowRoutes(app, { store, log });
 }

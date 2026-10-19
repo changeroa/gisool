@@ -53,7 +53,10 @@ export const runImport: ExportImportApi["runImport"] = async (dir, opts, deps) =
     console.log(list("config keys to add", d.configKeys.added));
     console.log(list("config keys already present (kept)", d.configKeys.kept));
     console.log(list("aliases to add", d.aliases.added));
-    if (d.history) console.log(`  history to add: ${d.history.sessions} sessions, ${d.history.events} events, ${d.history.loads} loads`);
+    if (d.history) {
+      const rows = Object.entries(d.history.tables).filter(([, n]) => n > 0).map(([table, n]) => `${n} ${table}`);
+      console.log(`  history to add: ${rows.length > 0 ? rows.join(", ") : "nothing new"} (already present: ${d.history.skipped})`);
+    }
     if (opts.dryRun) return 0;
     store.importFrom(dir, { merge: true });
     console.log("import applied");

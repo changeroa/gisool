@@ -382,6 +382,54 @@ button, input, select { font: inherit; color: inherit; }
 .badge--exposed_only { --badge-c: var(--warn); }
 .badge--no_match { --badge-c: var(--bad); }
 .badge--aborted, .badge--not_used { --badge-c: var(--neutral); }
+.badge--matched { --badge-c: var(--ok); }
+.badge--partial, .badge--different { --badge-c: var(--warn); }
+.badge--no_skill_used, .badge--not_run { --badge-c: var(--neutral); }
+
+/* Fact tag: one reported fact (basis, attribution, outcome) next to the thing it describes. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A tag whose name can be long (a 64-character spec): the name truncates, the suffix after it never does. */
+.tag__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tag__suffix { flex: none; color: var(--ink-3); }
+
+.tag--dim { color: var(--ink-3); }
+.tag--ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: transparent; }
+.tag--bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: transparent; }
+
+.dim { color: var(--ink-3); font-size: var(--fs-cap); }
+
+/* Fact line: dim facts separated by a middot, each with its own unknown. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-cap);
+  font-variant-numeric: tabular-nums;
+}
+
+.facts__item { display: inline-flex; align-items: baseline; gap: var(--s-1); min-width: 0; overflow-wrap: anywhere; }
+.facts__item + .facts__item::before { content: "\00b7"; color: var(--ink-3); margin-inline-end: var(--s-1); }
+
+.foldbtn { justify-self: start; margin-top: var(--s-1); padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--fs-cap); font-weight: 500; text-align: start; cursor: pointer; }
+.foldbtn:hover { color: var(--accent-2); }
 
 .attr { color: var(--ink-2); font-size: var(--fs-cap); white-space: nowrap; }
 .attr--none { color: var(--ink-3); }
@@ -444,6 +492,9 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 .notice { color: var(--bad); font-size: var(--fs-sm); margin-bottom: var(--s-3); }
+.callout { display: grid; gap: var(--s-1); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); font-size: var(--fs-sm); overflow-wrap: anywhere; min-width: 0; }
+.callout strong { color: var(--ink); font-weight: 600; }
+.callout ul { margin: 0; padding-inline-start: var(--s-5); }
 
 @media (min-width: 640px) and (max-width: 959.98px) {
   .sessions { table-layout: auto; }
@@ -453,6 +504,10 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 @media (max-width: 639.98px) {
+  /* Narrow lines wrap between almost every fact, which would strand the separator at the start of a line. */
+  .facts { column-gap: var(--s-3); }
+  .facts__item + .facts__item::before { content: none; }
+
   .sessions, .sessions tbody, .sessions tr, .sessions td { display: block; }
   .sessions colgroup, .sessions thead { display: none; }
 

@@ -7,7 +7,26 @@ import type { Store } from "../types.js";
 
 export const EXPORT_FILE = "gisool-export.json";
 export const HISTORY_FILE = "history.db";
-const HISTORY_TABLES = ["sessions", "events", "loads"] as const;
+/**
+ * Tables that export --with-history carries, in foreign-key order, each with the columns identifying a row.
+ * A table or column missing on either side (importing a v1 history.db into a v2 store) is simply not copied.
+ */
+const HISTORY_TABLES: Record<string, string[]> = {
+  sessions: ["id"],
+  events: ["id"],
+  loads: ["load_id"],
+  otel_spans: ["trace_id", "span_id"],
+  herdr_workspaces: ["id"],
+  herdr_tabs: ["id"],
+  herdr_panes: ["id"],
+  pane_sessions: ["pane_id", "agent_session_value"],
+  workflow_specs: ["id"],
+  flows: ["id"],
+  flow_steps: ["flow_id", "pane_id"],
+};
+// recording_clock is deliberately local. Row provenance and flow cuts travel
+// through shared columns; insert triggers add destination arrival provenance.
+const HISTORY_VERSIONS = [1, 2, 3, 4, 5, 6];
 
 type ExportedEvalCase = { query: string; expectedUri?: string; fromTraceId?: string };
 export type ExportDoc = { version: 1; config: Record<string, unknown>; roots: { id: string; path: string }[]; evalCases: ExportedEvalCase[];
@@ -18,7 +37,7 @@ export type ImportDetails = {
   roots: { added: string[]; skipped: string[] };
   configKeys: { added: string[]; kept: string[] };
   aliases: { added: string[]; skipped: string[] };
-  history: { sessions: number; events: number; loads: number; skipped: number } | null;
+  history: { tables: Record<string, number>; skipped: number } | null;
 };
 export type ImportResult = { added: number; skipped: number; details: ImportDetails };
 
@@ -46,25 +65,79 @@ export function createPortable(ctx: StoreCtx): Portable {
     return new Set(rows.map((r) => JSON.stringify([r.query, r.expected_uri])));
   }
 
-  function historyPlan(): { counts: Record<(typeof HISTORY_TABLES)[number], number>; skipped: number } {
-    const counts = { sessions: 0, events: 0, loads: 0 };
+  function columnsOf(schema: "main" | "hist", table: string): string[] {
+    return (db.prepare(`PRAGMA ${schema}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+  }
+
+  function historyShape(): { table: string; key: string[]; columns: string[] }[] {
+    const shape: { table: string; key: string[]; columns: string[] }[] = [];
+    for (const [table, key] of Object.entries(HISTORY_TABLES)) {
+      const mine = new Set(columnsOf("main", table));
+      const columns = columnsOf("hist", table).filter((c) => mine.has(c));
+      if (key.every((k) => columns.includes(k))) shape.push({ table, key, columns });
+    }
+    return shape;
+  }
+
+  const keyIn = (table: string, key: string[]) =>
+    `${key.length === 1 ? key[0]! : `(${key.join(", ")})`} IN (SELECT ${key.join(", ")} FROM main.${table})`;
+
+  /**
+   * A history row the destination already holds: the same primary key, the same agent record stored under another event
+   * id (source_key), or the same workflow spec version registered there independently.
+   */
+  function present(table: string, key: string[], columns: string[]): string {
+    if (table === "events" && columns.includes("source_key")) {
+      return `(${keyIn(table, key)} OR (source_key IS NOT NULL AND source_key IN (SELECT source_key FROM main.events WHERE source_key IS NOT NULL)))`;
+    }
+    if (table === "workflow_specs") return `(${keyIn(table, key)} OR (name, version) IN (SELECT name, version FROM main.workflow_specs))`;
+    return keyIn(table, key);
+  }
+
+  /** Two different bodies under one spec name and version cannot both be kept, and picking one would rewrite flows. */
+  function refuseSpecConflicts(shape: { table: string }[]): void {
+    if (!shape.some((s) => s.table === "workflow_specs")) return;
+    const clash = db.prepare(`SELECT h.name, h.version FROM hist.workflow_specs h JOIN main.workflow_specs m
+      ON m.name = h.name AND m.version = h.version WHERE m.digest <> h.digest ORDER BY h.name, h.version LIMIT 1`).get() as
+      { name: string; version: number } | undefined;
+    if (clash) {
+      throw storeError("history_spec_conflict", `workflow spec ${clash.name} v${clash.version} differs between this store and the history`);
+    }
+  }
+
+  function historyPlan(): { tables: Record<string, number>; skipped: number } {
+    const tables: Record<string, number> = {};
     let skipped = 0;
-    for (const t of HISTORY_TABLES) {
-      const key = t === "loads" ? "load_id" : "id";
-      const row = db.prepare(`SELECT SUM(CASE WHEN ${key} IN (SELECT ${key} FROM main.${t}) THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${t}`).get() as
+    const shape = historyShape();
+    refuseSpecConflicts(shape);
+    for (const { table, key, columns } of shape) {
+      const row = db.prepare(`SELECT SUM(CASE WHEN ${present(table, key, columns)} THEN 0 ELSE 1 END) AS fresh, COUNT(*) AS total FROM hist.${table}`).get() as
         { fresh: number | null; total: number };
-      counts[t] = row.fresh ?? 0;
+      tables[table] = row.fresh ?? 0;
       skipped += row.total - (row.fresh ?? 0);
     }
-    return { counts, skipped };
+    return { tables, skipped };
   }
 
   function copyHistory(): void {
-    for (const t of HISTORY_TABLES) {
-      const key = t === "loads" ? "load_id" : "id";
-      const cols = (db.prepare(`PRAGMA main.table_info(${t})`).all() as { name: string }[]).map((c) => c.name).join(", ");
-      db.prepare(`INSERT INTO main.${t} (${cols}) SELECT ${cols} FROM hist.${t} WHERE ${key} NOT IN (SELECT ${key} FROM main.${t})`).run();
+    for (const { table, key, columns } of historyShape()) {
+      const cols = columns.join(", ");
+      // A flow follows its spec to the id the destination keeps for that name and version.
+      const values = columns.map((c) => table === "flows" && c === "spec_id"
+        ? `COALESCE((SELECT m.id FROM main.workflow_specs m JOIN hist.workflow_specs h ON h.name = m.name AND h.version = m.version
+            WHERE h.id = src.spec_id), src.spec_id)`
+        : `src.${c}`).join(", ");
+      db.prepare(`INSERT INTO main.${table} (${cols}) SELECT ${values} FROM hist.${table} AS src WHERE NOT ${present(table, key, columns)}`).run();
+      // Legacy loads have no snapshot: insert triggers may run before later-received activity rows.
+      // Complete their candidate index once the whole events table is available, not on report reads.
+      if (table === "events") db.exec(`INSERT OR IGNORE INTO load_candidates
+        SELECT * FROM load_candidate_rows WHERE load_id IN (SELECT id FROM hist.events)`);
     }
+    // Restoring newer history into an older backup of the SAME lineage must also
+    // advance past deleted observations. Never adopt another database's domain.
+    if (columnsOf("hist", "recording_clock").includes("position")) db.exec(`UPDATE recording_clock
+      SET position = MAX(position, COALESCE((SELECT h.position FROM hist.recording_clock h
+        WHERE h.domain = recording_clock.domain AND h.singleton = 1), 0)) WHERE singleton = 1`);
   }
 
   return {
@@ -146,9 +219,8 @@ export function createPortable(ctx: StoreCtx): Portable {
         db.prepare("ATTACH DATABASE ? AS hist").run(resolve(historyPath));
         try {
           const version = (db.prepare("PRAGMA hist.user_version").get() as { user_version: number }).user_version;
-          if (version !== 1) throw storeError("unsupported_history_version", `history.db user_version ${version}`);
-          const plan = historyPlan();
-          history = { ...plan.counts, skipped: plan.skipped };
+          if (!HISTORY_VERSIONS.includes(version)) throw storeError("unsupported_history_version", `history.db user_version ${version}`);
+          history = historyPlan();
           if (apply) {
             db.exec("BEGIN IMMEDIATE");
             try {
@@ -190,7 +262,7 @@ export function createPortable(ctx: StoreCtx): Portable {
         }
       }
 
-      const historyAdded = history ? history.sessions + history.events + history.loads : 0;
+      const historyAdded = history ? Object.values(history.tables).reduce((sum, n) => sum + n, 0) : 0;
       return {
         added: evalToAdd.length + rootsAdded.length + configAdded.length + aliasAdded.length + historyAdded,
         skipped: evalSkipped + rootsSkipped.length + configKept.length + aliasSkipped.length + (history?.skipped ?? 0),

@@ -5,11 +5,18 @@ import { GisoolStartupError } from "../version.js";
 
 export type Db = DatabaseSync;
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 6;
 
 /** migrations[i] upgrades user_version i -> i + 1. */
 function migrations(): string[] {
-  return [readFileSync(new URL("./schema.sql", import.meta.url), "utf8")];
+  return [
+    readFileSync(new URL("./schema.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/002_tracing.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/003_tracing_indexes.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/004_load_reconciliation.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/005_execution_boundaries.sql", import.meta.url), "utf8"),
+    readFileSync(new URL("./migrations/006_recording_order.sql", import.meta.url), "utf8"),
+  ];
 }
 
 function userVersion(db: DatabaseSync): number {
@@ -48,6 +55,10 @@ export function mergeSplitSessions(db: DatabaseSync): number {
   db.exec("BEGIN IMMEDIATE");
   try {
     const moveEvents = db.prepare("UPDATE events SET session_id = ? WHERE session_id = ?");
+    // A pane link holds a foreign key to the duplicate, and a load candidate on both rows is one candidate.
+    const movePanes = db.prepare("UPDATE pane_sessions SET session_id = ? WHERE session_id = ?");
+    const moveCandidates = db.prepare("UPDATE OR IGNORE load_candidates SET session_id = ? WHERE session_id = ?");
+    const dropCandidates = db.prepare("DELETE FROM load_candidates WHERE session_id = ?");
     const absorb = db.prepare(`UPDATE sessions SET
         runtime_session_id = COALESCE(runtime_session_id, (SELECT runtime_session_id FROM sessions WHERE id = ?)),
         conversation_id = COALESCE(conversation_id, (SELECT conversation_id FROM sessions WHERE id = ?)),
@@ -60,6 +71,9 @@ export function mergeSplitSessions(db: DatabaseSync): number {
     for (const { dup } of merges) {
       const keep = root(dup);
       moveEvents.run(keep, dup);
+      movePanes.run(keep, dup);
+      moveCandidates.run(keep, dup);
+      dropCandidates.run(dup);
       absorb.run(dup, dup, dup, dup, dup, dup, keep);
       drop.run(dup);
     }

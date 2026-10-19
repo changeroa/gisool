@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
-import type { Attribution, CanonicalEvent, GisoolConfig, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
+import { toolCallReferencesUri, URI_WINDOW_MS } from "../ingest/attribution.js";
+import type { Attribution, CanonicalEvent, GisoolConfig, OtelSpanRow, RuntimeId, SessionRef, SkillEntry, SkillUri, Store } from "../types.js";
 
 /**
  * Optional wiring for createStore. `createStore(db)` alone serves ingest and queries;
@@ -76,17 +77,52 @@ export function writeAliasesOverrides(db: Db, value: Record<string, string[]>): 
   setMeta(db, "aliases_overrides", JSON.stringify(value));
 }
 
-type Writes = Pick<Store, "append" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
-  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention">;
+type Writes = Pick<Store, "append" | "hasSourceKey" | "openSessions" | "reattribute" | "findEventByToolUseId" | "upsertSession" | "putLoad" | "getLoad"
+  | "latestLoad" | "traceSession" | "upsertSkills" | "markRemoved" | "countIngest" | "addEvalCase" | "evalCases" | "retention" | "putSpans" | "reconcileLoads">;
 
 export function createWrites(ctx: StoreCtx): Writes {
   const { db } = ctx;
 
   const insertEvent = db.prepare(`INSERT OR IGNORE INTO events
-    (id, ts, kind, source, session_id, attribution_method, attribution_reason, runtime, trace_id, load_id, skill_uri, tool_use_id, text, text_digest, text_length, data_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (id, ts, kind, source, session_id, attribution_method, attribution_reason, runtime, trace_id, load_id, skill_uri, tool_use_id, text, text_digest, text_length, data_json,
+     source_key, turn_key, call_id, span_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const selectSourceKey = db.prepare("SELECT 1 AS hit FROM events WHERE source_key = ?");
+  const insertSpan = db.prepare(`INSERT OR IGNORE INTO otel_spans
+    (trace_id, span_id, parent_span_id, name, runtime, conversation_id, turn_key, call_id, start_ms, end_ms, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  // One statement per counter: a Codex trace batch drops thousands of spans, which countIngest would commit one by one.
+  // The bound amount is cast to INTEGER so the counter stays the plain integer string countIngest writes, not "793.0".
+  const addIngestCount = db.prepare(`INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(? AS INTEGER) AS TEXT)`);
   const setFirstPrompt = db.prepare("UPDATE sessions SET first_prompt = ? WHERE id = ? AND first_prompt IS NULL");
   const setEnded = db.prepare("UPDATE sessions SET ended_at = MAX(COALESCE(ended_at, 0), ?) WHERE id = ?");
+  type LoadRow = {
+    id: string; ts: number; runtime: RuntimeId; skill_uri: string | null; data_json: string;
+    session_id: string; attribution_method: string; attribution_reason: string | null;
+  };
+  type ToolRow = { session_id: string; text: string | null; gisoolMcp: number | null };
+  const pending = `e.source = 'mcp' AND e.kind = 'load' AND e.session_id = 'unattributed' AND e.attribution_reason = 'ambiguous'`;
+  const recoverable = `e.source = 'mcp' AND e.kind = 'load' AND ((${pending})
+    OR (e.attribution_method = 'trace_handle' AND json_extract(e.data_json, '$.attributionBasis') = 'tool_call_uri'))`;
+  const pendingInRange = db.prepare(`SELECT e.* FROM events e INDEXED BY events_pending_load_ts WHERE ${pending} AND e.ts >= ? AND e.ts < ?`);
+  const pendingInSessions = db.prepare(`SELECT DISTINCT e.* FROM json_each(?) s
+    CROSS JOIN load_candidates c ON c.session_id = s.value AND c.ts >= ? AND c.ts < ?
+    CROSS JOIN events e ON e.id = c.load_id WHERE ${pending}`);
+  const eventById = db.prepare(`SELECT *, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp,
+    json_extract(data_json, '$.success') AS success FROM events WHERE id = ?`);
+  const loadById = db.prepare(`SELECT e.* FROM events e WHERE e.id = ? AND ${recoverable}`);
+  const loadsForTool = db.prepare(`SELECT e.* FROM events e INDEXED BY events_reconcile_load_uri
+    WHERE ${recoverable} AND e.runtime = ? AND e.skill_uri = ? AND e.ts BETWEEN ? AND ?
+      AND EXISTS (SELECT 1 FROM load_candidates c WHERE c.load_id = e.id AND c.session_id = ?)`);
+  const toolUris = db.prepare(`SELECT DISTINCT value FROM json_tree(CASE WHEN json_valid(?) THEN ? ELSE '{}' END)
+    WHERE type = 'text' AND value LIKE 'skill://%'`);
+  const loadCandidates = db.prepare("SELECT session_id FROM load_candidates WHERE load_id = ? ORDER BY session_id");
+  const toolsForCandidate = db.prepare(`SELECT session_id, text, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp
+    FROM events INDEXED BY events_uri_tools WHERE source = 'otel' AND kind = 'tool_call'
+      AND runtime = ? AND session_id = ? AND ts BETWEEN ? AND ? AND session_id != 'unattributed'
+      AND json_extract(data_json, '$.success') IS NOT 0`);
+  const updateLoad = db.prepare(`UPDATE events SET session_id = ?, attribution_method = ?, attribution_reason = ?, data_json = ?
+    WHERE id = ? AND (session_id IS NOT ? OR attribution_method IS NOT ? OR attribution_reason IS NOT ? OR data_json IS NOT ?)`);
 
   function sessionSideEffects(sessionId: string, kind: string, ts: number, text: string | null): void {
     if (sessionId === "unattributed") return;
@@ -95,12 +131,88 @@ export function createWrites(ctx: StoreCtx): Writes {
   }
 
   return {
-    append(event: CanonicalEvent, attribution: Attribution): void {
+    reconcileLoads(opts = {}) {
+      const from = opts.from ?? Number.MIN_SAFE_INTEGER;
+      const to = opts.to ?? Number.MAX_SAFE_INTEGER;
+      let loads: LoadRow[];
+      if (opts.eventId !== undefined) {
+        const event = eventById.get(opts.eventId) as
+          (LoadRow & { source: string; kind: string; text: string | null; gisoolMcp: number | null; success: number | null }) | undefined;
+        if (!event) return { count: 0, uris: [] };
+        if (event.kind === "load") {
+          const load = loadById.get(event.id) as LoadRow | undefined;
+          loads = load ? [load] : [];
+        } else {
+          if (event.source !== "otel" || event.kind !== "tool_call" || event.session_id === "unattributed" || event.success === 0) {
+            return { count: 0, uris: [] };
+          }
+          // Extract only from captured text. Metadata capture cannot create evidence from discarded arguments.
+          const uris = toolUris.all(event.text, event.text) as { value: string }[];
+          loads = uris.filter(({ value }) => toolCallReferencesUri(event.text, value, event.gisoolMcp === 1))
+            .flatMap(({ value }) => loadsForTool.all(event.runtime, value, event.ts - URI_WINDOW_MS,
+              event.ts + URI_WINDOW_MS, event.session_id) as LoadRow[]);
+        }
+      } else {
+        loads = (opts.sessionIds === undefined ? pendingInRange.all(from, to)
+          : pendingInSessions.all(JSON.stringify(opts.sessionIds), from, to)) as LoadRow[];
+      }
+      let count = 0;
+      const uris = new Set<string>();
+      if (!opts.readOnly && loads.length > 0) db.exec("SAVEPOINT reconcile_loads");
+      try {
+        for (const load of loads) {
+          const uri = load.skill_uri;
+          if (uri === null) continue;
+          let sessionId: string | undefined = load.session_id === "unattributed" ? undefined : load.session_id;
+          if (!opts.readOnly) {
+            const data = parseJson<Record<string, unknown>>(load.data_json, {});
+            const candidates = (loadCandidates.all(load.id) as { session_id: string }[]).map((row) => row.session_id);
+            if (!Array.isArray(data.attributionCandidates)) data.attributionCandidates = candidates;
+            // Minimal durable proof: candidate session ids that actually matched this load's URI/window.
+            // Expired text cannot erase that proof; later evidence for another candidate still retracts uniqueness.
+            const matches = new Set(Array.isArray(data.attributionMatches)
+              ? data.attributionMatches.filter((id): id is string => typeof id === "string" && candidates.includes(id))
+              : data.attributionBasis === "tool_call_uri" && sessionId !== undefined ? [sessionId] : []);
+            for (const candidate of candidates) {
+              const tools = toolsForCandidate.all(load.runtime, candidate, load.ts - URI_WINDOW_MS, load.ts + URI_WINDOW_MS) as ToolRow[];
+              if (tools.some((tool) => toolCallReferencesUri(tool.text, uri, tool.gisoolMcp === 1))) matches.add(candidate);
+            }
+            if (matches.size > 0) data.attributionMatches = [...matches].sort();
+            sessionId = matches.size === 1 ? matches.values().next().value : undefined;
+            if (sessionId !== undefined) data.attributionBasis = "tool_call_uri";
+            else delete data.attributionBasis;
+            const nextId = sessionId ?? "unattributed";
+            const method = sessionId === undefined ? "none" : "trace_handle";
+            const reason = sessionId === undefined ? "ambiguous" : null;
+            const json = JSON.stringify(data);
+            updateLoad.run(nextId, method, reason, json, load.id, nextId, method, reason, json);
+          }
+          if (sessionId !== undefined) continue;
+          count += 1;
+          uris.add(uri);
+        }
+        if (!opts.readOnly && loads.length > 0) db.exec("RELEASE reconcile_loads");
+      } catch (error) {
+        if (!opts.readOnly && loads.length > 0) db.exec("ROLLBACK TO reconcile_loads; RELEASE reconcile_loads");
+        throw error;
+      }
+      return { count, uris: [...uris].sort() };
+    },
+
+    append(event: CanonicalEvent, attribution: Attribution): boolean {
       const text = event.text ?? null;
-      insertEvent.run(event.id, event.ts, event.kind, event.source, attribution.sessionId, attribution.method, attribution.reason ?? null,
+      const result = insertEvent.run(event.id, event.ts, event.kind, event.source, attribution.sessionId, attribution.method, attribution.reason ?? null,
         event.ref.runtime, event.traceId ?? null, event.loadId ?? null, event.skillUri ?? null, event.toolUseId ?? null, text,
-        event.textDigest ?? null, event.textLength ?? null, JSON.stringify(event.data ?? {}));
-      sessionSideEffects(attribution.sessionId, event.kind, event.ts, text);
+        event.textDigest ?? null, event.textLength ?? null, JSON.stringify(event.data ?? {}),
+        event.sourceKey ?? null, event.turnKey ?? null, event.callId ?? null, event.spanId ?? null);
+      const inserted = Number(result.changes) > 0;
+      // A record the agent re-sent must not reopen its session or replace the first prompt it already set.
+      if (inserted) sessionSideEffects(attribution.sessionId, event.kind, event.ts, text);
+      return inserted;
+    },
+
+    hasSourceKey(sourceKey: string): boolean {
+      return selectSourceKey.get(sourceKey) !== undefined;
     },
 
     openSessions(runtime: RuntimeId, since: number) {
@@ -205,6 +317,27 @@ export function createWrites(ctx: StoreCtx): Writes {
     evalCases() {
       const rows = db.prepare("SELECT query, expected_uri FROM eval_cases ORDER BY created_at, rowid").all() as { query: string; expected_uri: string | null }[];
       return rows.map((r) => (r.expected_uri === null ? { query: r.query } : { query: r.query, expectedUri: r.expected_uri }));
+    },
+
+    putSpans(spans: OtelSpanRow[], dropped = 0): number {
+      if (spans.length === 0 && dropped === 0) return 0;
+      let inserted = 0;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const s of spans) {
+          const result = insertSpan.run(s.traceId, s.spanId, s.parentSpanId ?? null, s.name, s.runtime, s.conversationId ?? null,
+            s.turnKey ?? null, s.callId ?? null, s.startMs ?? null, s.endMs ?? null, s.receivedAt);
+          inserted += Number(result.changes);
+        }
+        if (inserted > 0) addIngestCount.run("ingest.accepted", String(inserted), inserted);
+        // No error code: a span the join filter rejected is the normal case for a trace batch, not a failure to report.
+        if (dropped > 0) addIngestCount.run("ingest.dropped", String(dropped), dropped);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      return inserted;
     },
 
     retention(days: number): number {

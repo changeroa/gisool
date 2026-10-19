@@ -103,14 +103,14 @@ test("export with history uses VACUUM INTO and import ATTACHes history.db, inser
     assert.equal(count(c.db, "sessions"), count(a.db, "sessions"));
     assert.equal(count(c.db, "events"), count(a.db, "events"));
     assert.equal(count(c.db, "loads"), count(a.db, "loads"));
-    assert.equal(res.details.history.sessions, 40);
+    assert.equal(res.details.history.tables.sessions, 40);
     assert.equal(c.store.sessions({}).length, 40);
     assert.equal(c.db.prepare("SELECT COUNT(*) AS n FROM pragma_database_list WHERE name = 'hist'").get().n, 0, "history detached");
     const cfg = JSON.parse(readFileSync(join(c.gisoolHome, "config.json"), "utf8"));
     assert.ok(cfg.roots.some((r) => r.id === "work"), "fresh home starts from default roots plus imported ones");
     assert.ok(cfg.roots.some((r) => r.id === "claude"));
     const again = c.store.importFrom(out, { merge: true });
-    assert.deepEqual([again.details.history.sessions, again.details.history.events, again.details.history.loads], [0, 0, 0]);
+    assert.deepEqual([again.details.history.tables.sessions, again.details.history.tables.events, again.details.history.tables.loads], [0, 0, 0]);
     assert.ok(again.skipped >= count(a.db, "events"));
     assert.equal(count(c.db, "events"), count(a.db, "events"));
     a.store.exportTo(out, { withHistory: false });
@@ -132,6 +132,58 @@ test("import rejects version 2 with unsupported_export_version and changes nothi
     assert.equal(count(t.db, "eval_cases"), 0);
     assert.equal(readFileSync(join(t.gisoolHome, "config.json"), "utf8"), before);
     assert.throws(() => t.store.importFrom(join(base, "missing"), { merge: true }), (e) => e.code === "no_export_found");
+  } finally {
+    removeDir(base);
+  }
+});
+
+test("history merge treats a record both stores ingested under different ids as already present", () => {
+  const base = makeTempDir();
+  try {
+    // Given the same OTLP record stored by two installations, each under its own event id.
+    const a = targetStore(base, "a-home");
+    const b = targetStore(base, "b-home");
+    const ref = { runtime: "codex", conversationId: "conversation" };
+    for (const [side, id] of [[a, "a-event"], [b, "b-event"]]) {
+      const sessionId = side.store.upsertSession(ref, 900);
+      assert.equal(side.store.append({ id, ts: 1000, kind: "llm_call", source: "otel", ref, data: {}, sourceKey: "otlp:record" },
+        { sessionId, method: "runtime_id" }), true);
+    }
+    const out = join(base, "out");
+    a.store.exportTo(out, { withHistory: true });
+    // When b previews and then merges a's history.
+    const preview = b.store.importFrom(out, { merge: false });
+    const merged = b.store.importFrom(out, { merge: true });
+    // Then neither counts the replay as new, and b keeps exactly its own copy.
+    assert.deepEqual([preview.details.history.tables.events, merged.details.history.tables.events], [0, 0]);
+    assert.deepEqual(b.db.prepare("SELECT id FROM events WHERE source_key = 'otlp:record'").all().map((r) => r.id), ["b-event"]);
+  } finally {
+    removeDir(base);
+  }
+});
+
+test("history merge reuses an identical workflow spec version and refuses a different one", () => {
+  const base = makeTempDir();
+  try {
+    // Given a flow recorded against a spec that other installations registered independently, once identically and once not.
+    const spec = { name: "ship", steps: [{ id: "build", skills: ["programming"], together: false, expectTools: [] }] };
+    const a = targetStore(base, "a-home");
+    const { flow } = a.store.createFlow({ workspaceId: "w", specId: a.store.putWorkflowSpec(spec).row.id });
+    const out = join(base, "out");
+    a.store.exportTo(out, { withHistory: true });
+    const same = targetStore(base, "same-home");
+    const local = same.store.putWorkflowSpec(spec).row;
+    const other = targetStore(base, "other-home");
+    other.store.putWorkflowSpec({ ...spec, steps: [{ id: "review", skills: ["review-work"], together: false, expectTools: [] }] });
+    // When each merges that history.
+    same.store.importFrom(out, { merge: true });
+    // Then the identical version keeps its local id and the imported flow points at it ...
+    assert.deepEqual(same.db.prepare("SELECT id FROM workflow_specs").all().map((r) => r.id), [local.id]);
+    assert.equal(same.db.prepare("SELECT spec_id FROM flows WHERE id = ?").get(flow.id).spec_id, local.id);
+    // ... while a different body under the same name and version stops the import before any change.
+    assert.throws(() => other.store.importFrom(out, { merge: false }), (e) => e.code === "history_spec_conflict");
+    assert.throws(() => other.store.importFrom(out, { merge: true }), (e) => e.code === "history_spec_conflict");
+    assert.deepEqual([count(other.db, "flows"), count(other.db, "sessions"), count(other.db, "workflow_specs")], [0, 0, 1]);
   } finally {
     removeDir(base);
   }

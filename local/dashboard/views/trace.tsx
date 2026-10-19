@@ -1,8 +1,13 @@
 import { useEffect, useState } from "preact/hooks";
-import type { AbstainReason, EventKind, RuntimeId, SearchMode, SkillUri, TraceStep } from "../../src/types.js";
+import type { AbstainReason, EventKind, FindingLabel, RuntimeId, SearchMode, SessionSkillReportDto, SkillSpan, SkillUri,
+  TraceStep } from "../../src/types.js";
 import { api, type SessionListRow } from "../api";
+import { CallList, callRows, isCall } from "../components/calls";
 import { Candidates, type CandidateLike } from "../components/candidates";
-import { ATTRIBUTION_LABEL, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE, buildHash, skillName, type ViewProps } from "../state";
+import { Facts, type Fact } from "../components/facts";
+import { UnresolvedLoadNotice } from "../components/skill-evidence";
+import { ATTRIBUTION_LABEL, RUNTIME_LABEL, RUNTIME_MARK, STATE_LABEL, STATE_TITLE,
+  buildHash, skillName, type ViewProps } from "../state";
 
 // Session trace view (todo 15): header + narrative timeline + candidates panel + "Save as eval case".
 // The SSE stream only carries `session` rows (contract), so a live update for the open session
@@ -18,10 +23,15 @@ type PromptDetail = { kind: "prompt"; text?: string; textLength?: number };
 type LoadDetail = { kind: "load"; uri: SkillUri; loadId: string; manifestDigest: string };
 type ReadDetail = { kind: "read_file"; skillUri: SkillUri; uri: SkillUri; bytes: number };
 type NativeDetail = { kind: "native_skill"; name: string; via: string };
+type LlmDetail = { kind: "llm_call"; model?: string; costUsd?: number; durationMs?: number; ttftMs?: number };
+type ToolDetail = { kind: "tool_call"; toolName?: string; success?: boolean; durationMs?: number; gisoolMcp?: boolean; args?: string; argsLength?: number; resultBytes?: number };
 type ErrorDetail = { kind: "error"; code: string; message: string };
 
 export const PROMPT_FOLD_CHARS = 600;
 export const SHORT_DIGEST_CHARS = 8;
+export const TOOL_ARGS_PREVIEW_CHARS = 160;
+export type ToolArgs = { captured: true; text: string; truncated: boolean } | { captured: false; length: number };
+const COST_UNKNOWN = "cost unknown";
 
 export const KIND_LABEL: Record<EventKind, string> = {
   session_start: "Session started",
@@ -30,6 +40,8 @@ export const KIND_LABEL: Record<EventKind, string> = {
   load: "Loaded skill",
   read_file: "Read resource",
   native_skill: "Native skill",
+  llm_call: "Model call",
+  tool_call: "Tool run",
   session_end: "Session ended",
   error: "Error",
 };
@@ -38,6 +50,61 @@ export const ABSTAIN_LABEL: Record<AbstainReason, string> = {
   empty_query: "empty query", no_overlap: "no overlap", below_threshold: "below threshold", explicit_only: "explicit only",
 };
 export const NEVER_CONSULTED = "This session never consulted gisool";
+export const SPAN_KIND_LABEL = "Skill active";
+
+/** One timeline row: a recorded step, or a skill span holding the model and tool calls made while it was active. */
+export type TimelineItem =
+  | { kind: "step"; step: TraceStep }
+  | { kind: "span"; span: SkillSpan; turnId: string; finding?: FindingLabel };
+
+/**
+ * Folds the session's skill spans into the flat step list: each span is placed right after the step that activated
+ * it, and the tool and model steps it owns move inside it, matched one for one by timestamp and kind. Without a
+ * skill report (an older daemon, or a session the report cannot be read for) the timeline stays exactly as recorded.
+ */
+export function planTimeline(steps: readonly TraceStep[], report?: Pick<SessionSkillReportDto, "tree" | "finding">): TimelineItem[] {
+  if (!report) return steps.map((step) => ({ kind: "step", step }));
+  const labels = new Map(report.finding.turns.map((turn) => [turn.turnId, turn.label]));
+  const spans = report.tree.turns
+    .flatMap((turn) => turn.skillSpans.map((span) => ({ span, turnId: turn.id, finding: labels.get(turn.id) })))
+    .sort((a, b) => a.span.startedAt - b.span.startedAt);
+  const owned = new Map<string, number>();
+  for (const { span } of spans) {
+    for (const event of span.events) {
+      if (!isCall(event)) continue;
+      const key = `${event.ts}:${event.kind}`;
+      owned.set(key, (owned.get(key) ?? 0) + 1);
+    }
+  }
+  const items: TimelineItem[] = [];
+  let pending = 0;
+  const placeUpTo = (ts: number) => {
+    while (pending < spans.length) {
+      const entry = spans[pending];
+      if (entry.span.startedAt > ts) return;
+      pending += 1;
+      items.push({ kind: "span", span: entry.span, turnId: entry.turnId, ...(entry.finding ? { finding: entry.finding } : {}) });
+    }
+  };
+  for (const step of steps) {
+    const key = `${step.ts}:${step.kind}`;
+    const remaining = owned.get(key) ?? 0;
+    if (remaining > 0) {
+      owned.set(key, remaining - 1);
+      continue;
+    }
+    items.push({ kind: "step", step });
+    placeUpTo(step.ts);
+  }
+  placeUpTo(Number.POSITIVE_INFINITY);
+  return items;
+}
+
+export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, calls: number, finding?: FindingLabel): Fact[] {
+  const facts: Fact[] = [{ key: "active", value: span.endedAt - span.startedAt }, { key: "calls", value: calls }];
+  if (finding) facts.push({ key: "finding", value: finding });
+  return facts;
+}
 
 export type TraceCounts = { steps: number; searches: number; abstained: number; loads: number; reads: number; natives: number; errors: number };
 
@@ -161,7 +228,7 @@ function Runtime({ runtime }: { runtime: RuntimeId }) {
   );
 }
 
-function Header({ sessionId, row, steps, backHref, liveState }: { sessionId: string; row?: SessionListRow; steps: TraceStep[]; backHref: string; liveState: ViewProps["live"]["state"] }) {
+function Header({ sessionId, row, steps, backHref, liveState, unresolvedLoads }: { sessionId: string; row?: SessionListRow; steps: TraceStep[]; backHref: string; liveState: ViewProps["live"]["state"]; unresolvedLoads: boolean }) {
   const bounds = sessionBounds(steps, row);
   const counts = traceCounts(steps);
   const title = firstPromptOf(steps, row);
@@ -211,7 +278,8 @@ function Header({ sessionId, row, steps, backHref, liveState }: { sessionId: str
         {row && (
           <div>
             <dt>State</dt>
-            <dd><span class={`badge badge--${row.state}`} title={STATE_TITLE[row.state] ?? row.state}>{STATE_LABEL[row.state] ?? row.state}</span></dd>
+            <dd>{unresolvedLoads ? <span class="tag" data-adoption-status="uncertain">attribution unresolved</span>
+              : <span class={`badge badge--${row.state}`} title={STATE_TITLE[row.state] ?? row.state}>{STATE_LABEL[row.state] ?? row.state}</span>}</dd>
           </div>
         )}
         <div>
@@ -332,6 +400,43 @@ function NativeBody({ detail }: { detail: NativeDetail }) {
   );
 }
 
+/** A runtime that reports no cost (Codex) says "unknown", never $0.00. */
+export function formatCost(costUsd: number | undefined): string {
+  return typeof costUsd === "number" && Number.isFinite(costUsd) ? `$${costUsd.toFixed(4)}` : COST_UNKNOWN;
+}
+
+/** The captured arguments, or how much text the capture level dropped; undefined when the runtime sent none. */
+export function toolArgsPreview(detail: ToolDetail): ToolArgs | undefined {
+  if (typeof detail.args === "string") {
+    const chars = Array.from(detail.args);
+    const truncated = chars.length > TOOL_ARGS_PREVIEW_CHARS;
+    return { captured: true, text: truncated ? `${chars.slice(0, TOOL_ARGS_PREVIEW_CHARS).join("")}…` : detail.args, truncated };
+  }
+  return typeof detail.argsLength === "number" ? { captured: false, length: detail.argsLength } : undefined;
+}
+
+function LlmBody({ step, detail }: { step: TraceStep; detail: LlmDetail }) {
+  return (
+    <p class="tl__line">
+      <span class="tl__name">{step.summary}</span>
+      <span class="tl__meta">{formatCost(detail.costUsd)}</span>
+      {detail.durationMs !== undefined && <span class="tl__meta">{formatMs(detail.durationMs)}</span>}
+      {detail.ttftMs !== undefined && <span class="tl__meta">first token {formatMs(detail.ttftMs)}</span>}
+    </p>
+  );
+}
+
+function ToolBody({ step, detail }: { step: TraceStep; detail: ToolDetail }) {
+  const args = toolArgsPreview(detail);
+  return (
+    <p class="tl__line">
+      <span class="tl__name">{step.summary}</span>
+      {args !== undefined && <span class="tl__name tl__name--mono">{args.captured ? args.text : `${args.length} chars not captured`}</span>}
+      {detail.resultBytes !== undefined && <span class="tl__meta">result {formatBytes(detail.resultBytes)}</span>}
+    </p>
+  );
+}
+
 function ErrorBody({ detail }: { detail: ErrorDetail }) {
   return (
     <p class="tl__line">
@@ -348,6 +453,8 @@ function StepBody({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof
     case "load": return <LoadBody detail={step.detail as LoadDetail} />;
     case "read_file": return <ReadBody detail={step.detail as ReadDetail} />;
     case "native_skill": return <NativeBody detail={step.detail as NativeDetail} />;
+    case "llm_call": return <LlmBody step={step} detail={step.detail as LlmDetail} />;
+    case "tool_call": return <ToolBody step={step} detail={step.detail as ToolDetail} />;
     case "error": return <ErrorBody detail={step.detail as ErrorDetail} />;
     case "session_end":
       return bounds.startedAt !== undefined ? <p class="tl__meta">after {formatDuration(step.ts - bounds.startedAt)}</p> : null;
@@ -360,18 +467,40 @@ function StepBody({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof
 
 function Step({ step, bounds }: { step: TraceStep; bounds: ReturnType<typeof sessionBounds> }) {
   const search = step.kind === "search" ? searchDetail(step) : undefined;
-  const hollow = step.kind === "read_file" || step.kind === "native_skill";
+  const failedTool = step.kind === "tool_call" && (step.detail as ToolDetail).success === false;
+  const gisoolTool = step.kind === "tool_call" && (step.detail as ToolDetail).gisoolMcp === true;
+  const hollow = step.kind === "read_file" || step.kind === "native_skill" || step.kind === "llm_call" || step.kind === "tool_call";
   return (
     <li class={`tl__step tl__step--${step.kind}`} data-kind={step.kind}>
       <span class={hollow ? "tl__dot tl__dot--hollow" : "tl__dot"} aria-hidden="true" />
       <div class="tl__head">
         <span class="tl__kind">{KIND_LABEL[step.kind] ?? step.kind}</span>
         {step.kind === "native_skill" && <span class="tl__tag" title="handled by the runtime's own skill mechanism, not gisool">native</span>}
+        {gisoolTool && <span class="tl__tag" title="a call to gisool's own MCP server">gisool</span>}
+        {failedTool && <span class="tl__tag tl__tag--bad">failed</span>}
         {search?.abstained && <span class="tl__tag tl__tag--bad">abstained</span>}
         <StepTime ts={step.ts} startedAt={bounds.startedAt} />
       </div>
       <div class="tl__body">
         <StepBody step={step} bounds={bounds} />
+      </div>
+    </li>
+  );
+}
+
+function SpanGroup({ item, bounds }: { item: Extract<TimelineItem, { kind: "span" }>; bounds: ReturnType<typeof sessionBounds> }) {
+  const rows = callRows(item.span.events);
+  return (
+    <li class="tl__step tl__step--span" data-kind="skill_span" data-skill={item.span.skill} data-turn={item.turnId}>
+      <span class="tl__dot tl__dot--hollow" aria-hidden="true" />
+      <div class="tl__head">
+        <span class="tl__kind">{SPAN_KIND_LABEL}</span>
+        <span class="tl__name" title={item.span.uri ?? "no skill uri reported"}>{item.span.name}</span>
+        <StepTime ts={item.span.startedAt} startedAt={bounds.startedAt} />
+      </div>
+      <div class="tl__body">
+        <Facts facts={spanFacts(item.span, rows.length, item.finding)} />
+        <CallList rows={rows} />
       </div>
     </li>
   );
@@ -415,17 +544,20 @@ export function TraceView({ route, live }: ViewProps) {
   const backHref = buildHash({ view: "sessions", filter: route.filter });
   const [steps, setSteps] = useState<TraceStep[]>();
   const [row, setRow] = useState<SessionListRow>();
+  const [report, setReport] = useState<SessionSkillReportDto>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
     setSteps(undefined);
     setRow(undefined);
-    Promise.all([api.trace(sessionId), api.sessions({})])
-      .then(([trace, rows]) => {
+    setReport(undefined);
+    Promise.all([api.trace(sessionId), api.sessions({}), skillReportOf(sessionId)])
+      .then(([trace, rows, skillReport]) => {
         if (cancelled) return;
         setSteps(trace);
         setRow(rows.find((r) => r.id === sessionId));
+        setReport(skillReport);
         setError(undefined);
       })
       .catch((err: unknown) => {
@@ -438,10 +570,11 @@ export function TraceView({ route, live }: ViewProps) {
     if (live.seq === 0 || !live.last || live.last.id !== sessionId) return;
     setRow(live.last);
     let cancelled = false;
-    api.trace(sessionId)
-      .then((trace) => {
+    Promise.all([api.trace(sessionId), skillReportOf(sessionId)])
+      .then(([trace, skillReport]) => {
         if (cancelled) return;
         setSteps(trace);
+        setReport(skillReport);
         setError(undefined);
       })
       .catch((err: unknown) => {
@@ -461,20 +594,29 @@ export function TraceView({ route, live }: ViewProps) {
 
   const bounds = sessionBounds(steps, row);
   const counts = traceCounts(steps);
+  const items = planTimeline(steps, report);
   return (
     <section class="trace" aria-busy="false">
       {error && <p class="notice" role="alert">Live update failed: {error}</p>}
-      <Header sessionId={sessionId} row={row} steps={steps} backHref={backHref} liveState={live.state} />
-      {counts.searches === 0 && <NeverConsulted counts={counts} />}
-      {steps.length > 0 && (
+      <Header sessionId={sessionId} row={row} steps={steps} backHref={backHref} liveState={live.state} unresolvedLoads={(report?.unattributedLoads.count ?? 0) > 0} />
+      {report && <UnresolvedLoadNotice loads={report.unattributedLoads} />}
+      {counts.searches === 0 && (report?.unattributedLoads.count ?? 0) === 0 && <NeverConsulted counts={counts} />}
+      {items.length > 0 && (
         <div class="card tl__card">
           <ol class="tl" aria-label="Session timeline">
-            {steps.map((step, index) => <Step key={`${step.ts}-${index}-${step.kind}`} step={step} bounds={bounds} />)}
+            {items.map((item, index) => (item.kind === "step"
+              ? <Step key={`${item.step.ts}-${index}-${item.step.kind}`} step={item.step} bounds={bounds} />
+              : <SpanGroup key={`${item.span.id}-${index}`} item={item} bounds={bounds} />))}
           </ol>
         </div>
       )}
     </section>
   );
+}
+
+/** The skill report is an enhancement: a daemon that cannot answer leaves the timeline exactly as recorded. */
+function skillReportOf(sessionId: string): Promise<SessionSkillReportDto | undefined> {
+  return api.skillReport(sessionId, { automated: "include" }).catch(() => undefined);
 }
 
 const TRACE_CSS = `
@@ -492,8 +634,6 @@ const TRACE_CSS = `
 .trace__id { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink-2); }
 .trace__counts { margin: 0; color: var(--ink-3); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
 .empty--trace .btn { text-decoration: none; }
-.callout { display: grid; gap: var(--s-1); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); font-size: var(--fs-sm); }
-.callout strong { color: var(--ink); font-weight: 600; }
 .tl__card { padding: var(--s-4) var(--s-5); }
 .tl { --dot-top: calc(var(--s-2) + 6px); list-style: none; margin: 0; padding: 0 0 0 var(--s-6); }
 .tl__step { --dot: var(--neutral); position: relative; padding-block: var(--s-2) var(--s-4); }
@@ -507,6 +647,8 @@ const TRACE_CSS = `
 .tl__step--load, .tl__step--read_file { --dot: var(--ok); }
 .tl__step--native_skill { --dot: var(--warn); }
 .tl__step--error { --dot: var(--bad); }
+.tl__step--span { --dot: var(--ok); }
+.tl__step--span .tl__body { display: grid; gap: var(--s-1); }
 .tl__dot { position: absolute; left: calc(-1 * var(--s-6)); top: var(--dot-top); width: var(--s-2); height: var(--s-2); border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 2px var(--surface); }
 .tl__dot--hollow { background: var(--surface); box-shadow: inset 0 0 0 2px var(--dot), 0 0 0 2px var(--surface); }
 .tl__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); }
@@ -536,8 +678,6 @@ const TRACE_CSS = `
 .tl__save .btn[disabled] { cursor: default; color: var(--ink-2); }
 .tl__save .btn[data-save-eval="saved"] { color: var(--ok); }
 .tl__err { color: var(--bad); font-size: var(--fs-cap); }
-.foldbtn { margin-top: var(--s-1); padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--fs-cap); font-weight: 500; cursor: pointer; }
-.foldbtn:hover { color: var(--accent-2); }
 .cands { display: grid; gap: var(--s-1); list-style: none; margin: var(--s-2) 0 0; padding: 0; }
 .cands__none { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }
 .cands__legend { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: var(--fs-cap); }

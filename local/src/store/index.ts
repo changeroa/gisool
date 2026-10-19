@@ -1,6 +1,7 @@
 import type { Db } from "./db.js";
 import { createPortable } from "./export.js";
 import { createQueries } from "./queries.js";
+import { createWorkflow } from "./workflow.js";
 import { createWrites, type StoreOptions } from "./writes.js";
 import type { Store } from "../types.js";
 
@@ -15,5 +16,5 @@ export { adoptionState, classifyTaskType, localDowHour, taskTypeRules } from "./
  */
 export function createStore(db: Db, opts: StoreOptions = {}): Store {
   const ctx = { db, opts, now: opts.now ?? Date.now };
-  return { ...createWrites(ctx), ...createQueries(ctx), ...createPortable(ctx), close: () => db.close() };
+  return { ...createWrites(ctx), ...createQueries(ctx), ...createPortable(ctx), ...createWorkflow(ctx), close: () => db.close() };
 }

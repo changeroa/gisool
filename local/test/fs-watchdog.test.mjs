@@ -1,9 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { distImport } from "./_helpers.mjs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { distImport, makeSandbox, PACKAGE_ROOT } from "./_helpers.mjs";
 import { http, startTestServer } from "./helpers/api.mjs";
 
 const { createFsWatchdog } = await distImport("fs-watchdog.js");
+
+test("default watchdog kills the daemon with SIGKILL when filesystem requests stall", async () => {
+  // Given a real daemon with a pending probe and a clock controlled over IPC.
+  const sandbox = makeSandbox();
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { mock } from "node:test";
+    import { startServer } from ${JSON.stringify(new URL("dist/server.js", PACKAGE_ROOT).href)};
+    mock.timers.enable({ apis: ["setInterval", "Date"], now: 0 });
+    await startServer(
+      { port: 0, captureLevel: "full", retentionDays: null, roots: [], runtimes: {} },
+      { fsWatchdog: { probe: () => new Promise(() => {}) }, log: () => {} },
+    );
+    process.once("message", () => mock.timers.tick(30_000));
+    process.send("ready");
+  `], { env: sandbox.env, stdio: ["ignore", "ignore", "inherit", "ipc"] });
+  const exited = once(child, "close", { signal: AbortSignal.timeout(10_000) });
+  try {
+    assert.deepEqual(await once(child, "message", { signal: AbortSignal.timeout(5_000) }), ["ready", undefined]);
+    // When the watchdog deadline passes, with exit observation already subscribed.
+    child.send("stall");
+    // Then the OS reports a hard kill, not a normal exit through native cleanup.
+    assert.deepEqual(await exited, [null, "SIGKILL"]);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    try { await exited; } finally { sandbox.cleanup(); }
+  }
+});
 
 function signal(timeoutMs) {
   let resolve;

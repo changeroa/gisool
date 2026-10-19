@@ -15,6 +15,16 @@
         "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]
+      }
+    ],
     "UserPromptExpansion": [
       {
         "hooks": [{ "type": "command", "command": "\"{{NODE}}\" \"{{HOOK}}\" claude-code", "timeout": 5 }]

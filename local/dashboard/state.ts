@@ -1,9 +1,12 @@
-import type { AdoptionState, Attribution, Filter, RuntimeId, SessionRow } from "../src/types.js";
+import type { AdoptionState, Attribution, FindingLabel, Filter, RuntimeId, SessionRow, TurnBasis } from "../src/types.js";
+import type { StepStatus } from "../src/workflow/compare.js";
 import type { LiveState, SessionListRow } from "./api";
 
 // URL state for the dashboard. Routes live in location.hash so the daemon only serves "/":
 //   #/sessions?runtime=codex,gemini&state=loaded&q=review
 //   #/sessions/<id>?from=...      (trace view keeps the list filter so "back" restores it)
+//   #/workspaces?from=...          (herdr flows and workspaces)
+//   #/workspaces/<flow id>         (one flow; an unregistered workspace is addressed as "ws:<id>")
 //   #/flow?skill=skill://local/agents/pr-review-ko/SKILL.md
 //   #/heatmap?dow=1&hour=9&hourSpan=2
 // The query part uses exactly the server's Filter params (from,to epoch ms; runtime,skill,state
@@ -14,8 +17,8 @@ export const ADOPTION_STATES: readonly AdoptionState[] = ["loaded", "exposed_onl
 export const FILTER_KEYS = ["from", "to", "runtime", "skill", "state", "dow", "hour", "hourSpan", "q", "automated"] as const satisfies readonly (keyof Filter)[];
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
-export type View = "sessions" | "trace" | "flow" | "heatmap";
-export type Route = { view: View; sessionId?: string; filter: Filter };
+export type View = "sessions" | "trace" | "workspaces" | "workspace" | "flow" | "heatmap";
+export type Route = { view: View; sessionId?: string; flowId?: string; filter: Filter };
 /** One shared SSE subscription: `seq` increments per `session` event, `last` is that event's row. */
 export type LiveInfo = { state: LiveState; seq: number; last?: SessionListRow };
 /** Props every mounted view receives from main.tsx (trace/flow/heatmap stubs are replaced by todos 15-17). */
@@ -41,6 +44,46 @@ export const ATTRIBUTION_LABEL: Record<Attribution["method"], string> = {
   runtime_id: "runtime id", vendor_meta: "vendor meta", trace_handle: "trace handle", window: "window", none: "unattributed",
 };
 export const DOW_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** How a turn got its events: herdr/runtime said so, an OTel span joined them, or the time window placed them. */
+export const BASIS_LABEL: Record<TurnBasis, string> = { reported: "reported", span_join: "joined", inferred_time: "inferred" };
+export const BASIS_TITLE: Record<TurnBasis, string> = {
+  reported: "reported: the runtime reported the turn these events belong to",
+  span_join: "joined: an OTel span joined these events to the turn",
+  inferred_time: "inferred: the events fall inside the turn's time window",
+};
+/** Which skill a call is credited to: the runtime said so, one skill was active, or several were. */
+export const SPAN_ATTRIBUTION_LABEL: Record<"reported" | "single" | "co_active" | "no_skill", string> = {
+  reported: "reported", single: "single", co_active: "co-active", no_skill: "no skill",
+};
+/** Descriptive labels over recorded events: where a used skill came from, never whether it was the right one. */
+export const FINDING_LABEL: Record<FindingLabel, string> = {
+  found_top1: "top result used",
+  found_lower: "lower result used",
+  loaded_outside_results: "used outside results",
+  native_without_search: "native, no search",
+  searched_none_used: "searched, none used",
+  no_search: "no search",
+};
+export const FINDING_TITLE: Record<FindingLabel, string> = {
+  found_top1: "found_top1: the skill the turn used was the first search result",
+  found_lower: "found_lower: the skill the turn used was a lower search result",
+  loaded_outside_results: "loaded_outside_results: the skill the turn used was not among the search results",
+  native_without_search: "native_without_search: the runtime activated a skill of its own without searching gisool",
+  searched_none_used: "searched_none_used: the turn searched but used none of the results",
+  no_search: "no_search: the turn neither searched nor used a skill",
+};
+/** Spec comparison per step; deviations are reported, never penalised. */
+export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
+  matched: "matched", partial: "partial", different: "different", no_skill_used: "no skill used", not_run: "not run",
+};
+export const STEP_STATUS_TITLE: Record<StepStatus, string> = {
+  matched: "matched: the step's panes used what the spec intended",
+  partial: "partial: a step that intends its skills together used some of them",
+  different: "different: skills were used, none of them intended by the step",
+  no_skill_used: "no_skill_used: the step's panes used no skill at all",
+  not_run: "not_run: no pane was mapped to this step",
+};
 
 const RUNTIME_SET = new Set<string>(RUNTIME_IDS);
 const STATE_SET = new Set<string>(ADOPTION_STATES);
@@ -164,6 +207,8 @@ export function parseHash(hash: string): Route {
   switch (segments[0]) {
     case "flow": return { view: "flow", filter };
     case "heatmap": return { view: "heatmap", filter };
+    case "workspaces":
+      return segments[1] ? { view: "workspace", flowId: segments[1], filter } : { view: "workspaces", filter };
     case "sessions":
       return segments[1] ? { view: "trace", sessionId: segments[1], filter } : { view: "sessions", filter };
     default:
@@ -174,7 +219,9 @@ export function parseHash(hash: string): Route {
 export function buildHash(route: Route): string {
   const path = route.view === "trace"
     ? `/sessions/${encodeURIComponent(route.sessionId ?? "")}`
-    : `/${route.view}`;
+    : route.view === "workspace"
+      ? `/workspaces/${encodeURIComponent(route.flowId ?? "")}`
+      : `/${route.view}`;
   const query = serializeFilter(route.filter);
   return `#${path}${query ? `?${query}` : ""}`;
 }

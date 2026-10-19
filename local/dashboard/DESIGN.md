@@ -55,8 +55,13 @@ Rules
   backgrounds plus ink; `:focus-visible` rings (`--accent`) are the only colored edge.
 - Status colors appear only in state badges, the ingest error count, the live dot, and timeline
   step dots (kind colors, see TimelineStep): prompt `--ink`, search `--accent`, load / read_file
-  `--ok` (read_file hollow), native_skill `--warn` (hollow), error `--bad`, session_start / end
-  `--neutral`. Candidate score bars use `--ok` when the candidate was loaded, otherwise ink at 35%.
+  `--ok` (read_file hollow), native_skill `--warn` (hollow), skill span `--ok` (hollow),
+  error `--bad`, session_start / end `--neutral`. Candidate score bars use `--ok` when the
+  candidate was loaded, otherwise ink at 35%.
+- Step comparison badges carry status color because the spec declares an intent to compare against:
+  matched `--ok`, partial / different `--warn`, no_skill_used / not_run `--neutral`. `--bad` is never
+  used there: a deviation is feedback, not an error. Finding labels ("top result used", "native, no
+  search") are descriptive, never judgements, so they render as neutral Tags with no status color.
 - Never introduce a color outside this table; extend the table first.
 
 ## 3. Typography
@@ -116,7 +121,9 @@ Layout
   `prefers-reduced-motion` it is static.
 
 ### TabBar
-- Structure: `nav` > `a.tab` x3 (Sessions, Flow, Heatmap); hrefs keep the current filter query.
+- Structure: `nav` > `a.tab` x4 (Sessions, Workspaces, Flow, Heatmap); hrefs keep the current filter
+  query. A detail route marks its list tab current through `TAB_OF` (trace -> Sessions, workspace ->
+  Workspaces).
 - States: default `--ink-2`; hover `--wash`; active `--wash-2` + `--ink`; `focus-visible` ring.
 - Accessibility: `aria-current="page"` on the active tab; 36px min target height.
 
@@ -153,6 +160,34 @@ Layout
 ### SkillChip
 - Structure: `span.skill` with the skill dir name; `title` carries the full URI. Max 3 shown,
   then `+n` chip. Border `--line`, radius `--r-full`, font `--t-cap`.
+- Variant `skill--missing` (dashed border, `--ink-3`): an intended skill a step did not use. A used
+  skill the step did not intend keeps the default chip plus a dim `skill__tag` reading "extra".
+
+### Tag (`styles.css`)
+- Structure: `span.tag` - one reported fact next to the thing it describes (basis, attribution share,
+  call outcome, spec name). 18px, radius `--r-full`, `--surface-2` on a `--line` hairline, `--t-micro`
+  at weight 600, never uppercased (labels are phrases, not codes).
+- Variants: default, `tag--dim` (an absent fact: "unregistered", "outcome unknown"), `tag--ok` and
+  `tag--bad` (a reported tool outcome only; both drop the border for a 12% status wash).
+- Long values: a tag whose name is user-supplied splits into `tag__name` + `tag__suffix`. The tag caps
+  at `max-width: 100%`, the name truncates with an ellipsis, and the suffix (`v3`) never shrinks, so a
+  64-character workflow name still shows which version ran. The `title` carries the full value.
+
+### Facts (`components/facts.tsx` + `styles.css`)
+- A fact is a measurement, not a sentence: builders return `{ key, value }` (`panes`, `cost`,
+  `active`, `finding`, ...) and `factText` is the single place that turns a key and a number into
+  words. A measurement the runtime never reported is `null`, which renders as "unknown" and never as
+  0. Wording therefore changes in one file, and no test depends on it.
+- `Facts` renders `p.facts > span.facts__item[data-fact=<key>]`, with the finding label's definition
+  as its `title`.
+
+### Facts (`styles.css`)
+- Structure: `p.facts` > `span.facts__item` x n - a wrapping line of dim facts separated by a middot
+  rendered from `::before`, so no separator is ever stranded at the end of a line. Under 640px, where
+  the line wraps between almost every fact, the middot is dropped and the `--s-3` gap separates them,
+  so no separator is stranded at the start of a line either. Numbers are tabular. Each item carries
+  its own unknown ("cost unknown"), never a 0 standing in for one.
+- Used by: list row summaries, flow header counts, skill span facts, trace span rows.
 
 ### Tooltip
 - Structure: any element with `data-tip` and `tabindex="0"`; `::after` renders `attr(data-tip)`
@@ -178,6 +213,61 @@ Layout
   stream (`3m (no end recorded)`). Attribution `none` renders `unattributed · <reason>` in `--ink-3`.
 - Spacing: card padding `--s-4` x `--s-5` (mobile `--s-4`); meta gaps `--s-3` x `--s-6`.
 
+### WorkspaceRow (`views/workspaces.tsx`)
+- Structure: `li.wsrow` grid with areas `"title tag when" / "meta meta when" / "sum sum sum"`; the
+  title is the flow label (falling back to the workspace id) linking to the flow detail, the Tag is
+  the spec `name v<version>` or a dim "unregistered". The title column floors at `min-content` and the
+  tag column is the flexible one, so a long spec name truncates instead of squeezing the title.
+- Lines: `facts wsrow__meta` = workspace id, tab, panes, sessions, plus inferred / unlinked link
+  counts when non-zero; `facts wsrow__sum` = turns, found via search, spans with calls after
+  activation (activity, not a quality claim), abstained turns, cost. The summary needs the flow
+  report, so until it arrives the line reads "reading skill spans…"
+  and on failure "skill span summary unavailable" - never an invented 0.
+- States: hover `--wash`; `:has(.wsrow__title:focus-visible)` lifts the whole row.
+- Layout: under 640px the row is one column and every part gets its own line, `"title" / "tag" /
+  "when" / "meta" / "sum"`: at 390px a 64-character spec name and a flow label cannot share a line
+  without one of them collapsing to one-character rows.
+- Empty: `section.empty` "No herdr workspaces recorded" (with `gisool doctor`) or "No workspaces in
+  this range" with a Clear filters GhostButton when the time filter is set.
+
+### FlowHeader / Steps / PaneTree (`views/workspaces.tsx`)
+- Flow cost sums unique model calls in the execution window, including calls with no skill.
+  Identity is session + call id (event id when absent); an unreported cost makes the total unknown.
+  Span costs remain observations, explicitly labelled shared when skills were co-active.
+- Step intent shows "together (all required)" or "alternatives (any one)" from the exact spec version.
+- Sessions outside the registered execution window carry a visible context label. An absent session
+  end is "end not observed" when the flow/pane ended or a newer session appeared, never a claimed live run.
+- EvidenceDisclosure: native `details` / `summary` beneath each turn and span, with a visible
+  basis Tag, wrapping lists and selectable paths/event ids. Uses existing stack/cluster layout,
+  `--s-2` / `--s-3` gaps, `--wash`, `--r-sm`, and body/small type; document owns scrolling.
+  Turn evidence includes queries, candidates (collapsed/raw ranks and copies), used skills and
+  latest-preceding-search ranks, abstention reasons, native-before-search and later-missed links.
+  Candidates are the API's turn-wide union with latest ranks, not falsely assigned to each query.
+  Span evidence includes labelled correction status/reason/matched terms and reported/heuristic
+  supporting reads with file and event provenance. Missing evidence is unknown, not a negative result.
+  Disclosure targets are at least 44px, keyboard focus uses the shared ring, and later-turn links
+  open the target turn before focusing its summary. No new motion or colors.
+- FlowHeader: `header.ws__head.card` > back link > `h1.ws__title` > `dl.ws__meta` (Workspace / Spec /
+  Started / Ended / Panes / Sessions) > `p.facts.ws__counts` > `.ws__actions` (snapshot time plus a
+  Refresh GhostButton). A flow report is computed on read, so the view states its `generatedAt` and
+  refreshes on request - never on a timer, and never animated.
+- Steps: `ol.steps` > `li.step` with the step id (mono), a status badge, its panes, then an
+  `intended` and a `used` SkillChip row, and the unexpected-tool line when the spec listed tools.
+- PaneTree: `ul.tabsets` > tab > `ul.panes` > `details.pane` (open) > session article > `ol.turns` >
+  `details.turn` > `ul.spans` > `li.span` > CallList. Disclosure is native `details`/`summary` so
+  every level is keyboard reachable; the chevron rotates 90 degrees over `--t-micro` and is the only
+  motion in the view. Turns start open while a session has at most `TURNS_OPEN_MAX` (3) of them.
+- A pane link herdr reported and one gisool inferred both show a Tag with the basis; a pane session
+  gisool has not matched yet is a dim line naming the agent session, never a silent omission.
+
+### CallList / Tokens (`components/calls.tsx`)
+- Structure: `ul.calls` > `li.call` = mono name + optional `tag` (gisool) + outcome Tag (tool calls
+  only) + duration + cost (model calls only) + `span.tok` token buckets. Over `MAX_CALL_ROWS` (12)
+  rows a TextFold-style `foldbtn` reveals the rest.
+- Rule: every figure is a reported measurement. An absent duration, cost or token bucket reads
+  "unknown" (or is left out), and a tool call with no reported outcome gets `tag--dim` "outcome
+  unknown" rather than being shown as a success.
+
 ### Timeline / TimelineStep (`views/trace.tsx`)
 - Structure: `div.card.tl__card` > `ol.tl` > `li.tl__step.tl__step--<kind>` > `span.tl__dot` +
   `div.tl__head` (`span.tl__kind` label, optional `span.tl__tag` "native" / "abstained",
@@ -193,6 +283,14 @@ Layout
 - Empty states: `section.empty` "Session not found" (stale id) and `div.callout` "This session
   never consulted gisool" above the timeline when no search step exists.
 - Motion: none; live updates refetch the trace and keyed steps keep their DOM nodes.
+- Skill span rows (`tl__step--span`, dot `--ok` hollow): when the session's skill report is readable,
+  each span is folded into the timeline right after the step that activated it, the tool and model
+  steps it owns move inside it, and its body is a `facts` line (active duration, call count, the
+  turn's finding label with the label's definition as its `title`) over a CallList. Without a skill
+  report the timeline stays exactly as recorded - the grouping is an enhancement, not a dependency.
+
+### Layout
+- Max content width `--max-w: 1180px`, centered; gutter `--s-4` under 640px, `--s-6` above.
 
 ### CandidatesPanel (`components/candidates.tsx`)
 - Structure: `ol.cands` > `li.cand[.cand--chosen]` grid with areas
@@ -212,6 +310,11 @@ Layout
 ### Callout
 - `div.callout`: hairline card (`--line`, `--r-md`, `--surface`) with a bold `--ink` title and
   `--ink-2` copy; used for the never-consulted empty state. No status color.
+- UnresolvedLoadNotice uses the same shared callout in flow and session trace reports. It shows
+  the recorded unresolved count and a selectable, wrapping list of affected URIs. Attribution
+  uncertainty is explicit, never a claim that the skill was unused. It is absent at count zero.
+- Execution boundary disclosures use this callout too: recorded identity cuts and unavailable
+  historical boundary order are distinct states. Session lifecycle tags never use analysis bounds.
 
 ### TextFold
 - `button.foldbtn`: text-only accent button (`--fs-cap`, 500) toggling the prompt body between the
@@ -253,3 +356,6 @@ Constraints: WCAG 2.2 AA; body contrast >= 4.5:1 in both schemes (`--ink-2` on `
 | Attribution reason tooltip depends on an optional `attributionReason` field the API may omit | `views/sessions.tsx` | `SessionRow` is frozen without a reason field; the dashboard tolerates its absence ("reason not reported") | Todo 5/12 may add the field; no contract change needed here |
 | Trace view CSS ships as a `<style id="gisool-trace-style">` injected by `views/trace.tsx` instead of living in `styles.css` | `views/trace.tsx` | `styles.css` is owned by todo 6 in this wave; the block uses only tokens from this file | Fold into `styles.css` once the ledger allows (todo 18/19 cleanup) |
 | Trace header fetches `/api/sessions` unfiltered and picks the row client-side | `views/trace.tsx` | The HTTP surface has no `GET /api/sessions/:id`; the list is local and small | Add a by-id endpoint if the list grows past retention defaults |
+| The Workspaces list reads one flow report per row to fill its found/used summary | `views/workspaces.tsx` | `GET /api/flows` carries structure only; the analysis is computed on read. The list paints first and enriches at most `SUMMARY_CONCURRENCY` (2) rows at a time, and a row that fails says so | Fold a summary into the list DTO if a page ever feels slow |
+| A flow detail does not follow the live stream | `views/workspaces.tsx` | A full report is far heavier than a session row, and the SSE contract only carries `session` rows; the header states the snapshot time and offers Refresh | Refetch on a flow-scoped event if the stream ever carries one |
+| Workspaces view CSS ships as an injected `installStyles("workspaces")` block, and the call rows as `installStyles("calls")` | `views/workspaces.tsx`, `components/calls.tsx` | Same reason as the trace block: shared primitives (`tag`, `facts`, `dim`, `foldbtn`, step badges) were moved into `styles.css`, view-local rules stayed with their view | Fold into `styles.css` with the trace block in the cleanup todo |

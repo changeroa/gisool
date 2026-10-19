@@ -86,7 +86,7 @@ test("store errors are logged and swallowed per event", () => {
       fail = false;
       throw new Error("disk full");
     }
-    realAppend(event, attribution);
+    return realAppend(event, attribution);
   };
   const logged = [];
   const deps = createIngestDeps(store, { log: (msg, err) => logged.push([msg, err.message]) });

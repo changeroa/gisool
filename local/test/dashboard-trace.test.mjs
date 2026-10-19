@@ -27,7 +27,7 @@ const trace = await loadModule("dashboard/views/trace.tsx");
 const candidates = await loadModule("dashboard/components/candidates.tsx");
 const fixtures = JSON.parse(readFileSync(new URL("dashboard/dev-fixtures.json", PACKAGE_ROOT), "utf8"));
 
-const EVENT_KINDS = ["session_start", "prompt", "search", "load", "read_file", "native_skill", "session_end", "error"];
+const EVENT_KINDS = ["session_start", "prompt", "search", "load", "read_file", "native_skill", "llm_call", "tool_call", "session_end", "error"];
 const ALL_KINDS_SESSION = "ses_ac514fa3a9";
 const ABSTAINED_SESSION = "ses_bb85bd8f72";
 const NEVER_CONSULTED_SESSION = "ses_b143443884";
@@ -55,8 +55,39 @@ test("every kind has a label and the never-consulted copy is the shipped sentenc
   assert.deepEqual(Object.keys(trace.MODE_LABEL).sort(), ["automatic", "discovery", "explicit"]);
 });
 
+test("model and tool steps carry the store's summary plus the facts their bodies render", () => {
+  const steps = fixtures.traces[ALL_KINDS_SESSION];
+  const llm = steps.find((step) => step.kind === "llm_call");
+  assert.equal(llm.detail.kind, "llm_call");
+  assert.equal(llm.detail.model, "claude-fable-5-1");
+  assert.equal(llm.detail.inputTokens + llm.detail.outputTokens + llm.detail.cacheReadTokens + llm.detail.cacheCreationTokens, 26343);
+  assert.ok(llm.summary.includes("claude-fable-5-1") && llm.summary.includes("26343"), llm.summary);
+  assert.equal(llm.detail.costUsd, 0.31913075);
+  assert.ok(trace.formatCost(llm.detail.costUsd).includes("0.3191"));
+  assert.ok(!/\d/.test(trace.formatCost(undefined)), "a runtime that reports no cost shows no number");
+  assert.ok(!/\d/.test(trace.formatCost(Number.NaN)));
+  assert.notEqual(trace.formatCost(undefined), trace.formatCost(0), "unknown cost and zero cost differ");
+  assert.ok(trace.formatCost(0).includes("0.0000"));
+
+  const tool = steps.find((step) => step.kind === "tool_call");
+  assert.equal(tool.detail.kind, "tool_call");
+  assert.deepEqual([tool.detail.toolName, tool.detail.durationMs, tool.detail.success], ["Bash", 267, true]);
+  assert.ok(tool.summary.includes("Bash"), tool.summary);
+  assert.match(tool.summary, /(^|\D)267(\D|$)/, "the summary carries the reported duration");
+  assert.deepEqual(trace.toolArgsPreview(tool.detail), { captured: true, text: tool.detail.args, truncated: false });
+  assert.equal(tool.detail.argsLength, tool.detail.args.length);
+  const long = { kind: "tool_call", args: "가".repeat(trace.TOOL_ARGS_PREVIEW_CHARS + 40) };
+  const cut = trace.toolArgsPreview(long);
+  assert.equal(cut.captured, true);
+  assert.equal(cut.truncated, true);
+  assert.equal(Array.from(cut.text).length, trace.TOOL_ARGS_PREVIEW_CHARS + 1, "long arguments are cut with one ellipsis");
+  assert.deepEqual(trace.toolArgsPreview({ kind: "tool_call", argsLength: 412 }), { captured: false, length: 412 },
+    "metadata capture reports the dropped length and no text");
+  assert.equal(trace.toolArgsPreview({ kind: "tool_call" }), undefined);
+});
+
 test("traceCounts tallies each kind and abstained searches", () => {
-  assert.deepEqual(trace.traceCounts(fixtures.traces[ALL_KINDS_SESSION]), { steps: 10, searches: 1, abstained: 0, loads: 2, reads: 2, natives: 1, errors: 1 });
+  assert.deepEqual(trace.traceCounts(fixtures.traces[ALL_KINDS_SESSION]), { steps: 12, searches: 1, abstained: 0, loads: 2, reads: 2, natives: 1, errors: 1 });
   assert.deepEqual(trace.traceCounts(fixtures.traces[ABSTAINED_SESSION]), { steps: 4, searches: 1, abstained: 1, loads: 0, reads: 0, natives: 0, errors: 0 });
   assert.deepEqual(trace.traceCounts(fixtures.traces[NEVER_CONSULTED_SESSION]), { steps: 3, searches: 0, abstained: 0, loads: 0, reads: 0, natives: 0, errors: 0 });
   assert.deepEqual(trace.traceCounts([]), { steps: 0, searches: 0, abstained: 0, loads: 0, reads: 0, natives: 0, errors: 0 });

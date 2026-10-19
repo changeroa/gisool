@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { automationOf, NO_ACTIVITY } from "./automation.js";
+import { executionEventScope } from "./execution.js";
 import { nameFromUri, parseJson, readIngestCounters, storeError, type StoreCtx } from "./writes.js";
-import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep } from "../types.js";
+import type { AdoptionState, Attribution, Candidate, EventKind, Filter, FlowDto, HeatmapDto, OtelSpanRow, RuntimeId, SessionRow, SkillUri, SkillWeekDto, Store, TraceStep, TreeEvent, TreeTopologyNode, TreePaneLink } from "../types.js";
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
@@ -60,7 +61,16 @@ export function classifyTaskType(skill: SkillMeta | undefined, prompt: string | 
 }
 
 type EvRow = { id: string; ts: number; kind: EventKind; session_id: string; attribution_method: Attribution["method"]; attribution_reason: string | null;
-  runtime: string; trace_id: string | null; load_id: string | null; skill_uri: string | null; text: string | null; text_length: number | null; data_json: string };
+  runtime: string; trace_id: string | null; load_id: string | null; skill_uri: string | null; text: string | null; text_length: number | null; data_json: string;
+  tool_use_id: string | null; turn_key: string | null; call_id: string | null };
+
+/** Sums the buckets a runtime reports without double counting: Codex counts cached tokens inside inputTokens, Claude Code does not. */
+function llmTokens(data: Record<string, unknown>): number {
+  const n = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  if (typeof data.totalTokens === "number") return data.totalTokens;
+  const base = n(data.inputTokens) + n(data.outputTokens);
+  return data.inputIncludesCache === true ? base : base + n(data.cacheReadTokens) + n(data.cacheCreationTokens);
+}
 
 type SessionInfo = {
   id: string; runtime: RuntimeId; startedAt: number; endedAt?: number; firstPrompt?: string; events: EvRow[];
@@ -124,7 +134,14 @@ function shortDigest(d: unknown): string {
   return s.replace(/^sha256[:-]/, "").slice(0, 12);
 }
 
-type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats">;
+type Queries = Pick<Store, "sessions" | "trace" | "flow" | "heatmap" | "skillWeek" | "stats" | "treeSessionData" | "treeFlowData"
+  | "outsideHerdrSessionIds" | "outsideHerdrSessions" | "sessionAutomation">;
+
+/** The automation id of a session, or undefined when a person drove it: the rule matching its first prompt, else
+ * NO_ACTIVITY for a session that showed no prompt and no skill activity at all (e.g. a thread a daemon reopened). */
+function automationIdOf(firstPrompt: string | undefined, active: boolean): string | undefined {
+  return automationOf(firstPrompt) ?? (active ? undefined : NO_ACTIVITY);
+}
 
 export function createQueries(ctx: StoreCtx): Queries {
   const { db } = ctx;
@@ -148,7 +165,9 @@ export function createQueries(ctx: StoreCtx): Queries {
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = db.prepare(`SELECT id, runtime, started_at, ended_at, first_prompt FROM sessions ${clause}`).all(...params) as
       { id: string; runtime: string; started_at: number; ended_at: number | null; first_prompt: string | null }[];
-    const events = db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM sessions ${clause}) ORDER BY ts, rowid`).all(...params) as EvRow[];
+    // Model calls and tool runs say nothing about adoption state and outnumber every other kind, so sessions are built without them.
+    const events = db.prepare(`SELECT * FROM events WHERE session_id IN (SELECT id FROM sessions ${clause}) AND kind NOT IN ('llm_call', 'tool_call')
+      ORDER BY ts, rowid`).all(...params) as EvRow[];
     const bySession = new Map<string, EvRow[]>();
     for (const e of events) {
       const list = bySession.get(e.session_id);
@@ -184,9 +203,9 @@ export function createQueries(ctx: StoreCtx): Queries {
         ...(firstTop !== undefined ? { firstTop } : {}),
       };
       // A session with no prompt and no skill activity (e.g. a thread the Codex daemon reopened) tells nothing about usage.
-      const idle = loaded.length === 0 && exposed.length === 0
-        && !evs.some((e) => e.kind === "prompt" || e.kind === "native_skill" || e.kind === "read_file");
-      const automated = automationOf(info.firstPrompt) ?? (idle ? NO_ACTIVITY : undefined);
+      const active = loaded.length > 0 || exposed.length > 0
+        || evs.some((e) => e.kind === "prompt" || e.kind === "native_skill" || e.kind === "read_file");
+      const automated = automationIdOf(info.firstPrompt, active);
       if (automated !== undefined) info.automated = automated;
       if (f.automated === undefined && automated !== undefined) continue;
       if (f.automated === "only" && automated === undefined) continue;
@@ -214,7 +233,152 @@ export function createQueries(ctx: StoreCtx): Queries {
     return s.firstTop ? [s.firstTop] : [];
   }
 
-  return {
+  const queries: Queries = {
+    treeSessionData(sessionId, scope) {
+      const session = db.prepare(`SELECT id, runtime, started_at AS startedAt, ended_at AS endedAt
+        FROM sessions WHERE id = ?`).get(sessionId) as { id: string; runtime: RuntimeId; startedAt: number; endedAt: number | null } | undefined;
+      if (!session) return undefined;
+      const rows = db.prepare(`SELECT id, ts, kind, source, turn_key AS turnKey, call_id AS callId, span_id AS spanId,
+        skill_uri AS skillUri, text, text_length AS textLength, data_json FROM events WHERE session_id = ? ORDER BY ts, rowid`)
+        .all(sessionId) as (Omit<TreeEvent, "data"> & { data_json: string })[];
+      // Broker traces can differ from the turn trace. Scope call ids to this session's conversation (when supplied),
+      // and use the log's exact trace/span pair rather than treating a trace id as a turn id.
+      const spans = db.prepare(`WITH session AS (
+        SELECT id, runtime, runtime_session_id, conversation_id FROM sessions WHERE id = ?
+      ), matched AS (
+        SELECT o.trace_id, o.span_id FROM session s CROSS JOIN otel_spans o
+          WHERE o.conversation_id IN (s.runtime_session_id, s.conversation_id) AND o.runtime = s.runtime
+        UNION
+        SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+          WHERE o.call_id = e.call_id AND o.runtime = s.runtime
+            AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
+        UNION
+        SELECT o.trace_id, o.span_id FROM session s JOIN events e ON e.session_id = s.id CROSS JOIN otel_spans o
+          WHERE o.trace_id = json_extract(e.data_json, '$.otelTraceId') AND o.span_id = e.span_id AND o.runtime = s.runtime
+            AND (o.conversation_id IS NULL OR o.conversation_id IN (s.runtime_session_id, s.conversation_id))
+      ) SELECT o.trace_id AS traceId, o.span_id AS spanId, o.name, o.runtime, o.received_at AS receivedAt,
+        o.parent_span_id AS parentSpanId, o.conversation_id AS conversationId, o.turn_key AS turnKey,
+        o.call_id AS callId, o.start_ms AS startMs, o.end_ms AS endMs
+        FROM matched m JOIN otel_spans o ON o.trace_id = m.trace_id AND o.span_id = m.span_id
+        ORDER BY o.start_ms, o.trace_id, o.span_id`).all(sessionId) as
+        (Pick<OtelSpanRow, "traceId" | "spanId" | "name" | "runtime" | "receivedAt"> &
+          { parentSpanId: string | null; conversationId: string | null; turnKey: string | null; callId: string | null; startMs: number | null; endMs: number | null })[];
+      const owned = scope ? new Set(scope.eventIds) : undefined;
+      const prior = scope ? new Set(scope.priorEventIds) : undefined;
+      const spanKeys = scope?.spanKeys ? new Set(scope.spanKeys) : undefined;
+      // Retain earlier context for continuing turn identity, but never let B's prompts reassign A's calls.
+      const events = rows.filter((row) => !scope || row.ts < scope.from ||
+        (row.ts === scope.from && row.kind === "prompt" && prior?.has(row.id)) || owned?.has(row.id));
+      return { ...session, endedAt: scope?.sessionEnds?.[sessionId] ?? session.endedAt,
+        events: events.map(({ data_json, ...row }) => ({ ...row, data: parseJson<Record<string, unknown>>(data_json, {}) })),
+        spans: spans.filter((s) => scope?.to == null || (s.startMs !== null && s.startMs < scope.to)
+          || spanKeys?.has(JSON.stringify([s.traceId, s.spanId])))
+          .map((s) => ({ traceId: s.traceId, spanId: s.spanId, name: s.name, runtime: s.runtime, receivedAt: s.receivedAt,
+          ...(s.parentSpanId !== null ? { parentSpanId: s.parentSpanId } : {}), ...(s.conversationId !== null ? { conversationId: s.conversationId } : {}),
+          ...(s.turnKey !== null ? { turnKey: s.turnKey } : {}), ...(s.callId !== null ? { callId: s.callId } : {}),
+          ...(s.startMs !== null ? { startMs: s.startMs } : {}), ...(s.endMs !== null ? { endMs: s.endMs } : {}) })) };
+    },
+
+    treeFlowData(flowOrWorkspaceId, scope) {
+      const flow = db.prepare("SELECT id, workspace_id, tab_id, label, registered_ms, ended_ms FROM flows WHERE id = ?").get(flowOrWorkspaceId) as
+        { id: string; workspace_id: string; tab_id: string | null; label: string | null; registered_ms: number | null; ended_ms: number | null } | undefined;
+      const workspaceId = flow?.workspace_id ?? flowOrWorkspaceId;
+      const workspace = db.prepare("SELECT id, label FROM herdr_workspaces WHERE id = ?").get(workspaceId) as
+        { id: string; label: string | null } | undefined;
+      if (!workspace) return undefined;
+      if (flow) {
+        const { paneIds, links } = scope ?? executionEventScope(db, flow);
+        const panes = paneIds.flatMap((id) => {
+          const pane = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs
+            FROM herdr_panes WHERE id = ?`).get(id) as (TreeTopologyNode & { tabId: string }) | undefined;
+          return pane ? [pane] : [];
+        });
+        const tabIds = [...new Set(panes.map((p) => p.tabId))];
+        const tabs = tabIds.flatMap((id) => {
+          const tab = db.prepare(`SELECT id, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_tabs WHERE id = ?`)
+            .get(id) as TreeTopologyNode | undefined;
+          return tab ? [tab] : [];
+        });
+        return { id: flow.id, workspaceId, label: flow.label ?? workspace.label, registered: true, tabs, panes, links };
+      }
+      const tabId = null;
+      const tabs = db.prepare(`SELECT id, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_tabs
+        WHERE workspace_id = ? AND (? IS NULL OR id = ?) ORDER BY created_ms, id`).all(workspaceId, tabId, tabId) as TreeTopologyNode[];
+      const panes = db.prepare(`SELECT id, tab_id AS tabId, label, created_ms AS createdMs, closed_ms AS closedMs FROM herdr_panes
+        WHERE workspace_id = ? AND (? IS NULL OR tab_id = ?) ORDER BY created_ms, id`).all(workspaceId, tabId, tabId) as (TreeTopologyNode & { tabId: string })[];
+      const links = db.prepare(`SELECT ps.pane_id AS paneId, ps.session_id AS sessionId, ps.agent_session_value AS agentSessionValue,
+        ps.source, ps.first_seen_ms AS firstSeenMs, ps.last_seen_ms AS lastSeenMs
+        FROM pane_sessions ps JOIN herdr_panes p ON p.id = ps.pane_id
+        WHERE p.workspace_id = ? AND (? IS NULL OR p.tab_id = ?)
+        ORDER BY ps.first_seen_ms, ps.agent_session_value`).all(workspaceId, tabId, tabId) as TreePaneLink[];
+      return { id: workspaceId, workspaceId, label: workspace.label, registered: false, tabs, panes, links };
+    },
+
+    /**
+     * The automation id of each automated session among the ids given; a session a person drove is absent from the
+     * result. The read APIs filter whole flows with it without loading every session of a range, so it reads the
+     * same columns loadSessions classifies on, bounded by the id list and chunked under SQLite's parameter limit.
+     */
+    sessionAutomation(ids) {
+      const out: Record<string, string> = {};
+      const unique = [...new Set(ids)];
+      for (let i = 0; i < unique.length; i += 400) {
+        const chunk = unique.slice(i, i + 400);
+        const holes = chunk.map(() => "?").join(",");
+        const rows = db.prepare(`SELECT id, first_prompt FROM sessions WHERE id IN (${holes})`).all(...chunk) as
+          { id: string; first_prompt: string | null }[];
+        const evs = db.prepare(`SELECT session_id, kind, skill_uri, data_json FROM events
+          WHERE session_id IN (${holes}) AND kind IN ('prompt', 'native_skill', 'read_file', 'load', 'search')`).all(...chunk) as
+          { session_id: string; kind: EventKind; skill_uri: string | null; data_json: string }[];
+        const active = new Set<string>();
+        for (const e of evs) {
+          const data = e.kind === "load" || e.kind === "search" ? parseJson<Record<string, unknown>>(e.data_json, {}) : {};
+          const counts = e.kind === "search" ? candidatesOf(data).length > 0
+            : e.kind === "load" ? e.skill_uri !== null || typeof data.uri === "string"
+            : true;
+          if (counts) active.add(e.session_id);
+        }
+        for (const row of rows) {
+          const automated = automationIdOf(row.first_prompt ?? undefined, active.has(row.id));
+          if (automated !== undefined) out[row.id] = automated;
+        }
+      }
+      return out;
+    },
+
+    outsideHerdrSessions({ from, to, limit, automated }) {
+      const kept: { id: string; activityMs: number }[] = [];
+      const cap = Math.max(1, Math.min(100, Math.floor(limit)));
+      let cursor: { id: string; activityMs: number } | undefined;
+      // Classify before the result cap: a page of automated sessions must not hide older human sessions.
+      // Each read and classification is bounded; no session tree or full event population is loaded here.
+      for (;;) {
+        const rows = db.prepare(`SELECT * FROM (
+          SELECT s.id, MAX(s.started_at, COALESCE(s.ended_at, s.started_at),
+            COALESCE((SELECT MAX(e.ts) FROM events e WHERE e.session_id = s.id), s.started_at)) AS activityMs
+          FROM sessions s WHERE NOT EXISTS (
+            SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id AND COALESCE(ps.source, '') <> 'unlinked')
+        ) WHERE activityMs >= ? AND activityMs < ?
+          ${cursor ? "AND (activityMs < ? OR (activityMs = ? AND id > ?))" : ""}
+          ORDER BY activityMs DESC, id LIMIT 100`).all(from, to,
+          ...(cursor ? [cursor.activityMs, cursor.activityMs, cursor.id] : [])) as { id: string; activityMs: number }[];
+        const automation = automated === "include" ? {} : queries.sessionAutomation(rows.map((row) => row.id));
+        for (const row of rows) {
+          const isAutomated = automation[row.id] !== undefined;
+          if (automated === "include" || (automated === "only" ? isAutomated : !isAutomated)) kept.push(row);
+          if (kept.length === cap) return kept;
+        }
+        if (rows.length < 100) return kept;
+        cursor = rows.at(-1);
+      }
+    },
+
+    outsideHerdrSessionIds({ from, to, limit }) {
+      return (db.prepare(`SELECT s.id FROM sessions s WHERE s.started_at >= ? AND s.started_at < ?
+        AND NOT EXISTS (SELECT 1 FROM pane_sessions ps WHERE ps.session_id = s.id)
+        ORDER BY s.started_at DESC, s.id LIMIT ?`).all(from, to, Math.max(1, Math.min(100, Math.floor(limit)))) as { id: string }[]).map((s) => s.id);
+    },
+
     sessions(f: Filter): SessionRow[] {
       return loadSessions(f)
         .sort((a, b) => b.startedAt - a.startedAt)
@@ -275,6 +439,20 @@ export function createQueries(ctx: StoreCtx): Queries {
             const name = typeof data.name === "string" ? data.name : e.skill_uri ? nameFromUri(e.skill_uri) : "unknown";
             const via = typeof data.via === "string" ? data.via : "tool";
             return { ts: e.ts, kind: e.kind, summary: `native skill ${name} via ${via}`, detail: { kind: "native_skill", name, via } };
+          }
+          case "llm_call": {
+            const model = typeof data.model === "string" ? data.model : "unknown";
+            return { ts: e.ts, kind: e.kind, summary: `model call: ${model}, ${llmTokens(data)} tokens`,
+              detail: { ...data, kind: "llm_call", inputIncludesCache: data.inputIncludesCache === true } };
+          }
+          case "tool_call": {
+            const toolName = typeof data.toolName === "string" ? data.toolName : "unknown";
+            const durationMs = typeof data.durationMs === "number" ? data.durationMs : undefined;
+            const outcome = data.success === true ? "ok" : data.success === false ? "failed" : "unknown";
+            return { ts: e.ts, kind: e.kind, summary: `tool: ${toolName} (${durationMs ?? "?"} ms, ${outcome})`,
+              detail: { ...data, kind: "tool_call", toolName,
+                ...(e.tool_use_id !== null ? { toolUseId: e.tool_use_id } : {}), ...(e.call_id !== null ? { callId: e.call_id } : {}),
+                ...(e.text !== null ? { args: e.text } : {}), ...(e.text_length !== null ? { argsLength: e.text_length } : {}) } };
           }
           case "error": {
             const code = typeof data.code === "string" ? data.code : "error";
@@ -442,5 +620,6 @@ export function createQueries(ctx: StoreCtx): Queries {
       };
     },
   };
+  return queries;
 }
 

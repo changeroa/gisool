@@ -1,0 +1,35 @@
+{
+  "resourceSpans": [{
+    "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "codex"}}]},
+    "scopeSpans": [{"spans": [
+      {
+        "traceId": "daaba4f3553cf63ffba0fec16a71db4f", "spanId": "eef6aff0499f5a12", "name": "codex.turn_input",
+        "startTimeUnixNano": "1760320000000000000", "endTimeUnixNano": "1760320000100000000",
+        "attributes": [
+          {"key": "turn.id", "value": {"stringValue": "01a13990-4062-7fb3-bb7c-78e2a3435556"}},
+          {"key": "conversation.id", "value": {"stringValue": "codex-conv-1"}}
+        ]
+      },
+      {
+        "traceId": "daaba4f3553cf63ffba0fec16a71db4f", "spanId": "4833ab95c18b5f35", "name": "codex.sampling",
+        "startTimeUnixNano": "1760320000100000000", "endTimeUnixNano": "1760320005000000000",
+        "attributes": [
+          {"key": "turn.id", "value": {"stringValue": "01a13990-4062-7fb3-bb7c-78e2a3435556"}},
+          {"key": "conversation.id", "value": {"stringValue": "codex-conv-1"}}
+        ]
+      },
+      {
+        "traceId": "a4ed70d677f5afe2c5ccdeb8a7df01eb", "spanId": "ca230b04db5d3a37", "name": "unified_exec.exec_command",
+        "startTimeUnixNano": "1760320005956000000", "endTimeUnixNano": "1760320006000000000",
+        "attributes": [
+          {"key": "turn_id", "value": {"stringValue": "01a13990-4062-7fb3-bb7c-78e2a3435556"}},
+          {"key": "call_id", "value": {"stringValue": "call_abc123"}},
+          {"key": "conversation.id", "value": {"stringValue": "codex-conv-1"}}
+        ]
+      },
+      {"traceId": "daaba4f3553cf63ffba0fec16a71db4f", "spanId": "aa00000000000001", "name": "fs.read_file", "attributes": []},
+      {"traceId": "daaba4f3553cf63ffba0fec16a71db4f", "spanId": "aa00000000000002", "name": "fs.get_metadata", "attributes": []},
+      {"traceId": "daaba4f3553cf63ffba0fec16a71db4f", "spanId": "aa00000000000003", "name": "auth", "attributes": []}
+    ]}]
+  }]
+}

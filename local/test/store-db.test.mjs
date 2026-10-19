@@ -28,11 +28,34 @@ test("mergeSplitSessions folds a Codex session split across conversation_id and 
   }
 });
 
-test("fresh database migrates to user_version 1 with every table", () => {
+test("mergeSplitSessions moves pane links and load candidates off a duplicate before dropping it", () => {
+  // Given a duplicate that a pane link (a foreign key) and load candidates still point at, as a history import can leave.
   const db = openDb(":memory:");
   try {
-    assert.equal(SCHEMA_VERSION, 1);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+    const addSession = db.prepare("INSERT INTO sessions (id, runtime, runtime_session_id, conversation_id, started_at) VALUES (?, 'codex', ?, ?, ?)");
+    addSession.run("local", "shared", null, 100);
+    addSession.run("imported", null, "shared", 200);
+    db.prepare("INSERT INTO pane_sessions (pane_id, agent_session_value, session_id) VALUES ('pane', 'shared', 'imported')").run();
+    db.prepare("INSERT INTO events (id, ts, kind, source, session_id, attribution_method, runtime) VALUES ('ev', 150, 'prompt', 'otel', 'local', 'runtime_id', 'codex')").run();
+    const addCandidate = db.prepare("INSERT INTO load_candidates (load_id, session_id, ts) VALUES ('ev', ?, 150)");
+    addCandidate.run("imported");
+    addCandidate.run("local");
+    // When the startup consolidation runs.
+    assert.equal(mergeSplitSessions(db), 1);
+    // Then the earliest session keeps the pane link and a single candidate row, and nothing points at the dropped id.
+    assert.deepEqual(db.prepare("SELECT id FROM sessions").all().map((r) => r.id), ["local"]);
+    assert.deepEqual(db.prepare("SELECT pane_id, session_id FROM pane_sessions").all().map((r) => [r.pane_id, r.session_id]), [["pane", "local"]]);
+    assert.deepEqual(db.prepare("SELECT load_id, session_id FROM load_candidates").all().map((r) => [r.load_id, r.session_id]), [["ev", "local"]]);
+  } finally {
+    db.close();
+  }
+});
+
+test("fresh database migrates to user_version 6 with every table", () => {
+  const db = openDb(":memory:");
+  try {
+    assert.equal(SCHEMA_VERSION, 6);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 6);
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table') ORDER BY name").all().map((r) => r.name);
     for (const t of ["meta", "skills", "skills_fts", "sessions", "events", "loads", "eval_cases"]) assert.ok(names.includes(t), t);
     const cols = db.prepare("PRAGMA table_info(events)").all().map((r) => r.name);
@@ -55,7 +78,7 @@ test("file database uses WAL, busy_timeout 5000, foreign keys, and reopens witho
     db.prepare("INSERT INTO meta(key, value) VALUES ('k', 'v')").run();
     db.close();
     const again = openDb(path);
-    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(again.prepare("PRAGMA user_version").get().user_version, 6);
     assert.equal(again.prepare("SELECT value FROM meta WHERE key = 'k'").get().value, "v");
     again.close();
   } finally {

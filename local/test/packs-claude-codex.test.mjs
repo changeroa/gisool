@@ -47,6 +47,11 @@ test("claude plan keeps unrelated keys, exact blocks, idempotent, commands exist
     assert.equal(g.matcher, "Skill|mcp__gisool__.*");
     assert.equal(g.hooks[0].timeout, 5);
     assert.equal(out.hooks.UserPromptExpansion.length, 1);
+    assert.equal(out.hooks.SessionStart.length, 1);
+    assert.equal(out.hooks.SessionStart[0].hooks[0].command, g.hooks[0].command);
+    assert.equal(out.hooks.SessionEnd.length, 1);
+    assert.deepEqual(out.hooks.SessionEnd[0].hooks, out.hooks.SessionStart[0].hooks);
+    assert.equal(Object.keys(out.env).some(key => key.includes("BETA") || key.includes("TRACE")), false);
     const hookPath = join(packageRoot, "packs", "hook-post.mjs");
     assert.equal(g.hooks[0].command, `"${ctx.nodePath}" "${hookPath}" claude-code`);
     accessSync(ctx.nodePath); accessSync(hookPath);
@@ -118,7 +123,9 @@ test("codex detect, plan block, idempotent, preserves content", async () => {
     const after = plan.files[0].after;
     assert.ok(after.startsWith(orig));
     assert.ok(after.includes('[mcp_servers.gisool]\nurl = "http://127.0.0.1:47123/mcp"\nhttp_headers = { Authorization = "Bearer tok123" }'));
-    assert.ok(after.includes('[otel]\nlog_user_prompt = true\nexporter = { otlp-http = { endpoint = "http://127.0.0.1:47123/ingest/otlp/v1/logs", protocol = "json", headers = { Authorization = "Bearer tok123" } } }\nmetrics_exporter = "none"'));
+    assert.ok(after.includes('[otel]\nlog_user_prompt = true\nexporter = { otlp-http = { endpoint = "http://127.0.0.1:47123/ingest/otlp/v1/logs", protocol = "json", headers = { Authorization = "Bearer tok123" } } }'));
+    assert.ok(after.includes('metrics_exporter = "none"'));
+    assert.ok(after.includes('trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:47123/ingest/otlp/v1/traces", protocol = "json", headers = { Authorization = "Bearer tok123" } } }'));
     assert.ok(after.includes("# >>> gisool managed") && after.includes("# <<< gisool managed"));
     put(p, after);
     assert.deepEqual((await codexPack.plan(ctx)).files, []);

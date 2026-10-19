@@ -40,12 +40,18 @@ export function memoryStore() {
       return [...sessions.values()].filter((s) => s.ref.runtime === runtime && s.endedAt === undefined && s.lastActivityAt >= since)
         .map(({ id, startedAt, lastActivityAt, ref }) => ({ id, startedAt, lastActivityAt, ref }));
     },
+    hasSourceKey(sourceKey) {
+      return events.some((e) => e.event.sourceKey === sourceKey);
+    },
     append(event, attribution) {
+      const duplicate = events.some((e) => e.event.id === event.id || (event.sourceKey !== undefined && e.event.sourceKey === event.sourceKey));
+      if (duplicate) return false;
       events.push({ event, attribution: { ...attribution } });
       if (attribution.sessionId !== "unattributed") {
         touch(attribution.sessionId, event.ts);
         if (event.kind === "session_end") byId(attribution.sessionId).endedAt = event.ts;
       }
+      return true;
     },
     reattribute(eventId, sessionId, method) {
       const row = events.find((e) => e.event.id === eventId);
@@ -61,5 +67,7 @@ export function memoryStore() {
       counts[kind] += 1;
       if (code) counts.codes.push(code);
     },
+    // URI recovery is covered against the real SQLite Store in ingest-f3.test.mjs.
+    reconcileLoads() { return { count: 0, uris: [] }; },
   };
 }

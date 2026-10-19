@@ -7,5 +7,6 @@ http_headers = { Authorization = "Bearer {{TOKEN}}" }
 [otel]
 log_user_prompt = true
 exporter = { otlp-http = { endpoint = "http://127.0.0.1:{{PORT}}/ingest/otlp/v1/logs", protocol = "json", headers = { Authorization = "Bearer {{TOKEN}}" } } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:{{PORT}}/ingest/otlp/v1/traces", protocol = "json", headers = { Authorization = "Bearer {{TOKEN}}" } } }
 metrics_exporter = "none"
 # <<< gisool managed
