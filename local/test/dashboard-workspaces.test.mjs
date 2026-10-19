@@ -322,7 +322,6 @@ test("every fact the views build is renderable, and only a finding fact carries 
   assert.equal(new Set(built.map((fact) => fact.key)).size >= 8, true);
   assert.equal(factsMod.factTitle({ key: "finding", value: "found_top1" }), state.FINDING_TITLE.found_top1);
   assert.equal(factsMod.factTitle({ key: "turns", value: 1 }), undefined);
-  assert.equal(factsMod.factText({ key: "cost", value: null }), factsMod.factText({ key: "cost", value: null }));
   assert.notEqual(factsMod.factText({ key: "cost", value: null }), factsMod.factText({ key: "cost", value: 0 }),
     "an unknown cost never renders as a zero cost");
 });
