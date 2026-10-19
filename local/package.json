@@ -1,6 +1,6 @@
 {
   "name": "gisool",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "description": "Local skill router for coding agents: search your skills, trace how agents use them, and see the flow.",
   "license": "MIT",
