@@ -6,6 +6,15 @@ import { isDeepStrictEqual } from "node:util";
 import { manifestDigest, parseInventory } from "../worker/src/release-reader.ts";
 import { assertCommit, sha256 } from "../worker/src/r2-objects.ts";
 
+// A parser message quotes the start of the text, which can be a credential the redaction only matches whole.
+function parseJson(bytes, source) {
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(`${source} is not valid JSON`);
+  }
+}
+
 export async function runCanary(env = process.env, fetcher = fetch) {
   const receipt = { schema_version: 1, state: "failed", phase: "preflight",
     started_at: new Date().toISOString(), expected: null,
@@ -38,7 +47,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
       ? { authorization: `Bearer ${env.GISUL_CANARY_INVENTORY_TOKEN}` } : {} });
     assert.ok(bytes.length <= 8 * 1024 * 1024, "Expected inventory exceeds the release limit");
     assert.equal(await sha256(bytes), env.GISUL_CANARY_INVENTORY_SHA256);
-    const document = JSON.parse(bytes.toString("utf8"));
+    const document = parseJson(bytes, "Expected inventory");
     assertCommit(document?.commit);
     const identity = { commit: document.commit, release: document.release, inventory_digest: env.GISUL_CANARY_INVENTORY_SHA256 };
     const { inventory, files } = parseInventory(bytes.toString("utf8"), identity);
@@ -47,7 +56,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     let id = 0;
     async function rpc(method, params = {}) {
       receipt.operation = method === "tools/call" ? params.name : method;
-      const body = JSON.parse((await request(endpoint, { method: "POST", headers: {
+      const body = parseJson(await request(endpoint, { method: "POST", headers: {
         authorization: `Bearer ${env.GISUL_CANARY_READER_TOKEN}`, "content-type": "application/json",
         accept: "application/json, text/event-stream", "mcp-protocol-version": "2026-07-28", "mcp-method": method,
         ...(method === "resources/read" ? { "mcp-name": params.uri }
@@ -55,7 +64,7 @@ export async function runCanary(env = process.env, fetcher = fetch) {
       }, body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params: { ...params, _meta: {
         ...params._meta, "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {},
-      } } }) })).toString("utf8"));
+      } } }) }), "MCP response");
       assert.equal(body.jsonrpc, "2.0");
       assert.equal(body.id, id);
       assert.ok(!body.error, `MCP request failed (${body.error?.code})`);

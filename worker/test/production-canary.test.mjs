@@ -221,6 +221,19 @@ test("the actual CLI exits unsuccessfully and redacts echoed reader and inventor
   assert.equal(JSON.parse(text).error.status, 401);
 });
 
+test("a malformed MCP response leaves none of its body, or a token prefix, in the receipt", { timeout: 30000 }, async t => {
+  const f = await fixture(t);
+  const fetcher = async (url, options) => String(url) === f.env.GISUL_CANARY_MCP_URL
+    ? new Response(`${reader} echoed instead of JSON`, { status: 200 })
+    : f.fetcher(url, options);
+  const receipt = await runCanary(f.env, fetcher);
+  assert.equal(receipt.state, "failed");
+  assert.equal(receipt.phase, "mcp");
+  const text = await readFile(f.env.GISUL_CANARY_RECEIPT, "utf8");
+  assert.ok(!text.includes(reader.slice(0, 10)), text);
+  assert.ok(!text.includes("echoed"), text);
+});
+
 test("scheduled canary is opt-in, read-only and retains receipts on failure", async () => {
   const workflow = parse(await readFile(new URL("../../.github/workflows/production-canary.yml", import.meta.url), "utf8"));
   assert.deepEqual(workflow.permissions, { contents: "read" });
