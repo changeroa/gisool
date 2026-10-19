@@ -219,8 +219,9 @@ Layout
   the spec `name v<version>` or a dim "unregistered". The title column floors at `min-content` and the
   tag column is the flexible one, so a long spec name truncates instead of squeezing the title.
 - Lines: `facts wsrow__meta` = workspace id, tab, panes, sessions, plus inferred / unlinked link
-  counts when non-zero; `facts wsrow__sum` = turns, found via search, spans acted, abstained turns,
-  cost. The summary needs the flow report, so until it arrives the line reads "reading skill spans…"
+  counts when non-zero; `facts wsrow__sum` = turns, found via search, spans with calls after
+  activation (activity, not a quality claim), abstained turns, cost. The summary needs the flow
+  report, so until it arrives the line reads "reading skill spans…"
   and on failure "skill span summary unavailable" - never an invented 0.
 - States: hover `--wash`; `:has(.wsrow__title:focus-visible)` lifts the whole row.
 - Layout: under 640px the row is one column and every part gets its own line, `"title" / "tag" /

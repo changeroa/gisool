@@ -9,8 +9,8 @@ import { UNKNOWN, formatCostUsd, formatLapse } from "./calls";
 export type Fact =
   | { key: "workspace" | "tab"; value: string }
   | { key: "panes" | "sessions" | "inferred" | "unlinked" | "turns" | "found" | "abstained"; value: number }
-  | { key: "calls" | "callsAfter" | "gisoolCalls" | "failed" | "reads"; value: number }
-  | { key: "spans"; acted: number; total: number }
+  | { key: "calls" | "callsAfter" | "commands" | "unresolvedExec" | "gisoolCalls" | "failed" | "reads"; value: number }
+  | { key: "spans"; withCalls: number; total: number }
   /** A measurement the runtime never reported is null here and reads "unknown", never 0. */
   | { key: "cost" | "active"; value: number | null }
   | { key: "finding"; value: FindingLabel };
@@ -32,10 +32,12 @@ export function factText(fact: Fact): string {
     case "abstained": return `${fact.value} abstained`;
     case "calls": return plural(fact.value, "call", "calls");
     case "callsAfter": return `${plural(fact.value, "call", "calls")} after activation`;
+    case "commands": return plural(fact.value, "shell command", "shell commands");
+    case "unresolvedExec": return `${plural(fact.value, "exec wrapper", "exec wrappers")}, role unknown`;
     case "gisoolCalls": return `${plural(fact.value, "call", "calls")} to gisool`;
     case "failed": return `${fact.value} failed`;
     case "reads": return `${plural(fact.value, "read", "reads")} of its resources`;
-    case "spans": return `${fact.acted}/${fact.total} ${fact.total === 1 ? "span" : "spans"} acted`;
+    case "spans": return `${fact.withCalls}/${fact.total} ${fact.total === 1 ? "span" : "spans"} with calls after activation`;
     case "cost": return `cost ${fact.value === null ? UNKNOWN : formatCostUsd(fact.value)}`;
     case "active": return `active ${formatLapse(fact.value)}`;
     case "finding": return FINDING_LABEL[fact.value];
@@ -47,7 +49,12 @@ export function factText(fact: Fact): string {
 }
 
 export function factTitle(fact: Fact): string | undefined {
-  return fact.key === "finding" ? FINDING_TITLE[fact.value] : undefined;
+  switch (fact.key) {
+    case "finding": return FINDING_TITLE[fact.value];
+    case "spans": return "Spans followed by at least one non-gisool tool call: activity, not proof the skill was applied or helped.";
+    case "unresolvedExec": return "Codex exec runs code that may only dispatch the other calls or also do work of its own, so the exact work count stays unknown.";
+    default: return undefined;
+  }
 }
 
 export function Facts({ facts, className = "facts" }: { facts: Fact[]; className?: string }) {

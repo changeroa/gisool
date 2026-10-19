@@ -244,6 +244,15 @@ Each span reports `followThrough` (non-gisool tool calls after activation; zero 
 Supporting reads are `reported` for gisool file reads or `heuristic` for native-skill tool argument paths.
 Calling a file path a supporting read does not establish that the agent followed its instructions.
 
+Each span and each per-skill aggregate also carries an `activity` block (`version: 1`) that breaks the
+`followThrough` calls down without judging them: `observations` (the same calls), `commands` (shell tool calls:
+`exec_command`, `Bash`, `shell`, `local_shell`), `unresolvedExec` (Codex `exec` calls), `results`
+(`success` / `failure` / `unknown` by reported status; a call without a status is unknown, never a success) and
+`workExecutions`. A Codex `exec` call runs model-written code that may only dispatch the span's other tool calls or
+also do work of its own, and nothing reported says which, so `workExecutions` is null while a span holds one;
+otherwise it equals `observations`. An aggregate is null when any of its spans is. These are activity counts:
+none of them says whether the skill was applied correctly or helped.
+
 Token buckets retain `inputIncludesCache`: Claude input excludes cached tokens; Codex input includes them.
 Fields are `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `cacheWriteTokens`,
 `reasoningTokens` and `totalTokens`. Each sums only calls reporting that field; `unknownCalls` counts the

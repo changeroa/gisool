@@ -41,11 +41,27 @@ export type AttributionShare = {
   readonly coActiveShare: number | null;
 };
 
+/**
+ * What the `followThrough` calls were, never whether they helped. A Codex `exec` call runs model-written code that may only
+ * dispatch the span's other tool calls or also do work of its own; nothing reported says which, so it stays unresolved and
+ * `workExecutions` is null rather than a guess. `results` partitions `observations`: a call without a status is unknown.
+ */
+export type SpanActivity = {
+  readonly version: 1;
+  readonly observations: number;
+  // Calls of a shell tool (exec_command, Bash, shell, local_shell): one command run each.
+  readonly commands: number;
+  readonly unresolvedExec: number;
+  readonly results: { readonly success: number; readonly failure: number; readonly unknown: number };
+  readonly workExecutions: number | null;
+};
+
 export type SkillSpanUsage = {
   readonly turnId: string; readonly spanId: string; readonly skill: string; readonly name: string; readonly uri: string | null;
   readonly activatedAt: number; readonly durationMs: number;
-  // Tool calls after the activation, gisool MCP calls excluded; 0 means "loaded, no action".
+  // Tool calls after the activation, gisool MCP calls excluded; 0 means "loaded, no action". A call is not an outcome.
   readonly followThrough: number;
+  readonly activity: SpanActivity;
   // gisool MCP calls (skill discovery and reading), reported apart from followThrough.
   readonly skillToolCalls: number;
   // Failed tool calls, gisool MCP calls included.
@@ -71,6 +87,8 @@ export type SkillUsageAggregate = {
   readonly tokens: readonly UsageTokens[];
   readonly corrections: { readonly correction: number; readonly no_correction: number; readonly unknown: number };
   readonly attribution: AttributionShare;
+  // Summed over the skill's spans; workExecutions stays null while any span left one unresolved.
+  readonly activity: SpanActivity;
 };
 
 export type FlowUsage = { readonly id: string; readonly sessions: readonly SessionUsage[]; readonly skills: readonly SkillUsageAggregate[] };
@@ -295,9 +313,21 @@ function supportingReadsOf(span: SkillSpan, turn: TurnTree): SupportingRead[] {
   return reads;
 }
 
+const SHELL_TOOLS = new Set(["exec_command", "Bash", "shell", "local_shell"]);
+
+/** Only Codex names its code-running wrapper `exec`; elsewhere the name carries no wrapper meaning. */
+function activityKind(event: AssignedTreeEvent, runtime: RuntimeId): "command" | "unresolved_exec" | "other" {
+  const toolName = stringOf(event.data.toolName);
+  if (runtime === "codex" && toolName === "exec") return "unresolved_exec";
+  return toolName !== undefined && SHELL_TOOLS.has(toolName) ? "command" : "other";
+}
+
 /** Usage of one skill span: `turn` supplies the events outside the span (MCP reads), `nextPrompt` the correction guess. */
-export function spanUsage(span: SkillSpan, ctx: { turn: TurnTree; nextPrompt: TreeEvent | null }): SkillSpanUsage {
+export function spanUsage(span: SkillSpan, ctx: { turn: TurnTree; nextPrompt: TreeEvent | null; runtime: RuntimeId }): SkillSpanUsage {
   let followThrough = 0;
+  let commands = 0;
+  let unresolvedExec = 0;
+  const results = { success: 0, failure: 0, unknown: 0 };
   let skillToolCalls = 0;
   let toolFailures = 0;
   let llmCalls = 0;
@@ -313,7 +343,13 @@ export function spanUsage(span: SkillSpan, ctx: { turn: TurnTree; nextPrompt: Tr
     else if (event.attribution === "single") single += 1;
     if (event.kind === "tool_call") {
       if (event.data.gisoolMcp === true) skillToolCalls += 1;
-      else followThrough += 1;
+      else {
+        followThrough += 1;
+        const kind = activityKind(event, ctx.runtime);
+        if (kind === "command") commands += 1;
+        else if (kind === "unresolved_exec") unresolvedExec += 1;
+        results[event.data.success === true ? "success" : event.data.success === false ? "failure" : "unknown"] += 1;
+      }
       if (event.data.success === false) toolFailures += 1;
     }
     if (event.kind === "llm_call") {
@@ -328,7 +364,9 @@ export function spanUsage(span: SkillSpan, ctx: { turn: TurnTree; nextPrompt: Tr
   return {
     turnId: ctx.turn.id, spanId: span.id, skill: span.skill, name: span.name, uri: span.uri,
     activatedAt: span.startedAt, durationMs: Math.max(0, span.endedAt - span.startedAt),
-    followThrough, skillToolCalls, toolFailures, supportingReads: supportingReadsOf(span, ctx.turn), llmCalls,
+    followThrough, activity: { version: 1, observations: followThrough, commands, unresolvedExec, results,
+      workExecutions: unresolvedExec > 0 ? null : followThrough },
+    skillToolCalls, toolFailures, supportingReads: supportingReadsOf(span, ctx.turn), llmCalls,
     costUsd: llmCalls > 0 && costUnknownCalls === 0 ? costSum : null, costUnknownCalls,
     tokens: sortedTokens(buckets), nextPromptCorrection: correctionOf(ctx.nextPrompt),
     attribution: { reported, single, coActive, total, coActiveShare: total > 0 ? coActive / total : null },
@@ -339,7 +377,7 @@ export function sessionUsage(session: SessionTree): SessionUsage {
   const spans: SkillSpanUsage[] = [];
   session.turns.forEach((turn, index) => {
     const nextPrompt = nextPromptAfterTurn(session, index);
-    for (const span of turn.skillSpans) spans.push(spanUsage(span, { turn, nextPrompt }));
+    for (const span of turn.skillSpans) spans.push(spanUsage(span, { turn, nextPrompt, runtime: session.runtime }));
   });
   return { sessionId: session.id, runtime: session.runtime, spans };
 }
@@ -352,6 +390,8 @@ export function aggregateUsage(spans: Iterable<SkillSpanUsage>): SkillUsageAggre
     durationMs: number; llmCalls: number; costSum: number; costUnknownCalls: number; tokens: Map<boolean, UsageTokens>;
     corrections: { correction: number; no_correction: number; unknown: number };
     reported: number; single: number; coActive: number; total: number;
+    commands: number; unresolvedExec: number; results: { success: number; failure: number; unknown: number };
+    workExecutions: number | null;
   };
   const bySkill = new Map<string, Acc>();
   for (const usage of spans) {
@@ -360,6 +400,7 @@ export function aggregateUsage(spans: Iterable<SkillSpanUsage>): SkillUsageAggre
       followThrough: 0, skillToolCalls: 0, toolFailures: 0, supportingReads: 0, heuristicReads: 0,
       durationMs: 0, llmCalls: 0, costSum: 0, costUnknownCalls: 0, tokens: new Map<boolean, UsageTokens>(),
       corrections: { correction: 0, no_correction: 0, unknown: 0 }, reported: 0, single: 0, coActive: 0, total: 0,
+      commands: 0, unresolvedExec: 0, results: { success: 0, failure: 0, unknown: 0 }, workExecutions: 0,
     };
     acc.uri = acc.uri ?? usage.uri;
     acc.spans += 1;
@@ -379,6 +420,13 @@ export function aggregateUsage(spans: Iterable<SkillSpanUsage>): SkillUsageAggre
     acc.single += usage.attribution.single;
     acc.coActive += usage.attribution.coActive;
     acc.total += usage.attribution.total;
+    acc.commands += usage.activity.commands;
+    acc.unresolvedExec += usage.activity.unresolvedExec;
+    acc.results.success += usage.activity.results.success;
+    acc.results.failure += usage.activity.results.failure;
+    acc.results.unknown += usage.activity.results.unknown;
+    acc.workExecutions = acc.workExecutions === null || usage.activity.workExecutions === null ? null
+      : acc.workExecutions + usage.activity.workExecutions;
     bySkill.set(usage.skill, acc);
   }
   return [...bySkill.values()]
@@ -390,6 +438,8 @@ export function aggregateUsage(spans: Iterable<SkillSpanUsage>): SkillUsageAggre
       costUnknownCalls: acc.costUnknownCalls, tokens: sortedTokens(acc.tokens), corrections: acc.corrections,
       attribution: { reported: acc.reported, single: acc.single, coActive: acc.coActive, total: acc.total,
         coActiveShare: acc.total > 0 ? acc.coActive / acc.total : null },
+      activity: { version: 1 as const, observations: acc.followThrough, commands: acc.commands, unresolvedExec: acc.unresolvedExec,
+        results: acc.results, workExecutions: acc.workExecutions },
     }))
     .sort((a, b) => a.skill.localeCompare(b.skill));
 }

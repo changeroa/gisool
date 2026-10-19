@@ -66,7 +66,7 @@ export function attributionParts(share: AttributionShare): { key: keyof typeof S
 
 export type FlowSummary = {
   turns: number; foundViaSearch: number; abstainedTurns: number;
-  spans: number; spansActed: number;
+  spans: number; spansWithCalls: number;
   /** Null unless every unique model call reported its cost. Span observations are non-additive. */
   costUsd: number | null;
 };
@@ -96,7 +96,7 @@ export function flowSummary(report: Pick<FlowReportDto, "finding" | "usage" | "t
     foundViaSearch: labels.found_top1 + labels.found_lower,
     abstainedTurns,
     spans: spans.length,
-    spansActed: spans.filter((span) => span.followThrough > 0).length,
+    spansWithCalls: spans.filter((span) => span.followThrough > 0).length,
     costUsd: known.length === costs.size && known.length > 0 ? known.reduce((sum, cost) => sum + cost, 0) : null,
   };
 }
@@ -105,7 +105,7 @@ export function summaryFacts(summary: FlowSummary): Fact[] {
   const facts: Fact[] = [
     { key: "turns", value: summary.turns },
     { key: "found", value: summary.foundViaSearch },
-    { key: "spans", acted: summary.spansActed, total: summary.spans },
+    { key: "spans", withCalls: summary.spansWithCalls, total: summary.spans },
   ];
   if (summary.abstainedTurns > 0) facts.push({ key: "abstained", value: summary.abstainedTurns });
   facts.push({ key: "cost", value: summary.costUsd });
@@ -159,6 +159,8 @@ export function spanFacts(span: Pick<SkillSpan, "startedAt" | "endedAt">, usage:
     { key: "active", value: usage.durationMs },
     { key: "callsAfter", value: usage.followThrough },
   ];
+  if (usage.activity.commands > 0) facts.push({ key: "commands", value: usage.activity.commands });
+  if (usage.activity.unresolvedExec > 0) facts.push({ key: "unresolvedExec", value: usage.activity.unresolvedExec });
   if (usage.skillToolCalls > 0) facts.push({ key: "gisoolCalls", value: usage.skillToolCalls });
   if (usage.toolFailures > 0) facts.push({ key: "failed", value: usage.toolFailures });
   if (usage.supportingReads.length > 0) facts.push({ key: "reads", value: usage.supportingReads.length });

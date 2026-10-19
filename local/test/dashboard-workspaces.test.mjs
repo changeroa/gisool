@@ -152,9 +152,9 @@ test("a list row carries the flow's structure as keyed values, and an unlabelled
     [["workspace", "ws-solo"], ["panes", 0], ["sessions", 0]], "a workspace with no tab carries no tab fact");
 });
 
-test("the flow summary counts turns, found-via-search and acted spans, and leaves an unreported cost null", () => {
+test("the flow summary counts turns, found-via-search and spans with calls after activation, and leaves an unreported cost null", () => {
   assert.deepEqual(workspaces.flowSummary(report), {
-    turns: 2, foundViaSearch: 1, abstainedTurns: 0, spans: 2, spansActed: 2, costUsd: null,
+    turns: 2, foundViaSearch: 1, abstainedTurns: 0, spans: 2, spansWithCalls: 2, costUsd: null,
   });
   assert.deepEqual(report.finding.aggregate.labels, {
     found_top1: 1, found_lower: 0, loaded_outside_results: 0, native_without_search: 1, searched_none_used: 0, no_search: 0,
@@ -165,7 +165,7 @@ test("the flow summary counts turns, found-via-search and acted spans, and leave
   assert.deepEqual(workspaces.summaryFacts(workspaces.flowSummary(report)), [
     { key: "turns", value: 2 },
     { key: "found", value: 1 },
-    { key: "spans", acted: 2, total: 2 },
+    { key: "spans", withCalls: 2, total: 2 },
     { key: "cost", value: null },
   ], "an unreported cost reaches the row as null, never as a number");
 
@@ -201,6 +201,7 @@ test("the tree index keys every turn finding and span usage the view renders", (
   assert.deepEqual(workspaces.spanFacts(planSpan, planUsage, 3), [
     { key: "active", value: planUsage.durationMs },
     { key: "callsAfter", value: 2 },
+    { key: "commands", value: 1 },
     { key: "failed", value: 1 },
     { key: "cost", value: 0.25 },
   ]);

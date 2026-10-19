@@ -190,6 +190,51 @@ test("two skills active together share the same follow-through with a co-active 
     [[uri("pr-review-ko"), 1, 1, 1], [uri("debug-trace"), 1, 1, 1]]);
 });
 
+test("activity separates Codex exec wrappers from shell commands and leaves the work count unknown", (t) => {
+  // Given: a Codex span with an exec wrapper, a gisool read and two shell commands (one failed), then a turn with one command.
+  const { store, append, id } = seeded(t, "codex");
+  append("prompt", 0, { turnKey: "t1", text: "Review the tests" });
+  append("load", 1000, { turnKey: "t1", skillUri: uri("review-tests"), data: { uri: uri("review-tests") } });
+  append("tool_call", 2000, { turnKey: "t1", data: { toolName: "exec", success: true } });
+  append("tool_call", 2100, { turnKey: "t1", data: { toolName: "read_mcp_resource", gisoolMcp: true, success: true } });
+  append("tool_call", 2200, { turnKey: "t1", data: { toolName: "exec_command", success: true } });
+  append("tool_call", 2300, { turnKey: "t1", data: { toolName: "exec_command", success: false } });
+  append("prompt", 3000, { turnKey: "t2", text: "Run them again" });
+  append("load", 3100, { turnKey: "t2", skillUri: uri("review-tests"), data: { uri: uri("review-tests") } });
+  append("tool_call", 3200, { turnKey: "t2", data: { toolName: "exec_command", success: true } });
+  // When
+  const usage = sessionUsage(sessionTree(store, id));
+  const [aggregate] = aggregateUsage(usage.spans);
+  // Then: the legacy count is unchanged, the wrapper is not taken for work, and one unresolved span keeps the total unknown.
+  assert.deepEqual(usage.spans.map((s) => [s.followThrough, s.activity]), [
+    [3, { version: 1, observations: 3, commands: 2, unresolvedExec: 1, results: { success: 2, failure: 1, unknown: 0 }, workExecutions: null }],
+    [1, { version: 1, observations: 1, commands: 1, unresolvedExec: 0, results: { success: 1, failure: 0, unknown: 0 }, workExecutions: 1 }],
+  ]);
+  assert.deepEqual(aggregate.activity, { version: 1, observations: 4, commands: 3, unresolvedExec: 1,
+    results: { success: 3, failure: 1, unknown: 0 }, workExecutions: null });
+});
+
+test("activity keeps a failed call a failure, a missing status unknown, and exec outside Codex an ordinary call", (t) => {
+  // Given: a Claude span whose only call is a failed Bash, and an OpenClaw span with an `exec` call and a statusless Edit.
+  const claude = seeded(t, "claude-code", "claude");
+  claude.append("prompt", 0, { turnKey: "t1", text: "Fix the build" });
+  claude.append("load", 1000, { turnKey: "t1", skillUri: uri("db-query"), data: { uri: uri("db-query") } });
+  claude.append("tool_call", 2000, { turnKey: "t1", data: { toolName: "Bash", success: false } });
+  const openclaw = seeded(t, "openclaw", "openclaw");
+  openclaw.append("prompt", 0, { turnKey: "t1", text: "Fix the build" });
+  openclaw.append("load", 1000, { turnKey: "t1", skillUri: uri("db-query"), data: { uri: uri("db-query") } });
+  openclaw.append("tool_call", 2000, { turnKey: "t1", data: { toolName: "exec", success: true } });
+  openclaw.append("tool_call", 2100, { turnKey: "t1", data: { toolName: "Edit" } });
+  // When
+  const [failed] = sessionUsage(sessionTree(claude.store, claude.id)).spans;
+  const [plain] = sessionUsage(sessionTree(openclaw.store, openclaw.id)).spans;
+  // Then: a failed call is an observed attempt, never a success, and only Codex's exec is held back as unresolved.
+  assert.deepEqual(failed.activity, { version: 1, observations: 1, commands: 1, unresolvedExec: 0,
+    results: { success: 0, failure: 1, unknown: 0 }, workExecutions: 1 });
+  assert.deepEqual(plain.activity, { version: 1, observations: 2, commands: 0, unresolvedExec: 0,
+    results: { success: 1, failure: 0, unknown: 1 }, workExecutions: 2 });
+});
+
 test("supporting reads come from gisool read_file events and, for native skills, from tool argument paths", (t) => {
   const { store, id, ref } = seeded(t);
   const deps = createIngestDeps(store, { now: () => T + 10_000 });
