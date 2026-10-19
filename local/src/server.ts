@@ -28,7 +28,7 @@ export type ServerDeps = {
   handleSignals?: boolean;
   dashboardDir?: string;
   log?: (msg: string) => void;
-  /** Filesystem-stall watchdog; defaults probe GISOOL_HOME every 15 s and exit(70) after 30 s so launchd restarts. */
+  /** Filesystem-stall watchdog; defaults probe GISOOL_HOME every 15 s and SIGKILL after 30 s so launchd restarts. */
   fsWatchdog?: { probe?: () => Promise<unknown>; intervalMs?: number; timeoutMs?: number; onStall?: (stalledMs: number) => void };
 };
 export type RunningServer = { port: number; host: "127.0.0.1"; close(): Promise<void> };
@@ -152,7 +152,8 @@ export async function startServer(config: GisoolConfig, deps: ServerDeps = {}): 
       timeoutMs: wd.timeoutMs ?? 30_000,
       onStall: wd.onStall ?? ((stalledMs) => {
         log(`filesystem requests stalled for ${stalledMs} ms; exiting so the service manager restarts gisool`);
-        process.exit(70);
+        // process.exit() can hang joining libuv workers during native cleanup after an fs stall.
+        process.kill(process.pid, "SIGKILL");
       }),
     });
 
