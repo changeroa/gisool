@@ -1,0 +1,37 @@
+name: Read-only production canary
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    if: github.event_name == 'workflow_dispatch' || vars.GISUL_CANARY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Check expected runtime and immutable content
+        run: node scripts/production-canary.mjs
+        env:
+          GISUL_CANARY_MCP_URL: ${{ vars.GISUL_CANARY_MCP_URL }}
+          GISUL_CANARY_EXPECTED_RUNTIME: ${{ vars.GISUL_CANARY_EXPECTED_RUNTIME }}
+          GISUL_CANARY_INVENTORY_URL: ${{ vars.GISUL_CANARY_INVENTORY_URL }}
+          GISUL_CANARY_INVENTORY_SHA256: ${{ vars.GISUL_CANARY_INVENTORY_SHA256 }}
+          GISUL_CANARY_READER_TOKEN: ${{ secrets.GISUL_CANARY_READER_TOKEN }}
+          GISUL_CANARY_INVENTORY_TOKEN: ${{ secrets.GISUL_CANARY_INVENTORY_TOKEN }}
+      - name: Retain canary receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/receipts/production-canary.json
+          if-no-files-found: error
+          retention-days: 30

@@ -10,6 +10,10 @@ The production machine endpoint is `https://gisul-mcp.changeroa.workers.dev/mcp`
 
 Production activation requires a gated real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Structural migration of unchanged content uses Git-byte and manifest parity; model evaluations and human ratings are optional under the 2026-09-21 user policy. Validation, integrity, latest-main and conditional activation remain required. Local fixture tests do not establish those production results.
 
+For subsequent delivery checks, configure the [read-only production canary](production-canary.md)
+with an independently verified runtime commit and retained inventory snapshot.
+Its scheduled workflow is opt-in and does not activate or publish releases.
+
 ### Current protocol and client
 
 The direct Worker supports MCP `2026-07-28` with `server/discover`, per-request protocol/capability metadata, matching HTTP headers, and private 30-second cache hints. HTTP responses remain `no-store`; the bridge owns its credential-isolated memory cache and verifies resource digests even on cache hits. Legacy initialization remains available for existing publishers and clients. Browser origins must match the endpoint origin or an explicit comma-separated `GISUL_ALLOWED_ORIGINS` value.
