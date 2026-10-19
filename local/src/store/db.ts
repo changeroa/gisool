@@ -55,6 +55,10 @@ export function mergeSplitSessions(db: DatabaseSync): number {
   db.exec("BEGIN IMMEDIATE");
   try {
     const moveEvents = db.prepare("UPDATE events SET session_id = ? WHERE session_id = ?");
+    // A pane link holds a foreign key to the duplicate, and a load candidate on both rows is one candidate.
+    const movePanes = db.prepare("UPDATE pane_sessions SET session_id = ? WHERE session_id = ?");
+    const moveCandidates = db.prepare("UPDATE OR IGNORE load_candidates SET session_id = ? WHERE session_id = ?");
+    const dropCandidates = db.prepare("DELETE FROM load_candidates WHERE session_id = ?");
     const absorb = db.prepare(`UPDATE sessions SET
         runtime_session_id = COALESCE(runtime_session_id, (SELECT runtime_session_id FROM sessions WHERE id = ?)),
         conversation_id = COALESCE(conversation_id, (SELECT conversation_id FROM sessions WHERE id = ?)),
@@ -67,6 +71,9 @@ export function mergeSplitSessions(db: DatabaseSync): number {
     for (const { dup } of merges) {
       const keep = root(dup);
       moveEvents.run(keep, dup);
+      movePanes.run(keep, dup);
+      moveCandidates.run(keep, dup);
+      dropCandidates.run(dup);
       absorb.run(dup, dup, dup, dup, dup, dup, keep);
       drop.run(dup);
     }
