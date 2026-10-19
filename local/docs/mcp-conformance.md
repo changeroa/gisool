@@ -83,15 +83,16 @@ Host-only obligations are separated below rather than claimed as implemented by 
 
 | Requirement | Implementation / evidence |
 | --- | --- |
-| Modern revision only; unsupported versions return `-32022` with requested/supported values. | `src/mcp/protocol.ts:3`, `src/mcp/protocol.ts:58`. |
-| No initialize/session handshake; discovery is optional before ordinary requests. | `src/mcp/dispatch.ts:19`, `src/mcp/dispatch.ts:51`; fresh direct calls are tested. Legacy initialize errors name 2026-07-28. |
+| Modern-era requests accept only 2026-07-28; unsupported versions return `-32022` with requested/supported values. | `src/mcp/protocol.ts:3`, `src/mcp/protocol.ts:58`. `supportedVersions` lists modern revisions only; legacy revisions are reachable solely through `initialize`. |
+| No initialize/session handshake for modern requests; discovery is optional before ordinary requests. | `src/mcp/dispatch.ts:19`; fresh direct calls are tested. |
+| Dual-era: a request with modern `_meta` is served statelessly; `initialize` selects legacy semantics per HTTP session or stdio process (versioning, "Backward Compatibility with Initialization-Based Versions"). | `src/mcp/legacy.ts`, `src/mcp/http.ts`, `src/mcp/stdio-proxy.ts`. Legacy requests are translated to modern requests with synthesized `_meta`; legacy results drop modern-only envelope fields. A real `@modelcontextprotocol/sdk` 1.30.0 client negotiated 2025-11-25 over HTTP and stdio. |
 | Per-request identity/capabilities; no connection carries prior client context. | `src/mcp/dispatch.ts:15`, `src/mcp/stdio-proxy.ts:35`. Vendor metadata survives forwarding. |
 | String/integer non-null IDs, one message per POST, same response ID, JSON-RPC errors. | `src/mcp/protocol.ts:16`, `src/mcp/protocol.ts:26`, `src/mcp/http.ts:20`. |
 | Every success has resultType and SHOULD identify serverInfo. | `src/mcp/dispatch.ts:53`. |
 | HTTP version/method/name headers are mandatory and body-validated; malformed/mismatched headers give 400 / `-32020`. | `src/mcp/protocol.ts:94`; Base64 sentinel and UTF-8/BOM handling in `src/mcp/protocol.ts:76`. |
 | Missing request metadata gives 400 / `-32602`; unknown methods give 404 / `-32601`. | `src/mcp/protocol.ts:52`, `src/mcp/http.ts:43`. |
 | Origin validation, loopback binding, bearer authentication and body limits remain enforced. | `src/api/security.ts:38`, `src/server.ts:35`, `src/server.ts:138`, `src/mcp/http.ts:12`, `src/mcp/http.ts:19`; composed-server security tests cover MCP. |
-| Accepted notifications get 202 with no body; GET/DELETE get 405; legacy session/replay headers do not create state. | `src/mcp/http.ts:26`, `src/mcp/http.ts:47`. |
+| Accepted notifications get 202 with no body; GET/DELETE get 405; session/replay headers on modern requests do not create state. | `src/mcp/http.ts:26`, `src/mcp/http.ts:47`. |
 | stdio uses newline-delimited JSON and preserves request metadata; no SDK initialization upstream. | `src/mcp/stdio-proxy.ts:5`, `src/mcp/protocol.ts:112`. |
 | stdio cancellation aborts the request fetch and suppresses later replies; EOF/signals abort pending requests. | `src/mcp/stdio-proxy.ts:10`, `src/mcp/stdio-proxy.ts:26`, `src/mcp/stdio-proxy.ts:49`. Filesystem reads already in progress can finish; no messages are sent after cancellation. |
 | Cacheable discovery, tool list, resource list/read, and both Skills results carry nonnegative TTL and scope. | `src/mcp/protocol.ts:8`, `src/mcp/dispatch.ts:19`, `src/mcp/skills-extension.ts:29`. Every list page stays private. |
@@ -118,17 +119,10 @@ gap remains in the supported surface.
 
 ## Client-facing breaking changes
 
-- Only MCP 2026-07-28 is accepted. Legacy initialize clients cannot fall forward, and GET/DELETE session
-  mechanics no longer exist. This includes the inspected OmO/Senpi source using SDK 1.29.0, Gemini CLI's
-  upstream core using SDK 1.23.0, and OpenClaw's upstream SDK 1.32.1 client.
-- Codex's third-party HTTP connections can use modern negotiation when its `mcp_2026_07_28` feature is enabled;
-  legacy mode cannot connect. The separate hosted Apps feature does not apply to gisool. The pack reports
-  the requirement rather than silently editing an agent-wide experimental feature.
-- Recent Claude Code upstream changelog entries describe modern negotiation for direct HTTP and stdio.
-  Those builds are not categorically broken. Older builds and `MCP_SDK_GENERATION=v1` /
-  `MCP_PROTOCOL_NEGOTIATION=legacy` configurations cannot use this server.
-- Cursor and Gajae installed-version negotiation behavior was not established. Any legacy build fails;
-  no product-wide claim is made from a pack's existence.
+- Legacy initialize clients (2024-11-05 through 2025-11-25) are served under dual-era rules, including
+  SDK 1.x-based clients (OmO/Senpi 1.29.0, Gemini CLI 1.23.0, OpenClaw 1.32.1), Codex without its
+  `mcp_2026_07_28` feature, and Claude Code legacy negotiation. GET streams and DELETE still return 405,
+  so the deprecated HTTP+SSE transport is unavailable; such clients must use stdio.
 - Custom skill-loading tools and load handles are gone from the MCP surface. Clients must expose a
   standard resource reader to the model and implement the host's Skills verification/approval path.
 - Invalid skill names/frontmatter, oversized skills, and skills whose full manifests cannot be served
@@ -146,16 +140,16 @@ Compatibility evidence retrieved on the audit date, not claims of launching thes
 
 ## Verification
 
-- `npm run build`, `npm run typecheck`, `npm test`: exit 0; 269 tests pass.
+- `npm run build`, `npm run typecheck`, `npm test`: exit 0; 270 tests pass.
 - `node bench/search.mjs --check`: exit 0; all eight benchmark gates pass. Its own reported limitation
   remains: these are maintainer-authored regression cases, not an independent search-quality holdout.
-- `node bench/mcp-mutations.mjs`: exit 0; 45/45 mutants killed by assertions.
+- `node bench/mcp-mutations.mjs`: exit 0; 49/49 mutants killed by assertions.
   Each mutant is injected by a Node module hook only in memory.
   An assertion failure is required; syntax errors, target misses and timeouts do not count.
   Source and compiled files remain unchanged.
 - `test/e2e/daemon.test.mjs` starts the real CLI daemon on an ephemeral non-8799 port, drives
   discover -> sole tool -> search -> SKILL.md read -> supporting read, verifies the manifest digest,
-  queries load/read_file events and dashboard trace/flow/heatmap, rejects initialize, and tears down.
+  queries load/read_file events and dashboard trace/flow/heatmap, accepts a legacy initialize, and tears down.
   Sandbox HOME is created before deriving GISOOL_HOME; GISOOL_NO_CLI disables runtime registration.
 - A separate isolated-HOME run passed all three daemon tests; `npm ci --ignore-scripts --dry-run`
   also accepted the pruned lockfile without installing or changing dependencies.
