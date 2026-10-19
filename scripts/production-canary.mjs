@@ -158,8 +158,10 @@ export async function runCanary(env = process.env, fetcher = fetch) {
     // During MCP checks any other message can carry response text: node:assert quotes the values it compared, and a native
     // error can quote a response-supplied constructor name. Keep only messages this script wrote there; phase and operation
     // locate the failed check. Earlier phases see only configuration and the digest-verified inventory.
-    const own = error.canary === true || (error instanceof assert.AssertionError && !error.generatedMessage);
-    const message = receipt.phase !== "mcp" || own ? error.message : `Check failed during ${receipt.phase}`;
+    // Node appends the compared values after a written assertion message, so only its first line is the script's.
+    const message = receipt.phase !== "mcp" || error.canary === true ? error.message
+      : error instanceof assert.AssertionError && !error.generatedMessage ? error.message.split("\n")[0]
+        : `Check failed during ${receipt.phase}`;
     receipt.error = { message, status: error.status ?? null };
   }
   receipt.finished_at = new Date().toISOString();
