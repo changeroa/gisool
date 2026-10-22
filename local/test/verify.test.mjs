@@ -54,6 +54,16 @@ test("shared verifier stops at the first failed check", () => {
   assert.equal(calls, 3);
 });
 
+test("shared verifier preserves a process-start error and stops immediately", () => {
+  let calls = 0;
+  const failure = Object.assign(new Error("missing executable"), { code: "ENOENT" });
+  assert.throws(() => verify({ run: () => {
+    calls += 1;
+    return { error: failure, status: null };
+  } }), error => error === failure);
+  assert.equal(calls, 1);
+});
+
 test("runtime workflow invokes the shared verifier for main and dev source changes", () => {
   const workflow = parse(readFileSync(new URL("../../.github/workflows/runtime.yml", import.meta.url), "utf8"));
   assert.deepEqual(workflow.on.push.branches, ["main", "dev", "feat/dev-tools-mvp"]);

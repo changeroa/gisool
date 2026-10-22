@@ -240,7 +240,22 @@ test("no-copy: refresh and readResource leave every root's listing, sizes and mt
   }
 });
 
-test("watcher diagnoses a missing root before invoking fs.watch", () => {
+test("watcher logs a root it cannot watch instead of failing silently", () => {
+  const s = setup();
+  const lines = [];
+  const missing = join(s.base, "missing");
+  const c = createCatalog({ roots: [...s.roots, { id: "gone", path: missing }], log: msg => lines.push(msg), watch: true });
+  try {
+    const watcherLines = lines.filter(line => line.includes("catalog watcher"));
+    assert.equal(watcherLines.length, 1);
+    assert.ok(watcherLines[0].includes("gone") && watcherLines[0].includes(missing), watcherLines[0]);
+  } finally {
+    c.close();
+    s.cleanup();
+  }
+});
+
+test("watcher diagnoses a missing root even when fs.watch would accept it", () => {
   const s = setup();
   const lines = [];
   const missing = join(s.base, "missing");
@@ -250,12 +265,16 @@ test("watcher diagnoses a missing root before invoking fs.watch", () => {
       log: (msg) => lines.push(msg),
       watchFn: () => {
         watched = true;
-        throw new Error("fs.watch must not receive a missing root");
+        return { on() { return this; }, close() {} };
       },
     });
-    assert.equal(watched, false);
-    assert.deepEqual(lines, [`catalog watcher cannot watch root gone (${missing}): path does not exist`]);
-    watcher.close();
+    try {
+      assert.equal(lines.length, 1);
+      assert.ok(lines[0].includes("gone") && lines[0].includes(missing));
+      assert.equal(watched, false);
+    } finally {
+      watcher.close();
+    }
   } finally {
     s.cleanup();
   }
