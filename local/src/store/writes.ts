@@ -180,7 +180,10 @@ export function createWrites(ctx: StoreCtx): Writes {
       const uris = new Set<string>();
       if (!opts.readOnly && loads.length > 0) db.exec("SAVEPOINT reconcile_loads");
       try {
-        for (const load of loads) {
+        for (const selected of loads) {
+          // A repair CLI can run beside ingest. Read retained proof inside the transaction, not from the earlier batch.
+          const load = opts.limit === undefined || opts.readOnly ? selected : loadById.get(selected.id) as LoadRow | undefined;
+          if (!load) continue;
           const uri = load.skill_uri;
           if (uri === null) continue;
           let sessionId: string | undefined = load.session_id === "unattributed" ? undefined : load.session_id;
