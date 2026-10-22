@@ -104,6 +104,10 @@ Both servers implement the [SEP-2640 Skills Extension](https://github.com/modelc
 
 The remote registry is a personal prototype. Production acceptance needs a successful GitHub Actions publication, installed-plugin reads, and matching release evidence.
 
+## Contributing
+
+With Node.js 24 and npm, run `node scripts/verify.mjs` from the checkout to perform the same locked installs, builds, tests, search and plugin checks, and Worker dry-runs as CI. It does not deploy or publish content.
+
 ## License
 
 [MIT](LICENSE)
