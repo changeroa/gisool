@@ -6,6 +6,7 @@ import { distImport, makeTempDir, removeDir, writeFixtureSkill } from "./_helper
 import { quietLog, snapshotTree } from "./helpers/catalog.mjs";
 
 const { createCatalog } = await distImport("catalog/index.js");
+const { watchRoots } = await distImport("catalog/watcher.js");
 
 function setup() {
   const base = makeTempDir("gisool-catalog-");
@@ -243,13 +244,38 @@ test("watcher logs a root it cannot watch instead of failing silently", () => {
   const s = setup();
   const lines = [];
   const missing = join(s.base, "missing");
-  const c = createCatalog({ roots: [...s.roots, { id: "gone", path: missing }], log: (msg) => lines.push(msg), watch: true });
+  const c = createCatalog({ roots: [...s.roots, { id: "gone", path: missing }], log: msg => lines.push(msg), watch: true });
   try {
-    const watcherLines = lines.filter((l) => l.includes("catalog watcher"));
+    const watcherLines = lines.filter(line => line.includes("catalog watcher"));
     assert.equal(watcherLines.length, 1);
     assert.ok(watcherLines[0].includes("gone") && watcherLines[0].includes(missing), watcherLines[0]);
   } finally {
     c.close();
+    s.cleanup();
+  }
+});
+
+test("watcher diagnoses a missing root even when fs.watch would accept it", () => {
+  const s = setup();
+  const lines = [];
+  const missing = join(s.base, "missing");
+  try {
+    let watched = false;
+    const watcher = watchRoots([{ id: "gone", path: missing }], () => {}, {
+      log: (msg) => lines.push(msg),
+      watchFn: () => {
+        watched = true;
+        return { on() { return this; }, close() {} };
+      },
+    });
+    try {
+      assert.equal(lines.length, 1);
+      assert.ok(lines[0].includes("gone") && lines[0].includes(missing));
+      assert.equal(watched, false);
+    } finally {
+      watcher.close();
+    }
+  } finally {
     s.cleanup();
   }
 });

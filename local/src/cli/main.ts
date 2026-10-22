@@ -28,6 +28,7 @@ Usage:
   gisool mcp-stdio                           stdio MCP proxy to the local daemon
   gisool export <dir> [--with-history]
   gisool import <dir> [--dry-run]
+  gisool repair-loads --from <ms> --to <ms> [--limit <n>] [--session <id>...] [--after <event-id>] [--json]
   gisool eval [--cases <file>] [--json]
   gisool --help | --version
 `;
@@ -129,6 +130,36 @@ export async function runMain(argv: string[], opts: { env?: NodeJS.ProcessEnv; i
         const p = parseArgs(rest, { flags: ["--dry-run"] });
         const dir = oneDir(p, "import");
         return await (await loaders.exportImport()).runImport(dir, { dryRun: p.flags.has("--dry-run") }, makeCliDeps(env));
+      }
+      case "repair-loads": {
+        const p = parseArgs(rest, { flags: ["--json"], values: ["--from", "--to", "--limit", "--after"], multi: ["--session"] });
+        if (p.positional.length) throw new UsageError(`unexpected argument ${p.positional[0]}`);
+        const integer = (name: string, fallback?: number): number => {
+          const values = p.values.get(name);
+          if (values === undefined && fallback !== undefined) return fallback;
+          if (values?.length !== 1 || !/^\d+$/.test(values[0]!)) throw new UsageError(`${name} needs one nonnegative integer`);
+          const value = Number(values[0]);
+          if (!Number.isSafeInteger(value)) throw new UsageError(`${name} must be a safe integer`);
+          return value;
+        };
+        const from = integer("--from"), to = integer("--to"), limit = integer("--limit", 100);
+        if (from >= to) throw new UsageError("--from must be less than --to");
+        if (limit < 1 || limit > 1000) throw new UsageError("--limit must be between 1 and 1000");
+        const after = p.values.get("--after");
+        if (after !== undefined && after.length !== 1) throw new UsageError("--after needs one event ID");
+        const sessionIds = p.values.get("--session");
+        if (sessionIds !== undefined && sessionIds.length === 0) throw new UsageError("--session needs a session ID");
+        const store = makeCliDeps(env).openStore();
+        try {
+          const result = store.reconcileLoads({ from, to, limit,
+            ...(after ? { after: after[0]! } : {}), ...(sessionIds ? { sessionIds } : {}) });
+          const report = { examined: result.examined, repaired: result.repaired, pending: result.count, next: result.next };
+          io.out(p.flags.has("--json") ? JSON.stringify(report) + "\n"
+            : `examined: ${report.examined}; repaired: ${report.repaired}; pending in batch: ${report.pending}; next: ${report.next ?? "none"}\n`);
+          return 0;
+        } finally {
+          store.close();
+        }
       }
       case "eval": {
         const p = parseArgs(rest, { flags: ["--json"], values: ["--cases"] });

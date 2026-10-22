@@ -25,7 +25,7 @@ test("init --dry-run writes nothing and prints diffs for seeded runtimes", async
   assert.equal(r.code, 0, r.output);
   assert.match(r.stdout, /^\+\+\+ b.*\.claude\/settings\.json$/m);
   assert.match(r.stdout, /^\+\+\+ b.*\.codex\/config\.toml$/m);
-  assert.match(r.stdout, /dev\.gisool\.daemon\.plist/);
+  assert.match(r.stdout, process.platform === "darwin" ? /dev\.gisool\.daemon\.plist/ : /\.config\/systemd\/user\/gisool\.service/);
   assert.doesNotMatch(r.stdout, /[0-9a-f]{64}/, "token must be masked in printed diffs");
   assert.deepEqual(snapshotTree(sb.home), before);
   assert.equal(existsSync(sb.env.GISOOL_HOME), false);

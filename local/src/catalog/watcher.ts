@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 
 export const WATCH_DEBOUNCE_MS = 500;
 const WATCH_FALLBACK_MS = 2000;
@@ -11,9 +11,10 @@ const WATCH_FALLBACK_MS = 2000;
 export function watchRoots(
   roots: { id: string; path: string }[],
   onChange: () => void,
-  opts: { debounceMs?: number; log: (msg: string) => void },
+  opts: { debounceMs?: number; log: (msg: string) => void; watchFn?: typeof watch },
 ): { close(): void } {
   const debounceMs = opts.debounceMs ?? WATCH_DEBOUNCE_MS;
+  const watchFn = opts.watchFn ?? watch;
   const watchers: FSWatcher[] = [];
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
@@ -26,8 +27,12 @@ export function watchRoots(
     }, debounceMs);
   };
   for (const root of roots) {
+    if (!existsSync(root.path)) {
+      opts.log(`catalog watcher cannot watch root ${root.id} (${root.path}): path does not exist`);
+      continue;
+    }
     try {
-      const watcher = watch(root.path, { recursive: true, persistent: false }, schedule);
+      const watcher = watchFn(root.path, { recursive: true, persistent: false }, schedule);
       let failed = false;
       watcher.on("error", (error) => {
         if (failed) return;

@@ -104,6 +104,10 @@ Codex plugin / MCP client -> authenticated Worker -------+
 
 원격 레지스트리는 개인 프로토타입이다. 프로덕션 승인에는 GitHub Actions 게시 성공, 설치된 플러그인의 실제 읽기, 일치하는 릴리스 증거가 필요하다.
 
+## 기여
+
+Node.js 24와 npm을 설치한 뒤 체크아웃에서 `node scripts/verify.mjs`를 실행하면 CI와 같은 잠금 의존성 설치, 빌드, 테스트, 검색·플러그인 검사, Worker dry-run을 수행한다. 배포하거나 콘텐츠를 발행하지는 않는다.
+
 ## 라이선스
 
 [MIT](LICENSE)

@@ -108,6 +108,14 @@ export function createWrites(ctx: StoreCtx): Writes {
   const pendingInSessions = db.prepare(`SELECT DISTINCT e.* FROM json_each(?) s
     CROSS JOIN load_candidates c ON c.session_id = s.value AND c.ts >= ? AND c.ts < ?
     CROSS JOIN events e ON e.id = c.load_id WHERE ${pending}`);
+  const pendingBatch = db.prepare(`SELECT e.* FROM events e INDEXED BY events_pending_load_ts
+    WHERE ${pending} AND e.ts >= ? AND e.ts < ? AND (e.ts, e.rowid) > (?, ?)
+    ORDER BY e.ts, e.rowid LIMIT ?`);
+  const pendingSessionBatch = db.prepare(`SELECT DISTINCT e.rowid, e.* FROM json_each(?) s
+    CROSS JOIN load_candidates c ON c.session_id = s.value AND c.ts >= ? AND c.ts < ?
+    CROSS JOIN events e ON e.id = c.load_id
+    WHERE ${pending} AND (e.ts, e.rowid) > (?, ?) ORDER BY e.ts, e.rowid LIMIT ?`);
+  const repairCursor = db.prepare("SELECT rowid, ts, source, kind FROM events WHERE id = ?");
   const eventById = db.prepare(`SELECT *, json_extract(data_json, '$.gisoolMcp') AS gisoolMcp,
     json_extract(data_json, '$.success') AS success FROM events WHERE id = ?`);
   const loadById = db.prepare(`SELECT e.* FROM events e WHERE e.id = ? AND ${recoverable}`);
@@ -152,15 +160,30 @@ export function createWrites(ctx: StoreCtx): Writes {
             .flatMap(({ value }) => loadsForTool.all(event.runtime, value, event.ts - URI_WINDOW_MS,
               event.ts + URI_WINDOW_MS, event.session_id) as LoadRow[]);
         }
+      } else if (opts.limit !== undefined) {
+        const cursor = opts.after === undefined ? { ts: from, rowid: 0 }
+          : repairCursor.get(opts.after) as { ts: number; rowid: number; source: string; kind: string } | undefined;
+        if (!cursor || cursor.ts < from || cursor.ts >= to
+          || ("source" in cursor && (cursor.source !== "mcp" || cursor.kind !== "load"))) {
+          throw storeError("invalid_repair_cursor", "repair cursor must identify an MCP load in the requested time range");
+        }
+        loads = (opts.sessionIds === undefined
+          ? pendingBatch.all(Math.max(from, cursor.ts), to, cursor.ts, cursor.rowid, opts.limit)
+          : pendingSessionBatch.all(JSON.stringify(opts.sessionIds), Math.max(from, cursor.ts), to,
+            cursor.ts, cursor.rowid, opts.limit)) as LoadRow[];
       } else {
         loads = (opts.sessionIds === undefined ? pendingInRange.all(from, to)
           : pendingInSessions.all(JSON.stringify(opts.sessionIds), from, to)) as LoadRow[];
       }
       let count = 0;
+      let repaired = 0;
       const uris = new Set<string>();
       if (!opts.readOnly && loads.length > 0) db.exec("SAVEPOINT reconcile_loads");
       try {
-        for (const load of loads) {
+        for (const selected of loads) {
+          // A repair CLI can run beside ingest. Read retained proof inside the transaction, not from the earlier batch.
+          const load = opts.limit === undefined || opts.readOnly ? selected : loadById.get(selected.id) as LoadRow | undefined;
+          if (!load) continue;
           const uri = load.skill_uri;
           if (uri === null) continue;
           let sessionId: string | undefined = load.session_id === "unattributed" ? undefined : load.session_id;
@@ -187,7 +210,10 @@ export function createWrites(ctx: StoreCtx): Writes {
             const json = JSON.stringify(data);
             updateLoad.run(nextId, method, reason, json, load.id, nextId, method, reason, json);
           }
-          if (sessionId !== undefined) continue;
+          if (sessionId !== undefined) {
+            if (load.session_id === "unattributed") repaired += 1;
+            continue;
+          }
           count += 1;
           uris.add(uri);
         }
@@ -196,7 +222,9 @@ export function createWrites(ctx: StoreCtx): Writes {
         if (!opts.readOnly && loads.length > 0) db.exec("ROLLBACK TO reconcile_loads; RELEASE reconcile_loads");
         throw error;
       }
-      return { count, uris: [...uris].sort() };
+      return { count, uris: [...uris].sort(), ...(opts.limit === undefined ? {} : {
+        examined: loads.length, repaired, next: loads.length === opts.limit ? loads.at(-1)!.id : null,
+      }) };
     },
 
     append(event: CanonicalEvent, attribution: Attribution): boolean {
