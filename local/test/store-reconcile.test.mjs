@@ -64,3 +64,38 @@ test("reconciliation SQL work is restricted by URI, candidate session and time b
     assert.equal(prepare("SELECT total_changes() n").get().n, before);
   } finally { seed.close(); }
 });
+
+test("bounded repair limits SQL results and leaves read-only reports unchanged", () => {
+  const { db, store: seed } = openStore();
+  try {
+    const ref = { runtime: "codex", runtimeSessionId: "a" };
+    const id = seed.upsertSession(ref, T - 1);
+    for (let i = 0; i < 50; i++) seed.append(event("load", T + i, ref, {
+      skillUri: URI, data: { attributionCandidates: [id] },
+    }), { sessionId: "unattributed", method: "none", reason: "ambiguous" });
+    const prepare = db.prepare.bind(db);
+    const reads = [];
+    db.prepare = sql => {
+      const statement = prepare(sql);
+      if (sql.includes("events_pending_load_ts")) {
+        const all = statement.all.bind(statement);
+        statement.all = (...args) => {
+          const rows = all(...args);
+          reads.push(rows.length);
+          return rows;
+        };
+      }
+      return statement;
+    };
+    const store = createStore(db);
+    const before = prepare("SELECT total_changes() n").get().n;
+    const bounded = store.reconcileLoads({ from: T, to: T + 100, limit: 2, readOnly: true });
+    assert.equal(bounded.examined, 2);
+    assert.equal(bounded.count, 2);
+    assert.ok(bounded.next);
+    assert.deepEqual(reads, [2], "the row bound belongs in SQL, not an in-memory slice");
+    assert.equal(prepare("SELECT total_changes() n").get().n, before);
+    assert.deepEqual(store.reconcileLoads({ from: T, to: T + 100, readOnly: true }), { count: 50, uris: [URI] });
+    assert.equal(prepare("SELECT total_changes() n").get().n, before);
+  } finally { seed.close(); }
+});

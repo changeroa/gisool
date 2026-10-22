@@ -124,7 +124,8 @@ export interface Store {
   outsideHerdrSessionIds(opts: { from: number; to: number; limit: number }): string[];
   // Ingest uses eventId to revisit only affected loads (including earlier resolutions).
   // Explicit reconciliation repairs pending history in scope; readOnly reports never mutate it.
-  reconcileLoads(opts?: { from?: number; to?: number; sessionIds?: readonly string[]; eventId?: string; readOnly?: boolean }): UnattributedLoads }
+  reconcileLoads(opts?: { from?: number; to?: number; sessionIds?: readonly string[]; eventId?: string; readOnly?: boolean;
+    limit?: number; after?: string }): UnattributedLoads & { examined?: number; repaired?: number; next?: string | null } }
 // One row of otel_spans: the whole whitelist the traces ingest may store. No other span attribute is kept.
 export type OtelSpanRow = { traceId: string; spanId: string; parentSpanId?: string; name: string; runtime: RuntimeId;
   conversationId?: string; turnKey?: string; callId?: string; startMs?: number; endMs?: number; receivedAt: number };
