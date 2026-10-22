@@ -6,6 +6,7 @@ import { distImport, makeTempDir, removeDir, writeFixtureSkill } from "./_helper
 import { quietLog, snapshotTree } from "./helpers/catalog.mjs";
 
 const { createCatalog } = await distImport("catalog/index.js");
+const { watchRoots } = await distImport("catalog/watcher.js");
 
 function setup() {
   const base = makeTempDir("gisool-catalog-");
@@ -239,17 +240,23 @@ test("no-copy: refresh and readResource leave every root's listing, sizes and mt
   }
 });
 
-test("watcher logs a root it cannot watch instead of failing silently", () => {
+test("watcher diagnoses a missing root before invoking fs.watch", () => {
   const s = setup();
   const lines = [];
   const missing = join(s.base, "missing");
-  const c = createCatalog({ roots: [...s.roots, { id: "gone", path: missing }], log: (msg) => lines.push(msg), watch: true });
   try {
-    const watcherLines = lines.filter((l) => l.includes("catalog watcher"));
-    assert.equal(watcherLines.length, 1);
-    assert.ok(watcherLines[0].includes("gone") && watcherLines[0].includes(missing), watcherLines[0]);
+    let watched = false;
+    const watcher = watchRoots([{ id: "gone", path: missing }], () => {}, {
+      log: (msg) => lines.push(msg),
+      watchFn: () => {
+        watched = true;
+        throw new Error("fs.watch must not receive a missing root");
+      },
+    });
+    assert.equal(watched, false);
+    assert.deepEqual(lines, [`catalog watcher cannot watch root gone (${missing}): path does not exist`]);
+    watcher.close();
   } finally {
-    c.close();
     s.cleanup();
   }
 });
